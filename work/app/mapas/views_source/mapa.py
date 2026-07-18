@@ -49,7 +49,7 @@ def obtener_equipos_desde_db():
         if os.path.exists(ruta_fisica_imagen):
             url_imagen_final = static(f"img/imagenes-OTUs/{nombre_otu_sin_espacios}.png")
         else:
-            url_imagen_final = static('img/0130028_LM_MSO.png')
+            url_imagen_final = static('img/default.png')
 
         equipos_data.append({
             'lat': float(equipo.latitud) if equipo.latitud else None,

@@ -29,6 +29,7 @@ staticfiles_pruebas/
 datos_v5/
 reportes_validacion/
 **/imagenes-OTUs/
+work/app/mapas/static/img/01*.png
 
 # Editors and OS
 .idea/
