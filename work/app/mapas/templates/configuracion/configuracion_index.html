@@ -1,0 +1,743 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Carga y calidad de datos — Fiber Genius{% endblock %}
+{% block page_title %}Carga y calidad de datos{% endblock %}
+
+{% block content %}
+<style>
+.import-mode-toggle {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--bg-surface);
+    padding: 12px 20px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    width: fit-content;
+    margin-bottom: var(--space-5);
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+}
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 50px;
+    height: 28px;
+}
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider {
+    position: absolute; cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-color: var(--text-tertiary);
+    transition: .4s; border-radius: 34px;
+}
+.slider:before {
+    position: absolute; content: "";
+    height: 20px; width: 20px;
+    left: 4px; bottom: 4px;
+    background-color: white;
+    transition: .4s; border-radius: 50%;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+input:checked + .slider { background-color: var(--accent); }
+input:checked + .slider:before { transform: translateX(22px); }
+.toggle-label { font-size: 14px; font-weight: 600; color: var(--text-primary); transition: color 0.3s; }
+</style>
+
+<div class="page-header">
+    <div>
+        <h1 class="page-header__title">Carga y calidad de datos</h1>
+        <p class="page-header__subtitle">Selecciona el flujo de importación correspondiente al inventario.</p>
+    </div>
+</div>
+
+<div class="import-mode-toggle">
+    <span class="toggle-label" id="lblInventario" style="color: var(--accent);">Modo Inventario Físico</span>
+    <label class="switch">
+        <input type="checkbox" id="modeToggle" onchange="toggleImportMode()">
+        <span class="slider"></span>
+    </label>
+    <span class="toggle-label" id="lblOperativo" style="color: var(--text-tertiary);">Modo Operativo Completo</span>
+</div>
+
+<div id="flujoOperativo" style="display: none; margin-bottom: var(--space-6); padding-bottom: var(--space-6); border-bottom: 1px solid var(--border-color);">
+    <h2 class="page-header__title" style="font-size: 1.5rem; margin-bottom: var(--space-4);">Flujo Operativo (OTDR y Asociación)</h2>
+
+{# ─── Info Box ─── #}
+<div class="card" style="margin-bottom: var(--space-5); border-left: 4px solid var(--warning);">
+    <h3 class="card__title" style="margin-bottom: var(--space-2);">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:text-bottom;"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+        Nota sobre Actualización de Troncales
+    </h3>
+    <p style="font-size: var(--text-sm); color: var(--text-secondary); margin-bottom: var(--space-3);">
+        Para agregar o actualizar una troncal, es necesario proporcionar todos sus datos relacionados. El único paso opcional corresponde a reservas y elementos de planta externa.
+    </p>
+    <ul style="font-size: var(--text-sm); color: var(--text-secondary); padding-left: var(--space-5); display: flex; flex-direction: column; gap: var(--space-1);">
+        <li><strong>Obligatorio:</strong> Actualizar el archivo de <strong>Equipos OTU</strong> (si el OTU es nuevo).</li>
+        <li><strong>Obligatorio:</strong> Actualizar el archivo de <strong>Troncales y Metadatos</strong>.</li>
+        <li><strong>Obligatorio:</strong> Actualizar el archivo de <strong>Trazado de Troncales</strong>.</li>
+        <li><strong>Opcional:</strong> Cargar el archivo de <strong>Reservas y elementos</strong>.</li>
+        <li><strong>Obligatorio:</strong> Volver a ejecutar la <strong>Asociación de Puertos a Troncales</strong>.</li>
+    </ul>
+</div>
+
+{# ─── Steps ─── #}
+<div class="grid grid--auto">
+    <div onclick="openImportModal('equipos_otu', 'Cargar Equipos y Puertos OTU')" class="card" style="text-decoration:none; cursor:pointer;">
+        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
+            <div class="stat-card__icon stat-card__icon--accent" style="width:36px;height:36px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
+            </div>
+            <span class="badge badge--accent">Paso 1</span>
+        </div>
+        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Equipos y Puertos OTU</h3>
+        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">OTUs y sus puertos. Clave: Nombre del OTU + N° de Puerto.</p>
+    </div>
+
+    <div onclick="openImportModal('ruta_otu', 'Cargar Troncales y Metadatos')" class="card" style="text-decoration:none; cursor:pointer;">
+        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
+            <div class="stat-card__icon stat-card__icon--success" style="width:36px;height:36px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" x2="9" y1="3" y2="18"/><line x1="15" x2="15" y1="6" y2="21"/></svg>
+            </div>
+            <span class="badge badge--success">Paso 2</span>
+        </div>
+        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Troncales y Metadatos</h3>
+        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Agrega o actualiza troncales. Clave: Nombre de la Troncal.</p>
+    </div>
+
+
+
+    <div onclick="openImportModal('reservas', 'Cargar Reservas y Elementos')" class="card" style="text-decoration:none; cursor:pointer;" role="button" tabindex="0">
+        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
+            <div class="stat-card__icon stat-card__icon--info" style="width:36px;height:36px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+            </div>
+            <span class="badge badge--info">Paso 4</span>
+        </div>
+        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar reservas y elementos</h3>
+        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Clave: nombre de la troncal + nombre del elemento.</p>
+    </div>
+
+    <div onclick="openImportModal('asociar_puertos', 'Asociar Puertos a Troncales')" class="card" style="text-decoration:none; cursor:pointer;">
+        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
+            <div class="stat-card__icon stat-card__icon--danger" style="width:36px;height:36px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            </div>
+            <span class="badge badge--danger">Paso 5</span>
+        </div>
+        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Asociar Puertos a Troncales</h3>
+        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Vinculación final entre puertos y troncales. Esencial tras cualquier cambio.</p>
+    </div>
+</div>
+</div>
+
+<h2 class="page-header__title" style="margin-top: var(--space-6); font-size: 1.5rem; border-top: 1px solid var(--border); padding-top: var(--space-4);">Mapa de Inventario</h2>
+<p class="page-header__subtitle" style="margin-bottom: var(--space-4);">Carga la información segmentada y técnica para construir los registros y visualizar el mapa de inventario.</p>
+
+<div class="grid grid--auto">
+    <a href="{% url 'importar_sites_csv' %}" class="card" style="text-decoration:none; cursor:pointer;">
+        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
+            <div class="stat-card__icon stat-card__icon--success" style="width:36px;height:36px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+            </div>
+            <span class="badge badge--success">Paso Previo</span>
+        </div>
+        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Sites (.csv)</h3>
+        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Importa los Sites antes de cargar las troncales y el inventario físico.</p>
+    </a>
+
+    <div onclick="openImportModal('coordenadas_csv', 'Cargar Coordenadas y Tipo de Trazado (.csv)')" class="card" style="text-decoration:none; cursor:pointer;">
+        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
+            <div class="stat-card__icon stat-card__icon--warning" style="width:36px;height:36px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            </div>
+            <span class="badge badge--warning">Paso 1</span>
+        </div>
+        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Trazado de Troncales Unificado (.csv)</h3>
+        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Crea las troncales geográficas (coordenadas) y enlaza con los Sites.</p>
+    </div>
+
+    <div onclick="openImportModal('tramos_inventario', 'Cargar Detalles Técnicos Complementarios (.csv)')" class="card" style="text-decoration:none; cursor:pointer;">
+        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
+            <div class="stat-card__icon stat-card__icon--accent" style="width:36px;height:36px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+            </div>
+            <span class="badge badge--accent">Archivo A</span>
+        </div>
+        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Detalles Técnicos Complementarios (.csv)</h3>
+        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Sube metadatos cruzados por Troncal y N° de Tramo (mufas, capacidad, splitters).</p>
+    </div>
+
+    <div onclick="openImportModal('fibras_inventario', 'Cargar inventario de fibras ópticas (.csv)')" class="card" style="text-decoration:none; cursor:pointer;">
+        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
+            <div class="stat-card__icon stat-card__icon--success" style="width:36px;height:36px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M2 12h20M4.93 4.93l14.14 14.14M19.07 4.93L4.93 19.07"/></svg>
+            </div>
+            <span class="badge badge--success">Archivo B</span>
+        </div>
+        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar inventario de fibras ópticas (.csv)</h3>
+        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Sube el estado individual de cada fibra (Ocupado/Libre, Destino).</p>
+    </div>
+
+    <div onclick="openImportModal('odf_inventario', 'Cargar Inventario de ODFs (.csv)')" class="card" style="text-decoration:none; cursor:pointer;">
+        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
+            <div class="stat-card__icon stat-card__icon--danger" style="width:36px;height:36px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+            </div>
+            <span class="badge badge--danger">Archivo C</span>
+        </div>
+        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Inventario de ODFs (.csv)</h3>
+        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Sube la información de racks, salas y capacidad de los ODFs.</p>
+    </div>
+
+    <div onclick="openImportModal('puertos_odf_inventario', 'Cargar Detalle de Puertos ODF (.csv)')" class="card" style="text-decoration:none; cursor:pointer;">
+        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
+            <div class="stat-card__icon stat-card__icon--warning" style="width:36px;height:36px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 16V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v16"/><path d="M4 15h16"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M8 18h.01"/><path d="M12 18h.01"/><path d="M16 18h.01"/></svg>
+            </div>
+            <span class="badge badge--warning">Archivo D</span>
+        </div>
+        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Detalle de Puertos ODF (.csv)</h3>
+        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Sube el estado de cada puerto (Libre/Ocupado, Patchcord, Destino).</p>
+    </div>
+
+    <div onclick="openImportModal('reservas', 'Cargar Reservas y Elementos')" class="card" style="text-decoration:none; cursor:pointer;" role="button" tabindex="0">
+        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
+            <div class="stat-card__icon stat-card__icon--info" style="width:36px;height:36px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+            </div>
+            <span class="badge badge--info">Archivo E</span>
+        </div>
+        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar reservas y elementos (.csv)</h3>
+        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Sube reservas y elementos como Sites, mufas, cámaras y postes.</p>
+    </div>
+</div>
+
+<section class="card" style="margin-top: var(--space-6); padding: 0; overflow: hidden;" aria-labelledby="import-history-title">
+    <div style="padding: var(--space-5); border-bottom: 1px solid var(--border-color);">
+        <h2 id="import-history-title" class="card__title">Historial de importaciones</h2>
+        <p class="page-header__subtitle" style="margin-top: 4px;">Resultado, origen y errores de los últimos 20 lotes procesados.</p>
+    </div>
+    <div class="data-table-wrap">
+        <table class="data-table" style="min-width: 1050px;">
+            <caption class="sr-only">Últimos lotes de importación</caption>
+            <thead><tr><th scope="col">Fecha</th><th scope="col">Tipo</th><th scope="col">Archivo</th><th scope="col">Usuario</th><th scope="col">Total</th><th scope="col">Creadas</th><th scope="col">Actualizadas</th><th scope="col">Rechazadas</th><th scope="col">Estado</th><th scope="col">Detalle</th></tr></thead>
+            <tbody>
+                {% for lote in lotes_importacion %}
+                <tr>
+                    <td>{{ lote.creado_en|date:"d/m/Y H:i" }}</td>
+                    <td>{{ lote.tipo }}</td>
+                    <td>{{ lote.archivo_origen }}</td>
+                    <td>{{ lote.usuario.username|default:"Sistema" }}</td>
+                    <td>{{ lote.total_filas }}</td>
+                    <td>{{ lote.filas_creadas }}</td>
+                    <td>{{ lote.filas_actualizadas }}</td>
+                    <td>{{ lote.filas_rechazadas }}</td>
+                    <td><span class="status-badge {% if lote.estado == 'COMPLETADO' %}status-badge--free{% elif lote.estado == 'FALLIDO' %}status-badge--busy{% else %}status-badge--reserved{% endif %}">{{ lote.get_estado_display }}</span></td>
+                    <td>
+                        {% if lote.detalle_errores %}
+                        <details><summary>Ver errores</summary><ul style="padding: 8px 0 0 18px;">{% for error in lote.detalle_errores %}<li>{{ error }}</li>{% endfor %}</ul></details>
+                        {% else %}Sin errores{% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="10" class="data-table__empty">Todavía no hay lotes registrados. Las próximas cargas aparecerán aquí.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+
+<!-- Modal Importación Genérico -->
+<div id="importModal" class="modal-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); backdrop-filter:blur(8px); z-index:3000; align-items:center; justify-content:center; animation: fadeInSaas 0.2s ease;">
+    <div class="modal-content" style="max-width: 850px; width: 95%; background:var(--bg-surface); border-radius:24px; border:1px solid var(--border-color); box-shadow:0 25px 50px -12px rgba(0,0,0,0.5); overflow: hidden; animation: scaleUpSaas 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);">
+        <div class="modal-header" style="padding: 24px 32px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; background: var(--bg-surface-2);">
+            <h3 id="importModalTitle" style="margin:0; font-size: 20px; font-weight: 800; color: var(--text-primary);">Importar Datos</h3>
+            <button onclick="closeImportModal()" class="btn-close" style="background:none; border:none; color:var(--text-tertiary); font-size:24px; cursor:pointer;">&times;</button>
+        </div>
+        <div class="modal-body" style="padding: 32px; max-height: 70vh; overflow-y: auto;">
+            <div id="importModalRequirements"></div>
+            
+            <form id="importModalForm" method="post" enctype="multipart/form-data" style="margin-top: 32px;">
+                {% csrf_token %}
+                <div class="form-group" style="background: var(--bg-surface-2); padding: 20px; border-radius: 16px; border: 1px dashed var(--border-color);">
+                    <label id="importModalLabel" class="form-label" style="display: block; margin-bottom: 12px; font-weight: 600; color: var(--text-secondary);">Seleccionar Archivo</label>
+                    <input type="file" id="importModalFile" name="csv_file" class="form-control" required style="width: 100%;">
+                </div>
+                
+                <div style="display:flex; gap:12px; margin-top:32px; justify-content: flex-end;">
+                    <button type="button" onclick="closeImportModal()" class="btn btn--secondary" style="padding: 12px 24px; border-radius: 12px;">Cancelar</button>
+                    <button type="submit" class="btn btn--primary" style="padding: 12px 32px; border-radius: 12px; font-weight: 700; box-shadow: 0 10px 15px -3px rgba(37, 99, 235, 0.3);">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px; vertical-align: middle;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+                        Subir Archivo
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<style>
+@keyframes fadeInSaas { from { opacity: 0; } to { opacity: 1; } }
+@keyframes scaleUpSaas { from { transform: scale(0.9) translateY(20px); opacity: 0; } to { transform: scale(1) translateY(0); opacity: 1; } }
+@keyframes slideInUpSaas { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+</style>
+
+{# ─── Templates de Requisitos ─── #}
+<template id="tmpl-equipos_otu">
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Equipos y Puertos OTU</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Columnas requeridas:</p>
+        <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
+            <span class="badge badge--accent">Latitude</span> <span class="badge badge--accent">Longitude</span>
+            <span class="badge badge--accent">Descripcion</span> <span class="badge badge--accent">OTU</span>
+            <span class="badge badge--accent">Modelo</span> <span class="badge badge--accent">Puerto monitoreados</span>
+            <span class="badge badge--accent">Puertos libres</span> <span class="badge badge--accent">Puerto</span>
+            <span class="badge badge--accent">Estado</span> <span class="badge badge--accent">Enlaces</span>
+        </div>
+        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo:</h5>
+        <div style="overflow-x: auto; margin-top: 8px; border: 1px solid var(--border-color); border-radius: 8px;">
+            <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);">
+                <thead style="border-bottom:1px solid var(--border-color);background:var(--bg-surface-2);color:var(--text-secondary);">
+                    <tr>
+                        <th style="text-align:left;padding:6px 12px;">Latitude</th>
+                        <th style="text-align:center;padding:6px;">Longitude</th>
+                        <th style="text-align:left;padding:6px;">Descripcion</th>
+                        <th style="text-align:center;padding:6px;">OTU</th>
+                        <th style="text-align:center;padding:6px;">Modelo</th>
+                        <th style="text-align:center;padding:6px;">Puerto</th>
+                        <th style="text-align:center;padding:6px;">Estado</th>
+                        <th style="text-align:left;padding:6px;">Enlaces</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid var(--border-color);">
+                        <td style="padding:6px 12px;">-33.4041276</td>
+                        <td style="text-align:center;padding:6px;">-70.6712350</td>
+                        <td style="font-weight:600;color:var(--text-primary);padding:6px;">Hub Independencia odf TR02</td>
+                        <td style="text-align:center;padding:6px;">OTU-1</td>
+                        <td style="text-align:center;padding:6px;">NQI-5000</td>
+                        <td style="text-align:center;padding:6px;">1</td>
+                        <td style="text-align:center;padding:6px;"><span class="badge badge--success">Libre</span></td>
+                        <td style="padding:6px;">-</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid var(--border-color);">
+                        <td style="padding:6px 12px;">-33.4042727</td>
+                        <td style="text-align:center;padding:6px;">-70.6711975</td>
+                        <td style="font-weight:600;color:var(--text-primary);padding:6px;">Hub Independencia odf TR02</td>
+                        <td style="text-align:center;padding:6px;">OTU-1</td>
+                        <td style="text-align:center;padding:6px;">NQI-5000</td>
+                        <td style="text-align:center;padding:6px;">2</td>
+                        <td style="text-align:center;padding:6px;"><span class="badge badge--warning">Ocupado</span></td>
+                        <td style="padding:6px;color:var(--text-secondary);">Lampa OLT1 Primario 42</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div style="margin-top: 16px; display: flex; justify-content: flex-start;">
+            <a href="/static/ejemplos/equipos_otu_ejemplo.csv" download class="btn btn--sm btn--secondary" style="font-size: 12px; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px; text-decoration: none;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Descargar Plantilla CSV Ejemplo
+            </a>
+        </div>
+    </div>
+</template>
+
+<template id="tmpl-ruta_otu">
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Troncales y Metadatos</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Columnas requeridas:</p>
+        <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
+            <span class="badge badge--accent">Troncal</span> <span class="badge badge--accent">OTU</span>
+            <span class="badge badge--accent">Distancia (m)</span> <span class="badge badge--accent">OLT</span>
+            <span class="badge badge--accent">SLOT OLT</span> <span class="badge badge--accent">PUERTO OLT</span>
+            <span class="badge badge--accent">PON</span> <span class="badge badge--accent">Enlace PON Traxium</span>
+        </div>
+        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo:</h5>
+        <div style="overflow-x: auto; margin-top: 8px; border: 1px solid var(--border-color); border-radius: 8px;">
+            <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);">
+                <thead style="border-bottom:1px solid var(--border-color);background:var(--bg-surface-2);color:var(--text-secondary);">
+                    <tr>
+                        <th style="text-align:left;padding:6px 12px;">Troncal</th>
+                        <th style="text-align:center;padding:6px;">OTU</th>
+                        <th style="text-align:center;padding:6px;">Distancia (m)</th>
+                        <th style="text-align:left;padding:6px;">OLT</th>
+                        <th style="text-align:center;padding:6px;">SLOT OLT</th>
+                        <th style="text-align:center;padding:6px;">PUERTO OLT</th>
+                        <th style="text-align:center;padding:6px;">PON</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid var(--border-color);">
+                        <td style="padding:6px 12px;font-weight:600;color:var(--text-primary);">Lampa OLT1 Primario 42</td>
+                        <td style="text-align:center;padding:6px;">OTU-1</td>
+                        <td style="text-align:center;padding:6px;">12500</td>
+                        <td style="padding:6px;">Lampa OLT 01</td>
+                        <td style="text-align:center;padding:6px;">3</td>
+                        <td style="text-align:center;padding:6px;">2</td>
+                        <td style="text-align:center;padding:6px;">PON-3-2</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div style="margin-top: 16px; display: flex; justify-content: flex-start;">
+            <a href="/static/ejemplos/rutas_ejemplo.csv" download class="btn btn--sm btn--secondary" style="font-size: 12px; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px; text-decoration: none;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Descargar Plantilla CSV Ejemplo
+            </a>
+        </div>
+    </div>
+</template>
+
+<template id="tmpl-coordenadas_rutas">
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del Archivo ZIP</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);">Archivo <code>.zip</code> con múltiples <code>.csv</code>. El nombre de cada CSV debe coincidir con el nombre de una troncal. Columnas mínimas: <span class="badge badge--accent">Latitude</span> <span class="badge badge--accent">Longitude</span></p>
+    </div>
+</template>
+
+<template id="tmpl-coordenadas_rutas_csv">
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Trazado de Troncales Unificado</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">
+            Sube un único archivo <code>.csv</code> que contenga las coordenadas de trazado simple para múltiples troncales a la vez. No requiere comprimir en ZIP.
+        </p>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Columnas requeridas:</p>
+        <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
+            <span class="badge badge--success">Troncal</span> 
+            <span class="badge badge--accent">Latitude</span> 
+            <span class="badge badge--accent">Longitude</span>
+        </div>
+        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo:</h5>
+        <div style="overflow-x: auto; margin-top: 8px; border: 1px solid var(--border-color); border-radius: 8px;">
+            <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);">
+                <thead style="border-bottom:1px solid var(--border-color);background:var(--bg-surface-2);color:var(--text-secondary);">
+                    <tr>
+                        <th style="text-align:left;padding:6px 12px;">Troncal</th>
+                        <th style="text-align:center;padding:6px;">Latitude</th>
+                        <th style="text-align:center;padding:6px;">Longitude</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid var(--border-color);">
+                        <td style="padding:6px 12px;font-weight:600;color:var(--text-primary);">Lampa OLT1 Primario 42</td>
+                        <td style="text-align:center;padding:6px;">-33.4041276</td>
+                        <td style="text-align:center;padding:6px;">-70.6712350</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid var(--border-color);">
+                        <td style="padding:6px 12px;font-weight:600;color:var(--text-primary);">Lampa OLT1 Primario 42</td>
+                        <td style="text-align:center;padding:6px;">-33.4042727</td>
+                        <td style="text-align:center;padding:6px;">-70.6711975</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div style="margin-top: 16px; display: flex; justify-content: flex-start;">
+            <a href="/static/ejemplos/trazado_simple_ejemplo.csv" download class="btn btn--sm btn--secondary" style="font-size: 12px; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px; text-decoration: none;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Descargar Plantilla CSV Ejemplo
+            </a>
+        </div>
+    </div>
+</template>
+
+<template id="tmpl-reservas">
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: reservas y elementos</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Columnas requeridas:</p>
+        <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
+            <span class="badge badge--accent">Nombre (Landmark name)</span> <span class="badge badge--accent">Tipo (Connection type)</span>
+            <span class="badge badge--accent">Reserva (m)</span> <span class="badge badge--accent">Latitud</span>
+            <span class="badge badge--accent">Longitud</span> <span class="badge badge--accent">Enlace</span>
+        </div>
+        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo:</h5>
+        <div style="overflow-x: auto; margin-top: 8px; border: 1px solid var(--border-color); border-radius: 8px;">
+            <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);">
+                <thead style="border-bottom:1px solid var(--border-color);background:var(--bg-surface-2);color:var(--text-secondary);">
+                    <tr>
+                        <th style="text-align:left;padding:6px 12px;">Nombre del elemento</th>
+                        <th style="text-align:center;padding:6px;">Connection type</th>
+                        <th style="text-align:center;padding:6px;">Reserva (m)</th>
+                        <th style="text-align:center;padding:6px;">Latitud</th>
+                        <th style="text-align:center;padding:6px;">Longitud</th>
+                        <th style="text-align:left;padding:6px;">Enlace</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid var(--border-color);">
+                        <td style="padding:6px 12px;font-weight:600;color:var(--text-primary);">Mufa Lampa 01</td>
+                        <td style="text-align:center;padding:6px;">Mufa</td>
+                        <td style="text-align:center;padding:6px;">20</td>
+                        <td style="text-align:center;padding:6px;">-33.4048927</td>
+                        <td style="text-align:center;padding:6px;">-70.6735327</td>
+                        <td style="padding:6px;">Lampa OLT1 Primario 42</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid var(--border-color);">
+                        <td style="padding:6px 12px;font-weight:600;color:var(--text-primary);">Cámara Recoleta 04</td>
+                        <td style="text-align:center;padding:6px;">Cámara</td>
+                        <td style="text-align:center;padding:6px;">-</td>
+                        <td style="text-align:center;padding:6px;">-33.4215000</td>
+                        <td style="text-align:center;padding:6px;">-70.6890000</td>
+                        <td style="padding:6px;">Recoleta OLT2 Secundario 15</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div style="margin-top: 16px; display: flex; justify-content: flex-start;">
+            <a href="/static/ejemplos/reservas_ejemplo.csv" download class="btn btn--sm btn--secondary" style="font-size: 12px; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px; text-decoration: none;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Descargar Plantilla CSV Ejemplo
+            </a>
+        </div>
+    </div>
+</template>
+
+<template id="tmpl-asociar_puertos">
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Propósito y Columnas Requeridas</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">
+            Re-lee el archivo de Equipos OTU para establecer la vinculación definitiva entre los puertos monitoreados y sus troncales asociadas.
+        </p>
+        <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
+            <span class="badge badge--accent">Descripcion</span> <span class="badge badge--accent">Puerto</span> <span class="badge badge--accent">Enlaces</span>
+        </div>
+        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo:</h5>
+        <div style="overflow-x: auto; margin-top: 8px; border: 1px solid var(--border-color); border-radius: 8px;">
+            <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);">
+                <thead style="border-bottom:1px solid var(--border-color);background:var(--bg-surface-2);color:var(--text-secondary);">
+                    <tr>
+                        <th style="text-align:left;padding:6px 12px;">Descripcion</th>
+                        <th style="text-align:center;padding:6px;">Puerto</th>
+                        <th style="text-align:left;padding:6px;">Enlaces</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid var(--border-color);">
+                        <td style="padding:6px 12px;font-weight:600;color:var(--text-primary);">Hub Independencia odf TR02</td>
+                        <td style="text-align:center;padding:6px;">2</td>
+                        <td style="padding:6px;color:var(--text-secondary);">Lampa OLT1 Primario 42</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid var(--border-color);">
+                        <td style="padding:6px 12px;font-weight:600;color:var(--text-primary);">Hub Recoleta odf TR01</td>
+                        <td style="text-align:center;padding:6px;">1</td>
+                        <td style="padding:6px;color:var(--text-secondary);">Recoleta OLT2 Secundario 15</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div style="margin-top: 16px; display: flex; justify-content: flex-start;">
+            <a href="/static/ejemplos/asociar_puertos_ejemplo.csv" download class="btn btn--sm btn--secondary" style="font-size: 12px; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px; text-decoration: none;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Descargar Plantilla CSV Ejemplo
+            </a>
+        </div>
+    </div>
+</template>
+
+<template id="tmpl-coordenadas_inventario">
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del Archivo ZIP (Inventario Geoespacial)</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);">Archivo <code>.zip</code> con múltiples <code>.csv</code>. El nombre de cada CSV debe coincidir con la troncal. Columnas soportadas:</p>
+        <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-top:var(--space-2);">
+            <span class="badge badge--accent">Latitude</span> <span class="badge badge--accent">Longitude</span> 
+            <span style="background:#3b82f6;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;">tipo_trazado</span>
+            <span style="background:#f59e0b;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;">new_seg (opcional)</span>
+        </div>
+        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo</h5>
+        <div style="overflow-x: auto; margin-top: 8px;">
+            <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);">
+                <thead style="border-bottom:1px solid var(--border-color);color:var(--text-secondary);">
+                    <tr><th style="text-align:left;padding:4px;">Latitude</th><th>Longitude</th><th>tipo_trazado</th><th>new_seg</th></tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid var(--border-color);">
+                        <td style="padding:4px;">-12.293</td><td style="text-align:center;">-76.830</td><td style="text-align:center;">AEREO</td><td style="text-align:center;">True</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</template>
+
+<template id="tmpl-coordenadas_csv">
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Coordenadas e Inventario Unificado</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">
+            Sube un único archivo <code>.csv</code> que contenga las coordenadas de múltiples troncales a la vez. No requiere comprimir en ZIP.
+        </p>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Columnas requeridas y recomendadas:</p>
+        <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
+            <span class="badge badge--success">Troncal (requerido)</span> 
+            <span class="badge badge--accent">Latitude (requerido)</span> 
+            <span class="badge badge--accent">Longitude (requerido)</span> 
+            <span style="background:#3b82f6;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;">tipo_trazado</span>
+            <span style="background:#8b5cf6;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;">hub_site (opcional)</span>
+            <span style="background:#f59e0b;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;">new_seg (opcional)</span>
+        </div>
+        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo:</h5>
+        <div style="overflow-x: auto; margin-top: 8px; border: 1px solid var(--border-color); border-radius: 8px;">
+            <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);">
+                <thead style="border-bottom:1px solid var(--border-color);background:var(--bg-surface-2);color:var(--text-secondary);">
+                    <tr>
+                        <th style="text-align:left;padding:6px 12px;">Troncal</th>
+                        <th style="text-align:center;padding:6px;">Latitude</th>
+                        <th style="text-align:center;padding:6px;">Longitude</th>
+                        <th style="text-align:center;padding:6px;">tipo_trazado</th>
+                        <th style="text-align:center;padding:6px;">hub_site</th>
+                        <th style="text-align:center;padding:6px;">new_seg</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid var(--border-color);">
+                        <td style="padding:6px 12px;font-weight:600;color:var(--text-primary);">Lampa OLT1 Primario 42</td>
+                        <td style="text-align:center;padding:6px;">-33.4041276</td>
+                        <td style="text-align:center;padding:6px;">-70.6712350</td>
+                        <td style="text-align:center;padding:6px;color:#3b82f6;font-weight:600;">AEREO</td>
+                        <td style="text-align:center;padding:6px;color:#8b5cf6;font-weight:600;">Hub Independencia</td>
+                        <td style="text-align:center;padding:6px;color:#94a3b8;">False</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid var(--border-color);">
+                        <td style="padding:6px 12px;font-weight:600;color:var(--text-primary);">Lampa OLT1 Primario 42</td>
+                        <td style="text-align:center;padding:6px;">-33.4042727</td>
+                        <td style="text-align:center;padding:6px;">-70.6711975</td>
+                        <td style="text-align:center;padding:6px;color:#f59e0b;font-weight:600;">SOTERRADO</td>
+                        <td style="text-align:center;padding:6px;color:#8b5cf6;"></td>
+                        <td style="text-align:center;padding:6px;color:#10b981;font-weight:700;">True</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <div style="margin-top: 16px; display: flex; justify-content: flex-start;">
+            <a href="/static/ejemplos/coordenadas_unificadas_ejemplo.csv" download class="btn btn--sm btn--secondary" style="font-size: 12px; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px; text-decoration: none;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Descargar Plantilla CSV Ejemplo
+            </a>
+        </div>
+    </div>
+</template>
+
+<template id="tmpl-tramos_inventario">
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Inventario Técnico</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Columnas disponibles (usa <span class="badge badge--accent">ruta/troncal</span> como clave):</p>
+        <div style="display:flex;flex-wrap:wrap;gap:4px; margin-bottom: 12px;">
+            <span class="badge badge--accent">ruta/troncal</span><span class="badge badge--accent">estado</span><span class="badge badge--accent">distancia</span><span class="badge badge--accent">mufas</span><span class="badge badge--accent">splitters</span><span class="badge badge--accent">reservas_m</span><span class="badge badge--accent">capacidad</span><span class="badge badge--accent">tipo_fibra</span><span class="badge badge--accent">origen</span><span class="badge badge--accent">destino</span><span class="badge badge--accent">hub_site</span><span class="badge badge--accent">marca_modelo</span><span class="badge badge--accent">serial</span><span class="badge badge--accent">odf_nombre</span><span class="badge badge--accent">hilos_ocupados</span><span class="badge badge--accent">hilos_libres</span>
+        </div>
+        <h5 style="font-size:12px;color:var(--text-primary);margin-bottom:8px;">Ejemplo de Fila:</h5>
+        <div style="overflow-x: auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);min-width:1200px;">
+                <thead style="border-bottom:1px solid var(--border-color);color:var(--text-secondary);">
+                    <tr><th style="text-align:left;padding:4px;">ruta/troncal</th><th>estado</th><th>distancia</th><th>mufas</th><th>splitters</th><th>reservas_m</th><th>capacidad</th><th>tipo_fibra</th><th>origen</th><th>destino</th><th>hub_site</th><th>marca_modelo</th><th>serial</th><th>odf_nombre</th><th>hilos_ocupados</th><th>hilos_libres</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td style="padding:4px;">Colina OLT1...</td><td style="text-align:center;">ACTIVO</td><td style="text-align:center;">36.86</td><td style="text-align:center;">2</td><td style="text-align:center;">0</td><td style="text-align:center;">2.97</td><td style="text-align:center;">144 fibras</td><td style="text-align:center;">G.652D</td><td style="text-align:center;">Indep.</td><td style="text-align:center;">Colina</td><td style="text-align:center;">Indep.</td><td style="text-align:center;">Cable FO</td><td style="text-align:center;">S/N</td><td style="text-align:center;">TR01</td><td style="text-align:center;">0</td><td style="text-align:center;">144</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</template>
+
+<template id="tmpl-fibras_inventario">
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Detalle de Fibras</h4>
+        <div style="display:flex;flex-wrap:wrap;gap:4px; margin-bottom: 12px;">
+            <span class="badge badge--accent">Troncal</span><span class="badge badge--accent">Fibra</span><span class="badge badge--accent">Estado</span><span class="badge badge--accent">Tipo de Servicio</span><span class="badge badge--accent">Origen</span><span class="badge badge--accent">Destino</span><span class="badge badge--accent">Conector</span>
+        </div>
+        <div style="overflow-x: auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);min-width:900px;">
+                <thead style="border-bottom:1px solid var(--border-color);color:var(--text-secondary);">
+                    <tr><th style="text-align:left;padding:4px;">Troncal</th><th>Fibra</th><th>Estado</th><th>Tipo de Servicio</th><th>Origen</th><th>Destino</th><th>Conector</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td style="padding:4px;">TR01_LMLO...</td><td style="text-align:center;">F61</td><td style="text-align:center;">Ocupado</td><td style="text-align:center;">Reserva TR01</td><td style="text-align:center;">TR01</td><td style="text-align:center;">LMLO123-F</td><td style="text-align:center;">SC/APC</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</template>
+
+<template id="tmpl-odf_inventario">
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Inventario de ODFs</h4>
+        <div style="display:flex;flex-wrap:wrap;gap:4px; margin-bottom: 12px;">
+            <span class="badge badge--accent">odf</span><span class="badge badge--accent">hub_site</span><span class="badge badge--accent">sala</span><span class="badge badge--accent">rack</span><span class="badge badge--accent">troncal</span><span class="badge badge--accent">capacidad_puertos</span><span class="badge badge--accent">tipo_conector</span><span class="badge badge--accent">estado</span><span class="badge badge--accent">observaciones</span>
+        </div>
+        <div style="overflow-x: auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);min-width:800px;">
+                <thead style="border-bottom:1px solid var(--border-color);color:var(--text-secondary);">
+                    <tr><th style="text-align:left;padding:4px;">odf</th><th>hub_site</th><th>sala</th><th>rack</th><th>troncal</th><th>capacidad_puertos</th><th>tipo_conector</th><th>estado</th><th>observaciones</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td style="padding:4px;">TR01</td><td style="text-align:center;">Los Olivos</td><td style="text-align:center;">F01</td><td style="text-align:center;">01</td><td style="text-align:center;">Troncal A</td><td style="text-align:center;">144</td><td style="text-align:center;">SC/APC</td><td style="text-align:center;">Activo</td><td style="text-align:center;">Operativo</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</template>
+
+<template id="tmpl-puertos_odf_inventario">
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Puertos ODF</h4>
+        <div style="display:flex;flex-wrap:wrap;gap:4px; margin-bottom: 12px;">
+            <span class="badge badge--accent">hub_site</span><span class="badge badge--accent">odf</span><span class="badge badge--accent">puerto_odf</span><span class="badge badge--accent">bandeja</span><span class="badge badge--accent">fibra</span><span class="badge badge--accent">estado_puerto</span><span class="badge badge--accent">tipo_conector</span><span class="badge badge--accent">patchcord</span><span class="badge badge--accent">destino</span><span class="badge badge--accent">observaciones</span>
+        </div>
+        <div style="overflow-x: auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);min-width:1000px;">
+                <thead style="border-bottom:1px solid var(--border-color);color:var(--text-secondary);">
+                    <tr><th style="text-align:left;padding:4px;">hub_site</th><th>odf</th><th>puerto_odf</th><th>bandeja</th><th>fibra</th><th>estado_puerto</th><th>tipo_conector</th><th>patchcord</th><th>destino</th><th>observaciones</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td style="padding:4px;">Independencia</td><td style="text-align:center;">TR01</td><td style="text-align:center;">61</td><td style="text-align:center;">B01</td><td style="text-align:center;">F61</td><td style="text-align:center;">Ocupado</td><td style="text-align:center;">SC/APC</td><td style="text-align:center;">Sí</td><td style="text-align:center;">LMLO123-F</td><td style="text-align:center;">Operativo</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</template>
+
+<script>
+const impModal = document.getElementById('importModal');
+
+function openImportModal(tipo, nombre) {
+    document.getElementById('importModalTitle').textContent = nombre;
+    document.getElementById('importModalForm').action = `/cargar-csv/${tipo}/`;
+    
+    const label = document.getElementById('importModalLabel');
+    const fileInput = document.getElementById('importModalFile');
+    if (tipo === 'coordenadas_rutas' || tipo === 'coordenadas_inventario') {
+        label.textContent = "Seleccionar Archivo ZIP (.zip)";
+        fileInput.accept = ".zip";
+    } else {
+        label.textContent = "Seleccionar Archivo CSV (.csv)";
+        fileInput.accept = ".csv";
+    }
+    
+    const tmpl = document.getElementById('tmpl-' + tipo);
+    const container = document.getElementById('importModalRequirements');
+    container.innerHTML = '';
+    if (tmpl) container.appendChild(tmpl.content.cloneNode(true));
+    
+    impModal.style.display = 'flex';
+}
+
+function closeImportModal() { impModal.style.display = 'none'; }
+</script>
+
+<script>
+function toggleImportMode() {
+    const isOperativo = document.getElementById('modeToggle').checked;
+    const flujoOperativo = document.getElementById('flujoOperativo');
+    const lblInventario = document.getElementById('lblInventario');
+    const lblOperativo = document.getElementById('lblOperativo');
+
+    if (isOperativo) {
+        flujoOperativo.style.display = 'block';
+        lblOperativo.style.color = 'var(--accent)';
+        lblInventario.style.color = 'var(--text-tertiary)';
+    } else {
+        flujoOperativo.style.display = 'none';
+        lblInventario.style.color = 'var(--accent)';
+        lblOperativo.style.color = 'var(--text-tertiary)';
+    }
+}
+</script>
+{% endblock %}

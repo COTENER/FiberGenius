@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Puertos ODF — Fiber Genius{% endblock %}
+{% block page_title %}Inventario / Puertos ODF{% endblock %}
+
+{% block content %}
+<div
+    id="ports-workbench"
+    class="operational-page"
+    data-api-url="{% url 'api_puertos_paginados' %}"
+    data-export-csv="{% url 'exportar_inventario' 'puertos' 'csv' %}"
+    data-export-xlsx="{% url 'exportar_inventario' 'puertos' 'xlsx' %}"
+>
+    <header class="operational-header">
+        <div>
+            <h1>Puertos de ODF</h1>
+            <p>Consulta operativa paginada de Site → sala → rack → ODF → puerto → fibra → destino.</p>
+        </div>
+        <div class="export-actions" aria-label="Exportar consulta de puertos">
+            <a id="ports-export-csv" class="btn btn--secondary" href="#">Exportar CSV</a>
+            <a id="ports-export-xlsx" class="btn btn--secondary" href="#">Exportar Excel</a>
+        </div>
+    </header>
+
+    <section class="card data-card" aria-labelledby="ports-table-title">
+        <form id="ports-filters" class="data-toolbar" role="search">
+            <div class="data-toolbar__field data-toolbar__search">
+                <label for="ports-query">Buscar</label>
+                <input id="ports-query" name="q" type="search" placeholder="ODF, puerto, fibra, destino, Site, sala o rack" autocomplete="off">
+            </div>
+            <div class="data-toolbar__field">
+                <label for="ports-status-filter">Estado</label>
+                <select id="ports-status-filter" name="estado">
+                    <option value="">Todos</option>
+                    <option value="Libre">Libre</option>
+                    <option value="Ocupado">Ocupado</option>
+                </select>
+            </div>
+            <div class="data-toolbar__field">
+                <label for="ports-page-size">Filas por página</label>
+                <select id="ports-page-size" name="page_size">
+                    <option value="25">25</option>
+                    <option value="50" selected>50</option>
+                    <option value="100">100</option>
+                    <option value="200">200</option>
+                </select>
+            </div>
+            <button class="btn btn--primary" type="submit">Aplicar filtros</button>
+            <button id="ports-clear" class="btn btn--secondary" type="button">Limpiar</button>
+        </form>
+
+        <div id="ports-message" class="filter-message" role="status" aria-live="polite"></div>
+        <div class="data-table-wrap">
+            <table class="data-table">
+                <caption id="ports-table-title" class="sr-only">Puertos de ODF filtrados</caption>
+                <thead>
+                    <tr>
+                        <th scope="col">Site</th>
+                        <th scope="col">Sala</th>
+                        <th scope="col">Rack</th>
+                        <th scope="col">ODF</th>
+                        <th scope="col">Bandeja</th>
+                        <th scope="col">Puerto</th>
+                        <th scope="col">Fibra óptica</th>
+                        <th scope="col">Estado</th>
+                        <th scope="col">Conector</th>
+                        <th scope="col">Patchcord</th>
+                        <th scope="col">Destino</th>
+                        <th scope="col">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody id="ports-body"></tbody>
+            </table>
+        </div>
+
+        <footer class="data-footer">
+            <p id="ports-page-info" class="data-footer__status">Preparando consulta…</p>
+            <div class="data-footer__buttons">
+                <button id="ports-previous" class="btn btn--secondary" type="button">Anterior</button>
+                <button id="ports-next" class="btn btn--secondary" type="button">Siguiente</button>
+            </div>
+        </footer>
+    </section>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/planta-interna-paginada.js' %}"></script>
+{% endblock %}

@@ -1,0 +1,335 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Dashboard{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+{% block content_class %}{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* ─── Dashboard-specific styles ─── */
+    .dash-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-4); margin-bottom: var(--space-6); }
+    .dash-filters {
+        display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap;
+        padding: var(--space-3) var(--space-4); background: var(--bg-surface);
+        border: 1px solid var(--border-color); border-radius: var(--radius-lg); margin-bottom: var(--space-5);
+    }
+    .dash-filters-left { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+    .dash-filters-right { display: flex; align-items: center; gap: var(--space-3); }
+    .dash-filters .form-control { width: auto; min-width: 130px; padding: var(--space-2) var(--space-3); font-size: var(--text-sm); }
+    
+    /* Cross Filtering Badges */
+    .active-filters-container { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-bottom: var(--space-4); min-height: 24px; }
+    .filter-badge {
+        display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
+        background: var(--bg-hover); border: 1px solid var(--border-color); border-radius: 99px;
+        font-size: 11px; font-weight: 600; color: var(--text-secondary);
+    }
+    .filter-badge__clear { cursor: pointer; color: var(--text-tertiary); display: flex; transition: color 0.2s; }
+    .filter-badge__clear:hover { color: var(--danger, #ef4444); }
+
+    .dash-charts { display: grid; grid-template-columns: repeat(12, 1fr); gap: var(--space-5); }
+    .chart-card {
+        background: var(--bg-surface); border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg); padding: var(--space-4);
+        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05); transition: box-shadow var(--transition-fast);
+        display: flex; flex-direction: column; position: relative; overflow: hidden;
+    }
+    .chart-card:hover { box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1); }
+    
+    .col-span-12 { grid-column: span 12; }
+    .col-span-9 { grid-column: span 9; }
+    .col-span-8 { grid-column: span 8; }
+    .col-span-6 { grid-column: span 6; }
+    .col-span-5 { grid-column: span 5; }
+    .col-span-4 { grid-column: span 4; }
+    .col-span-3 { grid-column: span 3; }
+
+    .chart-card__title {
+        font-size: var(--text-sm); font-weight: 600; color: var(--text-secondary);
+        margin-bottom: var(--space-2); text-transform: uppercase; letter-spacing: 0.05em; z-index: 1;
+    }
+    .chart-card__subtitle {
+        font-size: 11px; color: var(--text-tertiary); margin-bottom: var(--space-3); z-index: 1;
+    }
+    
+    /* Advanced KPI Cards */
+    .stat-card {
+        position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between;
+        padding: var(--space-4); background: var(--bg-surface); border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg); box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+    }
+    .stat-card__top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: var(--space-2); z-index: 1; }
+    .stat-card__icon-wrapper {
+        display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 50%;
+    }
+    .stat-card__icon-wrapper--blue { background: #eff6ff; color: #3b82f6; }
+    .stat-card__icon-wrapper--indigo { background: #eef2ff; color: #6366f1; }
+    .stat-card__icon-wrapper--emerald { background: #ecfdf5; color: #10b981; }
+    .stat-card__icon-wrapper--amber { background: #fffbeb; color: #f59e0b; }
+    .stat-card__icon-wrapper svg { width: 20px; height: 20px; }
+    
+    .stat-card__main { display: flex; flex-direction: column; z-index: 1; }
+    .stat-card__label { font-size: var(--text-sm); font-weight: 500; color: var(--text-secondary); margin-bottom: 4px; }
+    .stat-card__value-row { display: flex; align-items: baseline; gap: 8px; }
+    .stat-card__value { font-size: var(--text-2xl); font-weight: 700; color: var(--text-primary); line-height: 1; }
+    
+    .trend-indicator { font-size: 11px; font-weight: 600; display: flex; align-items: center; gap: 2px; padding: 2px 6px; border-radius: 4px; }
+    .trend-indicator.up { background: #ecfdf5; color: #059669; }
+    .trend-indicator.down { background: #fef2f2; color: #dc2626; }
+    .trend-indicator.neutral { background: #f1f5f9; color: #475569; }
+    
+    .stat-card__sparkline { position: absolute; bottom: 0; left: 0; right: 0; height: 40px; opacity: 0.6; pointer-events: none; }
+    .apexcharts-canvas { margin: 0 auto; }
+    .dash-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-4); flex-wrap: wrap; gap: var(--space-3); }
+    .dash-header__title { font-size: var(--text-xl); font-weight: 700; color: var(--text-primary); }
+    .export-btn {
+        display: flex; align-items: center; gap: var(--space-2);
+        padding: var(--space-2) var(--space-4); background: var(--bg-surface);
+        border: 1px solid var(--border-color); border-radius: var(--radius-md);
+        color: var(--text-secondary); cursor: pointer; font-size: var(--text-sm);
+        font-family: var(--font-sans); transition: all var(--transition-fast);
+    }
+    .export-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .export-btn svg { width: 16px; height: 16px; }
+    
+    /* FIX: Force gray background uniformly everywhere (even before JS) */
+    html, body { background-color: #f1f5f9 !important; }
+    [data-theme="dark"] body, [data-theme="dark"] html { background-color: #0c1222 !important; }
+    .app, .main-wrapper, .main-content { transition: none !important; }
+
+    /* Print Styles for PDF Export */
+    @media print {
+        @page { 
+            size: A4 landscape; 
+            margin: 0 !important; /* Forces removal of browser-added headers and footers */
+        } 
+        html, body { 
+            width: 297mm !important; height: 210mm !important; 
+            margin: 0 !important; padding: 0 !important;
+            -webkit-print-color-adjust: exact !important; 
+            print-color-adjust: exact !important; 
+            background: white !important; 
+        }
+        body * { visibility: hidden; }
+        .sidebar, .topbar, .dash-filters, .dash-header button, .active-filters-container, .sidebar-overlay { display: none !important; }
+        
+        .main-content { 
+            position: absolute !important; left: 0 !important; top: 0 !important;
+            margin: 0 !important; padding: 10mm !important; 
+            width: 297mm !important; box-sizing: border-box !important;
+            background: white !important; 
+        }
+        
+        .dash-header, .dash-header *, .dash-stats, .dash-stats *, .dash-charts, .dash-charts * { visibility: visible; }
+        
+        .dash-header { position: absolute; top: 10mm; left: 10mm; width: calc(100% - 20mm); margin-bottom: 0; }
+        .dash-stats { position: absolute; top: 25mm; left: 10mm; width: calc(100% - 20mm); gap: 10px !important; }
+        
+        /* Reset layout for print to avoid overflowing graphics */
+        .dash-charts { 
+            position: absolute; top: 60mm; left: 10mm; width: calc(100% - 20mm); 
+            display: grid; grid-template-columns: repeat(12, 1fr) !important; 
+            gap: 15px !important; margin: 0 !important; padding: 0 !important; 
+        }
+        
+        .chart-card { border: 1px solid #ddd; box-shadow: none !important; break-inside: avoid; background-color: white !important; }
+        
+        /* Light theme overrides for PDF clarity */
+        html, body, .app, .main-wrapper { --bg-surface: #fff; --text-primary: #000; --text-secondary: #333; --border-color: #ddd; background-color: white !important; }
+    }
+
+    @media (max-width: 1024px) { 
+        .dash-stats { grid-template-columns: repeat(2, 1fr); } 
+        .col-span-12, .col-span-9, .col-span-8, .col-span-6, .col-span-5, .col-span-4, .col-span-3 { grid-column: span 12; } 
+    }
+    @media (max-width: 640px) { .dash-stats { grid-template-columns: 1fr; } }
+</style>
+{% endblock %}
+
+{% block content %}
+{# ─── Header + Filters ─── #}
+<div class="dash-header">
+    <h1 class="dash-header__title">Reporte de Sistema Proactivo</h1>
+    <button id="export-all-charts-btn" class="export-btn" title="Exportar Vista a PDF">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+        Exportar PDF
+    </button>
+</div>
+
+<div class="dash-filters">
+    <div class="dash-filters-left">
+        <form method="get" id="filtro-form" style="display:contents;">
+            <input type="hidden" name="severidad" id="input-severidad" value="">
+            <input type="hidden" name="tipo_evento" id="input-tipo_evento" value="">
+            
+            <label class="form-label" style="margin:0;">Año:</label>
+            <select name="anio" id="anio" class="form-control">
+                <option value="">Todos</option>
+                {% for a in anios_disponibles %}
+                <option value="{{ a }}" {% if a|stringformat:"s" == request.GET.anio|stringformat:"s" %}selected{% endif %}>{{ a }}</option>
+                {% endfor %}
+            </select>
+
+            <label class="form-label" style="margin:0;">OTU:</label>
+            <select name="otu" id="otu" class="form-control">
+                <option value="">Todas</option>
+                {% for otu in otus_disponibles %}
+                <option value="{{ otu }}" {% if otu == otu_seleccionada %}selected{% endif %}>{{ otu }}</option>
+                {% endfor %}
+            </select>
+
+            <label class="form-label" style="margin:0;">Troncal:</label>
+            <select name="ruta" id="ruta" class="form-control">
+                <option value="">Todas</option>
+                {% for ruta in rutas_disponibles %}
+                <option value="{{ ruta }}" {% if ruta == ruta_seleccionada %}selected{% endif %}>{{ ruta }}</option>
+                {% endfor %}
+            </select>
+        </form>
+    </div>
+    <div class="dash-filters-right">
+        <button type="button" id="btn-reset-filters" class="btn btn--ghost btn--icon" title="Limpiar todos los filtros" style="display:none;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+            Limpiar Vista
+        </button>
+    </div>
+</div>
+
+<div class="active-filters-container" id="active-filters">
+    <!-- Badges inyectados via JS -->
+</div>
+
+{# ─── KPI Cards ─── #}
+<div class="dash-stats">
+    <div class="stat-card">
+        <div class="stat-card__top">
+            <div class="stat-card__main">
+                <span class="stat-card__label">Total Eventos</span>
+                <div class="stat-card__value-row">
+                    <span class="stat-card__value data-total-eventos">{{ cantidad_eventos }}</span>
+                </div>
+            </div>
+            <div class="stat-card__icon-wrapper stat-card__icon-wrapper--blue">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+            </div>
+        </div>
+        <div class="stat-card__sparkline" id="spark1"></div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card__top">
+            <div class="stat-card__main">
+                <span class="stat-card__label">Troncales Monitoreados</span>
+                <div class="stat-card__value-row">
+                    <span class="stat-card__value data-total-rutas">{{ rutas_disponibles|length }}</span>
+                </div>
+            </div>
+            <div class="stat-card__icon-wrapper stat-card__icon-wrapper--indigo">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s-8-4.5-8-11.8A8 8 0 0 1 12 2a8 8 0 0 1 8 8.2c0 7.3-8 11.8-8 11.8z"/><circle cx="12" cy="10" r="3"/></svg>
+            </div>
+        </div>
+        <div class="stat-card__sparkline" id="spark2"></div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card__top">
+            <div class="stat-card__main">
+                <span class="stat-card__label">OTUs Activas</span>
+                <div class="stat-card__value-row">
+                    <span class="stat-card__value data-total-otus">{{ otus_disponibles|length }}</span>
+                </div>
+            </div>
+            <div class="stat-card__icon-wrapper stat-card__icon-wrapper--emerald">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+            </div>
+        </div>
+        <div class="stat-card__sparkline" id="spark3"></div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-card__top">
+            <div class="stat-card__main">
+                <span class="stat-card__label">Años de Histórico</span>
+                <div class="stat-card__value-row">
+                    <span class="stat-card__value data-total-anios">{{ anios_disponibles|length }}</span>
+                </div>
+            </div>
+            <div class="stat-card__icon-wrapper stat-card__icon-wrapper--amber">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            </div>
+        </div>
+        <div class="stat-card__sparkline" id="spark4"></div>
+    </div>
+</div>
+
+{# ─── Charts Grid (Asymmetrical Layout) ─── #}
+<div class="dash-charts charts-section">
+    <!-- Row 1: Priority Stats -->
+    <div class="chart-card col-span-3">
+        <div class="chart-card__title">Tasa de Incidentes Activos</div>
+        <div class="chart-card__subtitle">Porcentaje histórico pendiente de cierre</div>
+        <div id="gaugeChart" style="display: flex; justify-content: center; align-items: center; flex: 1;"></div>
+    </div>
+    <div class="chart-card col-span-5">
+        <div class="chart-card__title">Top 5 Troncales Críticos</div>
+        <div class="chart-card__subtitle">Concentración de fallos físicos por segmento de fibra</div>
+        <div id="top5Chart"></div>
+    </div>
+    <div class="chart-card col-span-4">
+        <div class="chart-card__title">Distribución por Severidad</div>
+        <div class="chart-card__subtitle">Eventos según criticidad de negocio</div>
+        <div id="severidadChart"></div>
+    </div>
+    
+    <!-- Row 2: Evolutivo -->
+    <div class="chart-card col-span-8">
+        <div class="chart-card__title">Evolución Comparativa (YoY)</div>
+        <div class="chart-card__subtitle">Desempeño mensual respecto al año anterior</div>
+        <div id="yoyChart"></div>
+    </div>
+    <div class="chart-card col-span-4">
+        <div class="chart-card__title">Estado de Resolución</div>
+        <div class="chart-card__subtitle">Volumen de tickets pendientes vs cerrados</div>
+        <div id="estadoChart"></div>
+    </div>
+
+    <!-- Row 3: Gráficas de histórico trimestral (re-agregado) -->
+    <div class="chart-card col-span-4">
+        <div class="chart-card__title">Tipos de Severidad por Trimestre</div>
+        <div id="timeChart"></div>
+    </div>
+    <div class="chart-card col-span-4">
+        <div class="chart-card__title">Tipos de Eventos por Trimestres</div>
+        <div id="timeEvent"></div>
+    </div>
+    <div class="chart-card col-span-4">
+        <div class="chart-card__title">cantidad por Tipo de Evento y Año</div>
+        <div id="eventosPorTipoYAnio"></div>
+    </div>
+    
+    <!-- Row 4: Heatmap y Tipos -->
+    <div class="chart-card col-span-8">
+        <div class="chart-card__title">Heatmap Operativo</div>
+        <div class="chart-card__subtitle">Concentración estacional de incidentes por severidad (Mayor = Rojo)</div>
+        <div id="heatmapChart"></div>
+    </div>
+    <div class="chart-card col-span-4">
+        <div class="chart-card__title">Distribución por Tipo de Evento</div>
+        <div class="chart-card__subtitle">Desglose de fallos físicos y técnicos</div>
+        <div id="eventosChart"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ frontend_data|json_script:"django-data" }}
+<script src="{% static 'vendor/jquery/jquery-3.6.0.min.js' %}"></script>
+<!-- ApexCharts -->
+<script src="{% static 'vendor/apexcharts/apexcharts-5.16.0.min.js' %}"></script>
+
+<script>
+    const urlFiltros = "{% url 'dashboard' %}";
+    // Check local storage for initial theme if needed by JS charts before render
+    const initialTheme = localStorage.getItem('theme') || 'light';
+    if(initialTheme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+</script>
+<script src="{% static 'js/dashboard.js' %}?v=1.6"></script>
+{% endblock %}

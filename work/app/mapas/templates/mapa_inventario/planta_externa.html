@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Fibras y reservas — Fiber Genius{% endblock %}
+{% block page_title %}Inventario / Fibras y reservas{% endblock %}
+
+{% block content %}
+<div
+    id="outside-plant-workbench"
+    class="operational-page"
+    data-fibers-api="{% url 'api_fibras_paginadas' %}"
+    data-elements-api="{% url 'api_elementos_paginados' %}"
+    data-fibers-csv="{% url 'exportar_inventario' 'fibras' 'csv' %}"
+    data-fibers-xlsx="{% url 'exportar_inventario' 'fibras' 'xlsx' %}"
+    data-elements-csv="{% url 'exportar_inventario' 'elementos' 'csv' %}"
+    data-elements-xlsx="{% url 'exportar_inventario' 'elementos' 'xlsx' %}"
+    data-default-tab="{% if perms.mapas.view_inventariofibra %}fibras{% else %}elementos{% endif %}"
+>
+    <header class="operational-header">
+        <div>
+            <h1>Fibras y reservas de planta externa</h1>
+            <p>Consulta paginada de fibras ópticas, reservas y elementos asociados a cada troncal.</p>
+        </div>
+    </header>
+
+    <div class="operational-tabs" role="tablist" aria-label="Tipo de inventario de planta externa">
+        {% if perms.mapas.view_inventariofibra %}
+        <button id="fibers-tab" class="operational-tab" type="button" role="tab" aria-selected="true" aria-controls="fibers-panel" data-tab="fibras">Fibras ópticas</button>
+        {% endif %}
+        {% if perms.mapas.view_reserva %}
+        <button id="elements-tab" class="operational-tab" type="button" role="tab" aria-selected="{% if perms.mapas.view_inventariofibra %}false{% else %}true{% endif %}" aria-controls="elements-panel" data-tab="elementos">Reservas y elementos</button>
+        {% endif %}
+    </div>
+
+    {% if perms.mapas.view_inventariofibra %}
+    <section id="fibers-panel" class="card data-card operational-tabpanel" role="tabpanel" aria-labelledby="fibers-tab">
+        <form id="fibers-filters" class="data-toolbar" role="search">
+            <div class="data-toolbar__field data-toolbar__search">
+                <label for="fibers-query">Buscar fibra óptica</label>
+                <input id="fibers-query" type="search" placeholder="Troncal, N.º de fibra, servicio, origen o destino" autocomplete="off">
+            </div>
+            <div class="data-toolbar__field">
+                <label for="fibers-status">Estado</label>
+                <select id="fibers-status">
+                    <option value="">Todos</option>
+                    <option value="Libre">Libre</option>
+                    <option value="Ocupado">Ocupado</option>
+                    <option value="Reservado">Reservado</option>
+                </select>
+            </div>
+            <div class="data-toolbar__field">
+                <label for="fibers-size">Filas</label>
+                <select id="fibers-size"><option>25</option><option selected>50</option><option>100</option><option>200</option></select>
+            </div>
+            <button class="btn btn--primary" type="submit">Aplicar</button>
+            <button id="fibers-clear" class="btn btn--secondary" type="button">Limpiar</button>
+            <div class="export-actions" aria-label="Exportar fibras">
+                <a id="fibers-csv" class="btn btn--secondary" href="#">CSV</a>
+                <a id="fibers-xlsx" class="btn btn--secondary" href="#">Excel</a>
+            </div>
+        </form>
+        <div id="fibers-message" class="filter-message" role="status" aria-live="polite"></div>
+        <div class="data-table-wrap">
+            <table class="data-table">
+                <caption class="sr-only">Fibras ópticas filtradas</caption>
+                <thead><tr><th scope="col">Troncal</th><th scope="col">N.º de fibra</th><th scope="col">Estado</th><th scope="col">Servicio</th><th scope="col">Origen ODF</th><th scope="col">Destino</th><th scope="col">Conector</th><th scope="col">Acciones</th></tr></thead>
+                <tbody id="fibers-body"></tbody>
+            </table>
+        </div>
+        <footer class="data-footer">
+            <p id="fibers-info" class="data-footer__status">Preparando consulta…</p>
+            <div class="data-footer__buttons"><button id="fibers-previous" class="btn btn--secondary" type="button">Anterior</button><button id="fibers-next" class="btn btn--secondary" type="button">Siguiente</button></div>
+        </footer>
+    </section>
+    {% endif %}
+
+    {% if perms.mapas.view_reserva %}
+    <section id="elements-panel" class="card data-card operational-tabpanel" role="tabpanel" aria-labelledby="elements-tab" {% if perms.mapas.view_inventariofibra %}hidden{% endif %}>
+        <form id="elements-filters" class="data-toolbar" role="search">
+            <div class="data-toolbar__field data-toolbar__search">
+                <label for="elements-query">Buscar reserva o elemento</label>
+                <input id="elements-query" type="search" placeholder="Troncal, elemento, código o tipo" autocomplete="off">
+            </div>
+            <div class="data-toolbar__field">
+                <label for="elements-type">Tipo</label>
+                <select id="elements-type">
+                    <option value="">Todos</option>
+                    <option value="CAMARA">Cámara</option>
+                    <option value="SITE">Site</option>
+                    <option value="EMPALME">Empalme</option>
+                    <option value="CAJA">Caja</option>
+                    <option value="MUFA">Mufa</option>
+                    <option value="POSTE">Poste</option>
+                    <option value="RESERVA">Reserva</option>
+                </select>
+            </div>
+            <div class="data-toolbar__field">
+                <label for="elements-size">Filas</label>
+                <select id="elements-size"><option>25</option><option selected>50</option><option>100</option><option>200</option></select>
+            </div>
+            <button class="btn btn--primary" type="submit">Aplicar</button>
+            <button id="elements-clear" class="btn btn--secondary" type="button">Limpiar</button>
+            <div class="export-actions" aria-label="Exportar reservas y elementos">
+                <a id="elements-csv" class="btn btn--secondary" href="#">CSV</a>
+                <a id="elements-xlsx" class="btn btn--secondary" href="#">Excel</a>
+            </div>
+        </form>
+        <div id="elements-message" class="filter-message" role="status" aria-live="polite"></div>
+        <div class="data-table-wrap">
+            <table class="data-table">
+                <caption class="sr-only">Reservas y elementos de planta externa filtrados</caption>
+                <thead><tr><th scope="col">Troncal</th><th scope="col">Elemento</th><th scope="col">Tipo</th><th scope="col">Reserva (m)</th><th scope="col">Tramo</th><th scope="col">Latitud</th><th scope="col">Longitud</th><th scope="col">Estado</th><th scope="col">Acciones</th></tr></thead>
+                <tbody id="elements-body"></tbody>
+            </table>
+        </div>
+        <footer class="data-footer">
+            <p id="elements-info" class="data-footer__status">Preparando consulta…</p>
+            <div class="data-footer__buttons"><button id="elements-previous" class="btn btn--secondary" type="button">Anterior</button><button id="elements-next" class="btn btn--secondary" type="button">Siguiente</button></div>
+        </footer>
+    </section>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/planta-externa-paginada.js' %}"></script>
+{% endblock %}

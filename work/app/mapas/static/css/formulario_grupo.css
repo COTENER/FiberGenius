@@ -1,0 +1,220 @@
+/* static/css/formulario_grupo.css */
+
+/* ========================================================= */
+/* 1. ESTRUCTURA BASE */
+/* ========================================================= */
+
+form {
+    background-color: white;
+    padding: 1.5rem 2rem;
+    border-radius: 0.5rem;
+    max-width: 1000px;
+    width: 100%;
+    margin: 0 auto 1.5rem auto;
+    box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06);
+}
+
+form h2 {
+    text-align: center;
+    margin-bottom: 1.5rem;
+    color: #2d3748;
+}
+
+.form-group {
+    margin-bottom: 1.25rem;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+    color: #4a5568;
+}
+
+.form-group input[type="text"] {
+    width: 100%;
+    padding: 0.6rem 0.75rem;
+    border-radius: 0.375rem;
+    border: 1px solid #cbd5e0;
+    font-size: 1rem;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.form-group input:focus {
+    outline: none;
+    border-color: #4299e1;
+    box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.5);
+}
+
+form button {
+    width: 100%;
+    background-color: #2b6cb0;
+    color: white;
+    padding: 0.75rem 1rem;
+    border: none;
+    border-radius: 0.375rem;
+    font-weight: bold;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    margin-top: 2rem;
+}
+
+form button:hover {
+    background-color: #2c5282;
+}
+
+.acciones {
+    display: inline-block;
+    padding: 0.5rem 1rem;
+    background-color: #718096;
+    color: white;
+    text-decoration: none;
+    border-radius: 0.375rem;
+    font-weight: 500;
+    transition: background-color 0.3s ease;
+}
+
+.acciones:hover {
+    background-color: #4a5568;
+}
+
+.contenedor-acciones-form {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 1rem;
+    max-width: 1000px;
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+/* ========================================================= */
+/* 2. ESTILOS PARA LAS TARJETAS (STANDARD) */
+/* ========================================================= */
+
+.permisos-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 20px;
+    margin-top: 15px;
+}
+
+.permiso-card {
+    background: #f8f9fa;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 15px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.permiso-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+}
+
+.permiso-card h4 {
+    margin-top: 0;
+    margin-bottom: 12px;
+    color: #2b6cb0;
+    border-bottom: 2px solid #e2e8f0;
+    padding-bottom: 8px;
+    font-size: 1.1em;
+    font-weight: bold;
+    display: flex;
+    justify-content: space-between; 
+    align-items: center;
+}
+
+.permiso-item {
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    padding: 4px 0;
+}
+
+.permiso-item:last-child { margin-bottom: 0; }
+
+.permiso-item input[type="checkbox"] {
+    margin-right: 10px;
+    transform: scale(1.2);
+    accent-color: #2b6cb0;
+    cursor: pointer;
+}
+
+.permiso-item label {
+    font-weight: normal;
+    cursor: pointer;
+    font-size: 0.95rem;
+    color: #4a5568;
+    margin-bottom: 0;
+    user-select: none;
+}
+
+.permiso-item:hover label {
+    color: #2b6cb0;
+}
+
+.select-all-wrapper {
+    font-size: 0.85rem;
+    font-weight: normal;
+    color: #4a5568;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+}
+
+.select-all-wrapper input {
+    margin-right: 6px;
+    transform: scale(1.1);
+    accent-color: #2b6cb0;
+    cursor: pointer;
+}
+
+.select-all-wrapper:hover {
+    color: #2b6cb0;
+}
+
+/* CLASE UTILITARIA PARA OCULTAR INPUTS REALES */
+.hidden-real-inputs {
+    display: none;
+}
+
+/* ========================================================= */
+/* 3. MODO OSCURO */
+/* ========================================================= */
+
+html.theme-dark form {
+    background-color: #2d3748;
+    color: #e2e8f0;
+}
+html.theme-dark form h2 { color: #e2e8f0; }
+html.theme-dark .form-group label { color: #a0aec0; }
+html.theme-dark .form-group input[type="text"] {
+    background-color: #1a202c;
+    color: #e2e8f0;
+    border-color: #4a5568;
+}
+
+html.theme-dark .permiso-card {
+    background-color: #1a202c;
+    border-color: #4a5568;
+}
+
+html.theme-dark .permiso-card h4 {
+    color: #63b3ed;
+    border-bottom-color: #4a5568;
+}
+
+html.theme-dark .permiso-item label { color: #e2e8f0; }
+html.theme-dark .permiso-item:hover label { color: #63b3ed; }
+
+html.theme-dark .permiso-item input[type="checkbox"] {
+    accent-color: #4299e1;
+    background-color: #2d3748;
+    border-color: #4a5568;
+}
+
+html.theme-dark .select-all-wrapper { color: #a0aec0; }
+html.theme-dark .select-all-wrapper:hover { color: #63b3ed; }

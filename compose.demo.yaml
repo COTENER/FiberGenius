@@ -1,0 +1,29 @@
+services:
+  fiber-genius-rc2-lab-web:
+    build:
+      context: ./work/app
+      dockerfile: Dockerfile.demo
+    container_name: fiber-genius-rc2-lab-web
+    env_file:
+      - .env.demo
+    volumes:
+      - ./data_demo:/data
+    ports:
+      - "127.0.0.1:8001:8000"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/', timeout=5)"
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - fiber-genius-rc2-lab-network
+
+networks:
+  fiber-genius-rc2-lab-network:
+    name: fiber-genius-rc2-lab-network

@@ -1,0 +1,1155 @@
+/* ------------------------------------------------------------------- */
+/* 1. VARIABLES Y CONFIGURACIÓN GLOBAL
+/* ------------------------------------------------------------------- */
+:root {
+    --color-primario: #0075FF; /* Un azul moderno y vibrante */
+    --color-fondo: #fcfcfc;
+    --color-superficie: #FFFFFF;
+    --color-borde: #E0E5EC;
+    --color-texto-principal: #1A202C;
+    --color-texto-secundario: #5A6474;
+    --color-sombra: rgba(0, 30, 80, 0.1);
+
+    --fuente-principal: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+    
+    --radio-borde: 12px;
+    --espaciado: 1rem;
+    
+    --transicion-suave: all 0.3s ease-in-out;
+    --puerto-monitoreado-borde: #28a745; /* Verde */
+    --puerto-libre-borde: #6c757d;      /* Gris */
+    --puerto-texto: #1A202C;            /* Negro suave */
+}
+
+body.dark-theme {
+    --color-primario: #38A1F7; /* Un azul más brillante para resaltar en oscuro */
+    --color-fondo: #3d4c64; /* Fondo principal oscuro */
+    --color-superficie: #4a5a75; /* Fondo de los paneles y sidebar */
+    --color-borde: #4A5568; /* Bordes más sutiles */
+    --color-texto-principal: #F7FAFC; /* Texto principal blanco */
+    --color-texto-secundario: #A0AEC0; /* Texto secundario gris claro */
+    --color-sombra: rgba(0, 0, 0, 0.4);
+    --puerto-monitoreado-borde: #38A169; /* Verde más brillante */
+    --puerto-libre-borde: #A0AEC0;      /* Gris más claro */
+    --puerto-texto: #F7FAFC;            /* Blanco */
+}
+
+body.dark-theme .leaflet-control-container .leaflet-control {
+    background-color: #FFFFFF !important; /* Fondo siempre blanco */
+    color: #333333 !important; /* Texto siempre oscuro */
+    border: 2px solid rgba(0,0,0,0.2) !important;
+}
+
+/* Específicamente para los enlaces dentro de los controles (como el icono de measure) */
+body.dark-theme .leaflet-control-container .leaflet-control a {
+    background-color: #FFFFFF !important;
+    color: #333333 !important;
+}
+
+/* Y para el icono de measure en estado "hover" o activo */
+body.dark-theme .leaflet-control-measure a:hover,
+body.dark-theme .leaflet-control-measure a.leaflet-control-measure-on {
+    background-color: #F4F4F4 !important; /* Un gris muy claro para el hover */
+}
+
+body.dark-theme .stats-card {
+    background-image: linear-gradient(145deg, #2F855A, #38A169); /* Degradado Verde */
+}
+
+body.dark-theme .stats-card__title {
+    color: #BEE3F8; /* Texto azul claro */
+}
+
+body.dark-theme .stats-card__value {
+    color: #1A202C; /* Texto oscuro */
+    background-color: #FFFFFF; /* Fondo blanco */
+}
+
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: var(--fuente-principal);
+    background-color: var(--color-fondo);
+    color: var(--color-texto-principal);
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh; /* Usa min-height para que pueda crecer */
+    height: auto;
+    overflow-y: auto; /* Permite el scroll vertical */
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+.header, .sidebar, .stats-card, .stats-block, .chart-wrapper, #popup-panel, .filters-panel, .action-button, .user-menu__options a {
+    transition: var(--transicion-suave);
+}
+
+/* ------------------------------------------------------------------- */
+/* 2. HEADER
+/* ------------------------------------------------------------------- */
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.5rem var(--espaciado); /* Damos un poco más de aire vertical */
+    background-color: var(--color-fondo);
+    border-bottom: 1px solid var(--color-borde);
+    flex-shrink: 0;
+    position: relative; /* MUY IMPORTANTE: Para posicionar el logo dentro */
+    min-height: 80px; /* Asegura una altura mínima para que todo quepa */
+}
+
+/* Y REEMPLÁZALA POR ESTA */
+.header__logo {
+    position: absolute; /* Sacamos el logo del flujo normal */
+    left: var(--espaciado); /* Lo anclamos a la izquierda */
+    top: 50%; /* Lo centramos verticalmente respecto al header */
+    transform: translateY(-50%); /* Ajuste fino para el centrado vertical perfecto */
+}
+.header__logo img {
+    height: 120px; /* Tu tamaño deseado */
+    width: auto;
+    display: block; /* Mejora el renderizado de la imagen */
+}
+
+.header__stats {
+    display: flex; /* Cambiado a flex para que sea visible siempre */
+    align-items: center;
+    gap: var(--espaciado);
+    flex-wrap: wrap; /* Permite que las cards pasen a la siguiente línea si no caben */
+    justify-content: center; /* Centra las cards en móvil */
+}
+
+.stats-card {
+    display: flex;
+    align-items: center;
+    gap: calc(var(--espaciado) / 2);
+    /* Nuevo fondo verde menta */
+    background-image: linear-gradient(145deg, #9fccf7, #84afff);
+    padding: calc(var(--espaciado) / 2) var(--espaciado);
+    border-radius: var(--radio-borde);
+    border: none;
+    box-shadow: 0 4px 12px var(--color-sombra);
+    transition: var(--transicion-suave); /* Añadimos transición para el hover */
+}
+
+/* OPCIONAL PERO RECOMENDADO: Efecto al pasar el mouse */
+.stats-card:hover {
+    transform: translateY(-3px); /* Se eleva un poco */
+    box-shadow: 0 8px 16px var(--color-sombra); /* La sombra se hace más pronunciada */
+}
+
+.stats-card__title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--color-texto-secundario);
+}
+
+.stats-card__value {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--color-primario);
+    background-color: #E6F1FF;
+    padding: 0.2rem 0.6rem;
+    border-radius: 20px;
+}
+
+.header__title {
+    font-size: 1.4rem;
+    font-weight: 700;
+    text-align: center;
+    flex-grow: 1;
+    margin-right: auto;
+    padding-left: -20px;
+    
+}
+
+.header__actions {
+    display: flex;
+    align-items: center;
+    gap: calc(var(--espaciado) / 2);
+    
+}
+
+.action-button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.5rem;
+    border-radius: 50%;
+    transition: var(--transicion-suave);
+}
+
+.action-button:hover {
+    background-color: var(--color-fondo);
+}
+
+.action-button .icon-text {
+    font-size: 1.6rem; /* Ajusta el tamaño del emoji */
+    line-height: 1; /* Ayuda a centrarlo verticalmente */
+    transition: var(--transicion-suave);
+}
+
+/* OPCIONAL: Añadir un efecto de escala al pasar el mouse */
+.action-button:hover .icon-text {
+    transform: scale(1.1);
+}
+
+.dropdown-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid #e5e7eb; /* Línea divisoria suave */
+    background-color: #f9fafb; /* Fondo muy sutilmente diferente */
+    border-top-left-radius: 0.5rem;
+    border-top-right-radius: 0.5rem;
+}
+
+.user-menu {
+    position: relative;
+    /* margin-left: auto;  <-- Si lo descomentas, empuja el menú al final */
+}
+
+.user-menu-button {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.6rem; /* Un poco más de padding para mejor clic */
+    border-radius: 9999px; /* Forma de píldora */
+    border: 1px solid transparent;
+    transition: all 0.2s ease;
+    background-color: transparent;
+    cursor: pointer;
+}
+
+/* Efecto hover en el botón principal */
+.user-menu-button:hover {
+    background-color: rgba(0, 0, 0, 0.05);
+    border-color: rgba(0, 0, 0, 0.1);
+}
+
+html.theme-dark .user-menu-button:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* La flechita que gira */
+.user-menu-button .chevron-down {
+    transition: transform 0.2s ease;
+    width: 16px;
+    height: 16px;
+}
+
+/* Cuando está activo (abierto), giramos la flecha */
+.user-menu.is-active .chevron-down {
+    transform: rotate(180deg);
+}
+
+/* EL DESPLEGABLE (DROPDOWN) */
+.user-menu__options, 
+.user-menu-dropdown { /* Soportamos ambas clases por si acaso */
+    position: absolute;
+    top: calc(100% + 8px); /* Un poco separado del botón */
+    right: 0;
+    background-color: white;
+    border-radius: 12px; /* Bordes más redondeados */
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 4px 10px -5px rgba(0, 0, 0, 0.1);
+    width: 220px; /* Un ancho cómodo */
+    padding: 0; /* Padding manejado por hijos */
+    z-index: 1005;
+    border: 1px solid rgba(0,0,0,0.05);
+    overflow: hidden; /* Para que el borde redondeado corte el contenido */
+    
+    /* Oculto por defecto con display none (JS lo cambia) */
+    display: none;
+    
+    /* Animación de entrada (Opcional pero elegante) */
+    animation: slideInDown 0.2s ease-out;
+}
+
+@keyframes slideInDown {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* ENCABEZADO DEL USUARIO */
+.dropdown-header {
+    padding: 16px;
+    background-color: #f8fafc; /* Gris muy claro */
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.user-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.user-name {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #1e293b; /* Azul oscuro casi negro */
+    margin-bottom: 2px;
+}
+
+.user-username {
+    font-size: 0.8rem;
+    color: #64748b; /* Gris medio */
+}
+
+/* OPCIONES DEL MENÚ */
+.user-menu__options a, 
+.dropdown-item {
+    display: flex; /* Flex para alinear iconos si los pones */
+    align-items: center;
+    width: 100%;
+    padding: 12px 16px;
+    color: #334155;
+    text-decoration: none;
+    font-size: 0.9rem;
+    transition: background-color 0.15s ease;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.user-menu__options a:hover,
+.dropdown-item:hover {
+    background-color: #f1f5f9;
+    color: #0f172a;
+}
+
+/* Botón de Cerrar Sesión (rojo suave al hover) */
+.dropdown-item.logout:hover {
+    background-color: #fef2f2;
+    color: #ef4444;
+}
+
+/* --- MODO OSCURO --- */
+html.theme-dark .user-menu__options,
+html.theme-dark .user-menu-dropdown {
+    background-color: #1e293b; /* Fondo oscuro azulado */
+    border-color: #334155;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+}
+
+html.theme-dark .dropdown-header {
+    background-color: #0f172a; /* Más oscuro para el header */
+    border-bottom-color: #334155;
+}
+
+html.theme-dark .user-name {
+    color: #f1f5f9;
+}
+
+html.theme-dark .user-username {
+    color: #94a3b8;
+}
+
+html.theme-dark .user-menu__options a,
+html.theme-dark .dropdown-item {
+    color: #cbd5e1;
+}
+
+html.theme-dark .user-menu__options a:hover,
+html.theme-dark .dropdown-item:hover {
+    background-color: #334155;
+    color: #fff;
+}
+
+html.theme-dark .dropdown-item.logout:hover {
+    background-color: #451a1a;
+    color: #fca5a5;
+}
+/* ------------------------------------------------------------------- */
+/* 3. LAYOUT PRINCIPAL
+/* ------------------------------------------------------------------- */
+.layout-container {
+    display: flex;
+    flex-direction: column; /* Apilado en móvil */
+    flex-grow: 1;
+    
+}
+
+.puerto-cuadro {
+    width: 30px;
+    height: 30px;
+    margin: 2px;
+    background-color: transparent;
+    text-align: center;
+    font-weight: bold;
+    line-height: 30px;
+    border-width: 3px;
+    border-style: solid;
+    border-radius: 5px;
+    cursor: pointer;
+    color: var(--puerto-texto); /* Usa la variable para el color del número */
+}
+.puerto-cuadro.monitoreado {
+    border-color: var(--puerto-monitoreado-borde); /* Usa la variable para el borde verde */
+}
+.puerto-cuadro.libre {
+    border-color: var(--puerto-libre-borde); /* Usa la variable para el borde gris */
+}
+
+/* ------------------------------------------------------------------- */
+/* 4. BARRA LATERAL (SIDEBAR)
+/* ------------------------------------------------------------------- */
+.sidebar {
+    background-color: var(--color-superficie);
+    padding: var(--espaciado);
+    overflow-y: auto;
+    border-right: 1px solid var(--color-borde);
+    flex-shrink: 0;
+    color: var(--color-texto-principal);
+    display: flex;            
+    flex-direction: column;
+}
+
+/* --- ESTILOS DEL FOOTER DE LA SIDEBAR (NUEVO) --- */
+.sidebar-footer {
+    margin-top: auto; /* Esto es lo que empuja el footer hacia abajo */
+    padding-top: 15px;
+    margin-top: 20px; /* Separación extra del contenido de arriba */
+    border-top: 1px solid var(--color-borde);
+    font-size: 0.75rem; /* Letra pequeña (aprox 12px) */
+    color: var(--color-texto-secundario);
+    text-align: center;
+    line-height: 1.4;
+}
+
+.sidebar-footer .version-label {
+    font-weight: 700;
+}
+
+.sidebar-footer .author-name {
+    font-weight: 600;
+    color: var(--color-primario); /* Usa el azul de tu tema */
+}
+
+/* Ajuste específico para modo oscuro (opcional, para asegurar contraste) */
+body.dark-theme .sidebar-footer {
+    border-top-color: var(--color-borde);
+    color: var(--color-texto-secundario);
+}
+
+.stats-block {
+    background-color: var(--color-superficie); /* Fondo blanco */
+    padding: var(--espaciado);                  /* Espacio interno */
+    border-radius: var(--radio-borde);          /* Bordes redondeados */
+    border: 1px solid var(--color-borde);       /* Borde gris sutil */
+    box-shadow: 0 2px 4px var(--color-sombra);  /* Sombra suave para profundidad */
+    margin-bottom: var(--espaciado);            /* Espacio para separar de los gráficos */
+}
+
+.stats-block__title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    margin-bottom: calc(var(--espaciado) / 2);
+}
+
+.stats-block__total {
+    font-size: 1rem;
+    margin-bottom: var(--espaciado);
+    color: var(--color-texto-secundario);
+}
+.stats-block__total span {
+    font-weight: 700;
+    color: var(--color-texto-principal);
+}
+
+.stats-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+    margin-bottom: 0;
+}
+.stats-table th, .stats-table td {
+    padding: 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--color-borde);
+}
+.stats-table th {
+    font-weight: 600;
+    color: var(--color-texto-secundario);
+}
+.stats-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.optical-summary-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px; /* Letra un poco más pequeña para que quepa */
+}
+
+.optical-summary-table th, .optical-summary-table td {
+    padding: 4px;
+    border: 1px solid #ddd;
+    text-align: center;
+}
+
+.optical-summary-table th {
+    background-color: #f2f2f2;
+    font-weight: bold;
+}
+
+/* Alineación a la izquierda solo para la primera columna (Nombre del evento) */
+.optical-summary-table td:first-child {
+    text-align: left;
+}
+
+.charts-container .chart-wrapper {
+    background-color: var(--color-superficie); /* Fondo blanco */
+    padding: var(--espaciado);                  /* Espacio interno */
+    border-radius: var(--radio-borde);          /* Bordes redondeados */
+    border: 1px solid var(--color-borde);       /* Borde gris sutil */
+    box-shadow: 0 2px 4px var(--color-sombra);  /* Sombra suave */
+    
+    /* Ajustamos el espaciado y la altura */
+    margin-bottom: var(--espaciado); /* Espacio consistente debajo de cada gráfico */
+    height: 260px; /* Aumentamos la altura para compensar el padding */
+}
+
+.chart-wrapper {
+    color: var(--color-texto-principal);
+}
+
+/* En modo oscuro, el color del título será el texto principal del modo oscuro */
+body.dark-theme .chart-wrapper {
+    color: var(--color-texto-principal);
+}
+
+/* ------------------------------------------------------------------- */
+/* 5. CONTENIDO PRINCIPAL (MAPA Y FILTROS)
+/* ------------------------------------------------------------------- */
+.main-content {
+    flex-grow: 1;
+    position: relative;
+    display: flex;
+    flex-direction: column; /* Organiza los hijos en columna */
+    min-height: 80vh;
+}
+
+#map {
+    width: 100%;
+    flex-grow: 1; /* Le dice al mapa que ocupe todo el espacio vertical disponible */
+}
+
+/* Panel de Filtros */
+.filters-panel {
+    position: absolute;
+    top: var(--espaciado);
+    left: var(--espaciado);
+    background-color: rgba(255, 255, 255, 0.8);
+    backdrop-filter: blur(10px); /* Efecto "cristal" moderno */
+    padding: var(--espaciado);
+    border-radius: var(--radio-borde);
+    border: 1px solid var(--color-borde);
+    box-shadow: 0 4px 12px var(--color-sombra);
+    z-index: 1001;
+    width: 240px;
+    max-height: calc(100% - 2 * var(--espaciado));
+    overflow-y: auto;
+    
+}
+
+body.dark-theme .filters-panel {
+    background-color: rgba(255, 255, 255, 0.8); /* Fondo blanco translúcido */
+    border: 1px solid var(--color-borde);       /* Borde claro (usando la variable del tema claro) */
+    color: #1A202C;                             /* Texto oscuro */
+}
+
+body.dark-theme .filters-panel h4,
+body.dark-theme .filters-panel label,
+body.dark-theme .filters-panel select {
+    color: #1A202C; /* Texto oscuro para títulos y etiquetas */
+}
+
+body.dark-theme .filters-panel select {
+    background-color: #FFFFFF; /* Fondo blanco para los desplegables */
+    border-color: #E0E5EC;
+}
+
+body.dark-theme .filters-panel hr {
+    border-top: 1px solid #E0E5EC; /* Línea divisoria clara */
+}
+
+.filters-panel h4 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.75rem;
+}
+.filters-panel hr {
+    border: none;
+    border-top: 1px solid var(--color-borde);
+    margin: var(--espaciado) 0;
+}
+.filters-panel label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+.filters-panel select {
+    width: 100%;
+    padding: 0.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--color-borde);
+    background-color: var(--color-superficie);
+    font-family: var(--fuente-principal);
+    margin-top: 0.25rem;
+    font-size: 0.9rem;
+}
+.filters-panel input[type="checkbox"] {
+    width: 1.15em;
+    height: 1.15em;
+    accent-color: var(--color-primario);
+}
+
+/* Botón para mostrar filtros en móvil */
+#toggle-filters-btn {
+    position: absolute;
+    top: var(--espaciado);
+    left: var(--espaciado);
+    z-index: 1001;
+    background-color: var(--color-superficie);
+    color: var(--color-texto-principal);
+    border: 1px solid var(--color-borde);
+    padding: 0.5rem 1rem;
+    border-radius: 20px;
+    font-weight: 600;
+    box-shadow: 0 2px 8px var(--color-sombra);
+    cursor: pointer;
+    display: block; /* Visible en móvil */
+}
+
+/* Ocultar panel de filtros en móvil por defecto */
+.filters-panel {
+    display: none;
+}
+/* Mostrar panel cuando está activo */
+.filters-panel.is-open {
+    display: block;
+}
+
+/* Panel de info del OTU */
+#popup-panel {
+    position: absolute;
+    top: var(--espaciado);
+    right: var(--espaciado);
+    width: 300px;
+    background: var(--color-superficie);
+    border: 1px solid var(--color-borde);
+    border-radius: var(--radio-borde);
+    padding: var(--espaciado);
+    z-index: 1001;
+    display: none;
+    box-shadow: 0 4px 12px var(--color-sombra);
+    max-height: calc(100% - 2 * var(--espaciado));
+    overflow-y: auto;
+}
+
+#fullscreen-map-btn {
+    position: absolute;
+    top: var(--espaciado);
+    right: var(--espaciado);
+    z-index: 1001; 
+    background-color: var(--color-superficie);
+    color: var(--color-texto-principal);
+    border: 1px solid var(--color-borde);
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radio-borde);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px var(--color-sombra);
+    transition: var(--transicion-suave);
+}
+
+body.dark-theme #fullscreen-map-btn {
+    background-color: var(--color-superficie);
+    color: var(--color-texto-principal);
+    box-shadow: 0 4px 12px var(--color-sombra);
+}
+body.dark-theme #fullscreen-map-btn:hover {
+    background-color: #3e4c64; /* Un tono ligeramente más claro que el fondo oscuro */
+}
+
+#fullscreen-map-btn:hover {
+    background-color: var(--color-fondo);
+    transform: scale(1.1);
+}
+
+#fullscreen-map-btn .fullscreen-icon {
+    font-size: 1.5rem; /* Tamaño del icono */
+    line-height: 1;    /* Centrado vertical */
+    transition: transform 0.3s ease; /* Transición suave para la rotación */
+}
+
+/* --- Estilos para el MODO PANTALLA COMPLETA --- */
+/* Cuando el layout-container tenga la clase 'is-fullscreen'... */
+.map-fullscreen .header,
+.map-fullscreen .sidebar {
+    display: none;
+}
+
+/* 2. Haz que el contenedor principal ocupe toda la pantalla */
+.map-fullscreen .main-content {
+    width: 100vw;
+    height: 100vh;
+    padding: 0; /* Opcional: elimina cualquier padding para que el mapa ocupe los bordes */
+    margin: 0;  /* Opcional: elimina cualquier margen */
+}
+
+.map-fullscreen .layout-container {
+    /* Esto ayuda a que el main-content se expanda correctamente */
+    height: 100vh;
+    padding: 0;
+}
+
+/* Ajustamos el icono del botón cuando está en pantalla completa */
+.layout-container.is-fullscreen #fullscreen-map-btn .icon-fullscreen {
+    transform: rotate(45deg); /* Gira el icono para que parezca "minimizar" */
+}
+
+#reset-view-btn {
+    position: absolute;
+    /* Lo posicionamos debajo del botón de filtros en móvil, y en la esquina en escritorio */
+    top: calc(var(--espaciado) + 50px);
+    right: var(--espaciado);
+    z-index: 1001; 
+    
+    /* Mismo estilo que el botón de fullscreen para consistencia */
+    background-color: var(--color-superficie);
+    color: var(--color-texto-principal);
+    border: 1px solid var(--color-borde);
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radio-borde);
+    font-size: 1.5rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px var(--color-sombra);
+    transition: var(--transicion-suave);
+}
+
+#reset-view-btn:hover {
+    background-color: var(--color-fondo);
+    transform: scale(1.1);
+}
+
+#update-calc-btn {
+    position: absolute;
+    /* Posición: top del reset (50px + espaciado) + altura del reset (40px) + un pequeño margen (10px) */
+    top: calc(var(--espaciado) + 100px); 
+    right: var(--espaciado);
+    z-index: 1001;
+    
+    /* Mismo estilo que los otros botones para consistencia */
+    background-color: var(--color-superficie);
+    color: var(--color-texto-principal);
+    border: 1px solid var(--color-borde);
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radio-borde);
+    font-size: 1.5rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px var(--color-sombra);
+    transition: var(--transicion-suave);
+}
+
+#update-calc-btn:hover {
+    background-color: var(--color-fondo);
+    transform: scale(1.1);
+}
+
+/* Estilo para cuando el botón está cargando */
+#update-calc-btn.is-loading {
+    cursor: not-allowed;
+    background-color: #e0e0e0;
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+    100% { transform: scale(1); }
+}
+
+.header__search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#ruta-search-input {
+    padding: 8px 12px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+    width: 250px; /* Ajusta el ancho según necesites */
+}
+
+#ruta-search-btn {
+    padding: 8px 12px;
+    border: none;
+    background-color: #007bff;
+    color: white;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+#ruta-search-btn:hover {
+    background-color: #0056b3;
+}
+
+/* --- La clase clave para resaltar el puerto --- */
+.puerto-cuadro.highlighted-port {
+    background-color: #FFA500 !important; /* Naranja */
+    border: 2px solid #cc8400;
+    color: #000; /* Texto negro para contraste */
+    transform: scale(1.1); /* Lo hacemos un poco más grande */
+    transition: all 0.2s ease-in-out;
+}
+
+#ruta-summary-panel {
+    position: absolute;
+    bottom: 20px;
+    left: 10px;
+    z-index: 2000; /* Para que esté por encima del mapa */
+    background-color: rgba(255, 255, 255, 0.9);
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    padding: 15px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    max-width: 320px;
+    font-family: Arial, sans-serif;
+    display: none; /* Oculto por defecto */
+    cursor: move; 
+    user-select: none;
+}
+
+/* Estilos para el modo oscuro */
+.dark-theme #ruta-summary-panel {
+    background-color: rgba(45, 55, 72, 0.9);
+    border-color: #4A5568;
+    color: #F7FAFC;
+}
+
+#ruta-summary-panel h4 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    color: #007bff;
+    border-bottom: 2px solid #007bff;
+    padding-bottom: 5px;
+}
+
+.dark-theme #ruta-summary-panel h4 {
+    color: #63b3ed;
+    border-color: #63b3ed;
+}
+
+#ruta-summary-panel table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+#ruta-summary-panel th, #ruta-summary-panel td {
+    padding: 6px;
+    text-align: left;
+    border-bottom: 1px solid #ddd;
+}
+
+.dark-theme #ruta-summary-panel th, .dark-theme #ruta-summary-panel td {
+    border-bottom: 1px solid #4A5568;
+}
+
+#ruta-summary-panel .summary-info {
+    font-weight: bold;
+}
+
+/* Botón para cerrar el panel */
+.summary-close-btn {
+    position: absolute;
+    top: 5px;
+    right: 10px;
+    background: none;
+    border: none;
+    font-size: 20px;
+    font-weight: bold;
+    cursor: pointer;
+    color: #888;
+}
+.dark-theme .summary-close-btn {
+    color: #ccc;
+}
+.summary-close-btn:hover {
+    color: #000;
+}
+.dark-theme .summary-close-btn:hover {
+    color: #fff;
+}
+
+html.theme-dark .dropdown-header {
+    background-color: #374151; /* Mismo fondo que el dropdown */
+    border-bottom-color: #4b5563;
+}
+
+/* Esta es la clase clave para nuestro icono */
+.custom-icon-wrapper {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%; /* <-- ESTO LO HACE UN CÍRCULO */
+    color: white;
+    font-weight: bold;
+    font-size: 14px;
+    
+    /* Centra el texto (la letra) perfectamente */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    
+    /* Sombra sutil para que resalte del mapa */
+    box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+}
+
+.icon-img {
+    width: 100%;
+    height: 100%;
+}
+
+/* Fondo oscuro que cubre toda la pantalla */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5); /* Sombra semitransparente */
+    display: flex;       /* CLAVE: Usamos Flexbox */
+    justify-content: center; /* Centra horizontalmente */
+    align-items: center;     /* Centra verticalmente */
+    z-index: 10000;      /* Muy alto para estar sobre el mapa (Leaflet usa z-index bajos) */
+}
+
+/* La cajita blanca del mensaje */
+.modal-content {
+    background: white;
+    padding: 30px;
+    border-radius: 12px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+    text-align: center;
+    max-width: 400px;
+    width: 90%;
+    animation: fadeIn 0.3s ease-out;
+}
+
+.modal-icon { font-size: 40px; margin-bottom: 10px; }
+.modal-btn {
+    background-color: #28a745;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    margin-top: 15px;
+}
+.modal-btn:hover { background-color: #218838; }
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+
+
+/* ------------------------------------------------------------------- */
+/* 6. MEDIA QUERIES PARA RESPONSIVE
+/* ------------------------------------------------------------------- */
+
+/* --- Vista de Tablet/Laptop (a partir de 768px) --- */
+@media (min-width: 768px) {
+
+    body {
+        height: 100vh;       /* Restaura la altura fija */
+        overflow: hidden;   /* Restaura el bloqueo del scroll */
+    }
+    .layout-container {
+        flex-direction: row;
+        overflow: hidden; /* Cambia a layout de columnas */
+    }
+    .sidebar {
+        width: 300px; /* Ancho fijo para la barra lateral */
+    }
+    .header__stats {
+        display: flex;
+        padding-left: 140px;  /* Muestra las estadísticas en el header */
+    }
+    /* BUSCA Y ELIMINA ESTA REGLA COMPLETA */
+    /* #toggle-filters-btn {
+        display: none;
+    } */
+    /* .filters-panel {
+        display: block; 
+    } */
+    .header__actions {
+        /* Aumenta este valor para empujar el título más a la izquierda.
+           Prueba con diferentes números hasta que te guste el resultado. */
+        min-width: 400px; 
+        justify-content: flex-end; /* Mantiene los botones alineados a la derecha */
+    }
+
+    .main-content {
+        min-height: auto; /* Anula la altura mínima en escritorio */
+    }
+
+    #reset-view-btn {
+        /* Lo movemos a la derecha, debajo del botón de fullscreen */
+        top: calc(var(--espaciado) + 50px);
+        left: auto; /* Anulamos la posición izquierda */
+        right: var(--espaciado);
+    }
+}
+
+/* --- Vista de Escritorio Grande (a partir de 1200px) --- */
+@media (min-width: 1200px) {
+    .sidebar {
+        width: 350px; /* Barra lateral un poco más ancha */
+    }
+    .header__title {
+        font-size: 1.8rem;
+    }
+    :root {
+        --espaciado: 1.25rem; /* Aumenta el espaciado general */
+    }
+}
+
+@media (max-width: 767px) {
+    .header {
+        flex-direction: column;
+        align-items: center;
+        gap: 1rem; /* Damos un poco más de espacio entre bloques */
+        padding: 1rem;
+        min-height: auto;
+    }
+
+    .header__logo {
+        position: static; /* Vuelve al flujo normal, ya no es absoluto */
+        transform: none; /* Anula la transformación */
+    }
+
+    .header__logo img {
+        height: 120px; /* Un tamaño adecuado para móvil */
+    }
+
+    .header__stats {
+        order: 2; /* Las cards irán después del logo */
+    }
+    .header__title {
+        order: 1; /* El título irá primero, después del logo que es el default */
+    }
+    .header__actions {
+        order: 3; /* Los iconos al final */
+    }
+
+    /* Y ASEGÚRATE QUE LA REGLA PARA EL TÍTULO NO TENGA PADDING */
+    .header__title {
+        padding-left: 0; 
+        margin-right: 0;
+        font-size: 1.6rem;
+        order: 1;
+         /* CAMBIAMOS EL ORDEN */
+    }
+}
+
+/* ------------------------------------------------------------------- */
+/* 7. ESTILOS DE COMPONENTES DE LEAFLET (los tuyos)
+/* ------------------------------------------------------------------- */
+
+.reservation-cluster { background-color: rgba(40, 167, 69, 0.7); border: 2px solid rgba(33, 136, 56, 0.9); border-radius: 8px; }
+.reservation-cluster div { background-color: rgba(40, 167, 69, 0.9); border-radius: 6px; width: 28px; height: 28px; margin-left: 4px; margin-top: 4px; color: #fff; text-align: center; font-weight: bold; font-size: 14px; line-height: 28px; }
+
+/* --- Estilos para Clusters Genéricos y Tamaños (Usado por Reservas) --- */
+/* Nota: Estos ya no afectarán a los clusters ópticos ni a los regulares. */
+.marker-cluster-small { width: 28px; height: 28px; }
+.marker-cluster-small div { width: 26px; height: 26px; line-height: 26px; margin-left: 1px; margin-top: 1px; font-size: 12px; }
+.marker-cluster-medium { width: 36px; height: 36px; }
+.marker-cluster-medium div { width: 34px; height: 34px; line-height: 34px; margin-left: 1px; margin-top: 1px; font-size: 14px; }
+.marker-cluster-large { width: 44px; height: 44px; }
+.marker-cluster-large div { width: 42px; height: 42px; line-height: 42px; margin-left: 1px; margin-top: 1px; font-size: 16px; }
+
+/* --- Estilos para los Clusters de Eventos Ópticos (Azules/Rojos) --- */
+.cluster-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    color: white;
+    font-weight: bold;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #2a6638;;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+    border: 2px solid rgba(255, 255, 255, 0.5);
+}
+
+/* --- Estilos para Clusters de Eventos Regulares (Púrpura/Rojos) --- */
+.cluster-icon-regular {
+    background-color: #6a5acd; /* Púrpura */
+    width: 40px; height: 40px; border-radius: 50%;
+    color: white; font-weight: bold; font-size: 16px;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+    border: 2px solid rgba(255,255,255,0.5);
+}
+
+/* --- Animaciones --- */
+
+/* Animación para iconos individuales de eventos ópticos con 'fail' */
+@keyframes pulse { 0%, 100% { filter: drop-shadow(0 0 5px red) saturate(600%); } 50% { filter: drop-shadow(0 0 25px red) saturate(900%); } }
+.icon-wrapper.blinking-icon .icon-img { animation: blink 1.8s infinite, pulse 1.8s infinite; }
+
+/* Animación para clusters ópticos con 'fail' */
+.cluster-icon.blinking-cluster {
+    animation: cluster-pulse 1.8s infinite;
+}
+@keyframes cluster-pulse {
+0%, 100% { background-color: #2a6638;; box-shadow: 0 0 0 5px rgba(51, 170, 255, 0.4); }
+50% { background-color: #ff0000; box-shadow: 0 0 0 10px rgba(255, 0, 0, 0.7); }
+}
+
+/* Animación para iconos individuales de eventos regulares con 'UNCLEARED' */
+.custom-icon-wrapper.blinking-icon-regular {
+    animation: pulse-border-regular 1.8s infinite;
+}
+@keyframes pulse-border-regular {
+    0%, 100% { box-shadow: 0 0 0 5px rgba(255, 0, 0, 0.4); }
+    50% { box-shadow: 0 0 0 10px rgba(255, 0, 0, 0.7); }
+}
+
+/* Animación para clusters regulares con 'UNCLEARED' */
+.cluster-icon-regular.blinking-cluster-regular {
+    animation: cluster-pulse-regular 1.8s infinite;
+}
+@keyframes cluster-pulse-regular {
+    0%, 100% { background-color: #6a5acd; box-shadow: 0 0 0 5px rgba(106, 90, 205, 0.4); }
+    50% { background-color: #ff0000; box-shadow: 0 0 0 10px rgba(255, 0, 0, 0.7); }
+}
+
+/* --- Tooltip --- */
+#port-tooltip { display: none; position: absolute; background-color: #333; color: #fff; padding: 5px 10px; border-radius: 4px; font-size: 12px; z-index: 10000; pointer-events: none; white-space: nowrap; }

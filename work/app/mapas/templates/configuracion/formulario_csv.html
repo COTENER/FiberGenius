@@ -1,0 +1,306 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Cargar {{ nombre_amigable }}{% endblock %}
+{% block page_title %}Cargar Archivo{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-header__title">{{ nombre_amigable }}</h1>
+        <p class="page-header__subtitle">Sube el archivo requerido para este paso de configuración</p>
+    </div>
+    <a href="{% url 'configuracion' %}" class="btn btn--secondary">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></svg>
+        Volver
+    </a>
+</div>
+
+<div class="card" style="max-width: 800px;">
+    {# ─── Info Box (based on tipo_csv) ─── #}
+    {% if tipo_csv == 'equipos_otu' %}
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del Archivo</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Columnas requeridas:</p>
+        <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);">
+            <span class="badge badge--accent">Latitude</span> <span class="badge badge--accent">Longitude</span>
+            <span class="badge badge--accent">Descripcion</span> <span class="badge badge--accent">OTU</span>
+            <span class="badge badge--accent">Modelo</span> <span class="badge badge--accent">Puerto monitoreados</span>
+            <span class="badge badge--accent">Puertos libres</span> <span class="badge badge--accent">Puerto</span>
+            <span class="badge badge--accent">Estado</span> <span class="badge badge--accent">Enlaces</span>
+        </div>
+    </div>
+    {% elif tipo_csv == 'ruta_otu' %}
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del Archivo</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Columnas requeridas:</p>
+        <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);">
+            <span class="badge badge--accent">Ruta</span> <span class="badge badge--accent">OTU</span>
+            <span class="badge badge--accent">Distancia (m)</span> <span class="badge badge--accent">OLT</span>
+            <span class="badge badge--accent">SLOT OLT</span> <span class="badge badge--accent">PUERTO OLT</span>
+            <span class="badge badge--accent">PON</span> <span class="badge badge--accent">Enlace PON Traxium</span>
+        </div>
+    </div>
+    {% elif tipo_csv == 'coordenadas_rutas' %}
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del Archivo ZIP</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);">Archivo <code>.zip</code> con múltiples <code>.csv</code>. El nombre de cada CSV debe coincidir con el nombre de una ruta. Columnas mínimas: <span class="badge badge--accent">Latitude</span> <span class="badge badge--accent">Longitude</span></p>
+    </div>
+    {% elif tipo_csv == 'reservas' %}
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del Archivo</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Columnas requeridas:</p>
+        <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);">
+            <span class="badge badge--accent">Nombre (Landmark name)</span> <span class="badge badge--accent">Tipo (Connection type)</span>
+            <span class="badge badge--accent">Reserva (m)</span> <span class="badge badge--accent">Latitud</span>
+            <span class="badge badge--accent">Longitud</span> <span class="badge badge--accent">Enlace</span> <span class="badge badge--accent">Tipo</span>
+        </div>
+    </div>
+    {% elif tipo_csv == 'coordenadas_inventario' %}
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del Archivo ZIP (Inventario Geoespacial)</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);">Archivo <code>.zip</code> con múltiples <code>.csv</code>. El nombre de cada CSV debe coincidir con la ruta (ej: PUERTO 1_BO). Columnas soportadas:</p>
+        <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-top:var(--space-2);">
+            <span class="badge badge--accent">Latitude</span> <span class="badge badge--accent">Longitude</span> 
+            <span style="background:#3b82f6;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;">tipo_trazado</span>
+            <span style="background:#f59e0b;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;">new_seg (opcional)</span>
+        </div>
+        <p style="font-size:12px;color:var(--text-tertiary);margin-top:8px;">
+            * El sistema segmentará el tramo automáticamente si detecta un cambio en <code>tipo_trazado</code> o usando <code>new_seg</code>.
+        </p>
+
+        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo (Cada archivo CSV)</h5>
+        <div style="overflow-x: auto; margin-top: 8px;">
+            <table style="width:100%;border-collapse:collapse;font-size:12px;background:var(--bg-surface);min-width: 600px;">
+                <thead style="border-bottom:1px solid var(--border-color);color:var(--text-secondary);">
+                    <tr>
+                        <th style="text-align:left;padding:6px;">Latitude</th><th style="padding:6px;">Longitude</th>
+                        <th style="padding:6px;">tipo_trazado</th><th style="padding:6px;">new_seg</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid var(--border-color);">
+                        <td style="padding:6px;">-12.293295</td><td style="padding:6px;text-align:center;">-76.83004</td>
+                        <td style="padding:6px;text-align:center;">AEREO</td><td style="padding:6px;text-align:center;">True</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:6px;">-12.313159</td><td style="padding:6px;text-align:center;">-76.81141</td>
+                        <td style="padding:6px;text-align:center;">SOTERRADO</td><td style="padding:6px;text-align:center;">False</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% elif tipo_csv == 'tramos_inventario' %}
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Inventario Técnico</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Sube un único <code>.csv</code> con el detalle técnico del <strong>troncal</strong>. Cruza con el mapa usando <span class="badge badge--accent">ruta</span> (la data ingresada aplicará a todos sus segmentos):</p>
+        <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);">
+            <span class="badge badge--accent">ruta</span>
+            <span class="badge badge--accent">estado</span> <span class="badge badge--accent">distancia</span>
+            <span class="badge badge--accent">mufas</span> <span class="badge badge--accent">splitters</span> <span class="badge badge--accent">reservas_m</span>
+            <span class="badge badge--accent">capacidad</span> <span class="badge badge--accent">tipo_fibra</span>
+            <span class="badge badge--accent">origen</span> <span class="badge badge--accent">destino</span>
+            <span class="badge badge--accent">hub_site</span> <span class="badge badge--accent">marca_modelo</span>
+            <span class="badge badge--accent">serial</span>
+        </div>
+        
+        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo Completa</h5>
+        <div style="overflow-x: auto; margin-top: 8px;">
+            <table style="width:100%;border-collapse:collapse;font-size:12px;background:var(--bg-surface);min-width: 1000px;">
+                <thead style="border-bottom:1px solid var(--border-color);color:var(--text-secondary);">
+                    <tr>
+                        <th style="text-align:left;padding:6px;">ruta</th>
+                        <th style="padding:6px;">estado</th>
+                        <th style="padding:6px;">distancia</th><th style="padding:6px;">mufas</th>
+                        <th style="padding:6px;">splitters</th><th style="padding:6px;">reservas_m</th>
+                        <th style="padding:6px;">capacidad</th><th style="padding:6px;">tipo_fibra</th>
+                        <th style="padding:6px;">origen</th><th style="padding:6px;">destino</th>
+                        <th style="padding:6px;">hub_site</th><th style="padding:6px;">marca_modelo</th>
+                        <th style="padding:6px;">serial</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid var(--border-color);">
+                        <td style="padding:6px;">Colina OLT1 Primario 81</td>
+                        <td style="padding:6px;text-align:center;">ACTIVO</td>
+                        <td style="padding:6px;text-align:center;">1200.5</td><td style="padding:6px;text-align:center;">2</td>
+                        <td style="padding:6px;text-align:center;">1</td><td style="padding:6px;text-align:center;">45.5</td>
+                        <td style="padding:6px;text-align:center;">144 fibras</td><td style="padding:6px;text-align:center;">ADSS</td>
+                        <td style="padding:6px;text-align:center;">ODF TR01</td><td style="padding:6px;text-align:center;">LMLO123-F</td>
+                        <td style="padding:6px;text-align:center;">Los Olivos</td><td style="padding:6px;text-align:center;">Cable FO Troncal</td>
+                        <td style="padding:6px;text-align:center;">N/A</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% elif tipo_csv == 'asociar_puertos' %}
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Propósito</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);">Re-lee el archivo de Equipos OTU para vincular puertos con rutas. Columnas clave: <span class="badge badge--accent">Descripcion</span> <span class="badge badge--accent">Puerto</span> <span class="badge badge--accent">Enlaces</span></p>
+    </div>
+    {% elif tipo_csv == 'fibras_inventario' %}
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: inventario de fibras ópticas (Archivo B)</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Sube un <code>.csv</code> con el estado individual de cada fibra óptica dentro de las troncales. Columnas requeridas:</p>
+        <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
+            <span class="badge badge--accent">Ruta</span> <span class="badge badge--accent">Fibra</span>
+            <span class="badge badge--accent">Tipo de fibra</span> <span class="badge badge--accent">Estado</span>
+            <span class="badge badge--accent">Origen</span> <span class="badge badge--accent">Empalme</span>
+            <span class="badge badge--accent">Patch</span> <span class="badge badge--accent">Destino</span>
+        </div>
+        
+        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo</h5>
+        <div style="overflow-x: auto; margin-top: 8px;">
+            <table style="width:100%;border-collapse:collapse;font-size:12px;background:var(--bg-surface);min-width: 800px;">
+                <thead style="border-bottom:1px solid var(--border-color);color:var(--text-secondary);">
+                    <tr>
+                        <th style="text-align:left;padding:6px;">Ruta</th>
+                        <th style="padding:6px;">Fibra</th>
+                        <th style="padding:6px;">Tipo de fibra</th>
+                        <th style="padding:6px;">Estado</th>
+                        <th style="padding:6px;">Origen</th>
+                        <th style="padding:6px;">Empalme</th>
+                        <th style="padding:6px;">Patch</th>
+                        <th style="padding:6px;">Destino</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid var(--border-color);">
+                        <td style="padding:6px;">TR01_LMLO123-F_F61</td>
+                        <td style="padding:6px;">F61</td>
+                        <td style="padding:6px;text-align:center;">Monomodo</td>
+                        <td style="padding:6px;text-align:center;">Ocupada</td>
+                        <td style="padding:6px;text-align:center;">ODF TR01</td>
+                        <td style="padding:6px;text-align:center;">Sí</td>
+                        <td style="padding:6px;text-align:center;">Sí</td>
+                        <td style="padding:6px;text-align:center;">LMLO123-F</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:6px;">TR01_LMLO123-F_F61</td>
+                        <td style="padding:6px;">F62</td>
+                        <td style="padding:6px;text-align:center;">Monomodo</td>
+                        <td style="padding:6px;text-align:center;">Libre</td>
+                        <td style="padding:6px;text-align:center;">ODF TR01</td>
+                        <td style="padding:6px;text-align:center;">No</td>
+                        <td style="padding:6px;text-align:center;">No</td>
+                        <td style="padding:6px;text-align:center;">Libre</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% elif tipo_csv == 'odf_inventario' %}
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Inventario de ODFs (Archivo D)</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Sube la información de infraestructura de los ODFs. Columnas requeridas:</p>
+        <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
+            <span class="badge badge--accent">hub_site</span> <span class="badge badge--accent">sala</span>
+            <span class="badge badge--accent">rack</span> <span class="badge badge--accent">odf</span>
+            <span class="badge badge--accent">troncal</span> <span class="badge badge--accent">capacidad_puertos</span>
+            <span class="badge badge--accent">tipo_conector</span> <span class="badge badge--accent">estado</span>
+            <span class="badge badge--accent">observaciones</span>
+        </div>
+        
+        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo</h5>
+        <div style="overflow-x: auto; margin-top: 8px;">
+            <table style="width:100%;border-collapse:collapse;font-size:12px;background:var(--bg-surface);min-width: 1000px;">
+                <thead style="border-bottom:1px solid var(--border-color);color:var(--text-secondary);">
+                    <tr>
+                        <th style="text-align:left;padding:6px;">hub_site</th>
+                        <th style="padding:6px;">sala</th>
+                        <th style="padding:6px;">rack</th>
+                        <th style="padding:6px;">odf</th>
+                        <th style="padding:6px;">troncal</th>
+                        <th style="padding:6px;">capacidad_puertos</th>
+                        <th style="padding:6px;">tipo_conector</th>
+                        <th style="padding:6px;">estado</th>
+                        <th style="padding:6px;">observaciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid var(--border-color);">
+                        <td style="padding:6px;">Los Olivos</td>
+                        <td style="padding:6px;">Sala FO 1</td>
+                        <td style="padding:6px;">Rack 03</td>
+                        <td style="padding:6px;font-weight:bold;">ODF TR01</td>
+                        <td style="padding:6px;">TR01-LMLO123-F</td>
+                        <td style="padding:6px;text-align:center;">144</td>
+                        <td style="padding:6px;text-align:center;">SC/APC</td>
+                        <td style="padding:6px;text-align:center;">Activo</td>
+                        <td style="padding:6px;">Troncal operativa</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% elif tipo_csv == 'puertos_odf_inventario' %}
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Detalle de Puertos ODF (Archivo E)</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Sube el estado granular de cada puerto dentro de los ODFs. Columnas requeridas:</p>
+        <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
+            <span class="badge badge--accent">odf</span> <span class="badge badge--accent">bandeja</span>
+            <span class="badge badge--accent">puerto_odf</span> <span class="badge badge--accent">fibra</span>
+            <span class="badge badge--accent">estado_puerto</span> <span class="badge badge--accent">tipo_conector</span>
+            <span class="badge badge--accent">patchcord</span> <span class="badge badge--accent">destino</span>
+            <span class="badge badge--accent">observaciones</span>
+        </div>
+        
+        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo</h5>
+        <div style="overflow-x: auto; margin-top: 8px;">
+            <table style="width:100%;border-collapse:collapse;font-size:12px;background:var(--bg-surface);min-width: 1200px;">
+                <thead style="border-bottom:1px solid var(--border-color);color:var(--text-secondary);">
+                    <tr>
+                        <th style="text-align:left;padding:6px;">odf</th>
+                        <th style="padding:6px;">bandeja</th>
+                        <th style="padding:6px;">puerto_odf</th>
+                        <th style="padding:6px;">fibra</th>
+                        <th style="padding:6px;">estado_puerto</th>
+                        <th style="padding:6px;">tipo_conector</th>
+                        <th style="padding:6px;">patchcord</th>
+                        <th style="padding:6px;">destino</th>
+                        <th style="padding:6px;">observaciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom:1px solid var(--border-color);">
+                        <td style="padding:6px;">ODF TR01</td>
+                        <td style="padding:6px;">B01</td>
+                        <td style="padding:6px;text-align:center;">61</td>
+                        <td style="padding:6px;">F61</td>
+                        <td style="padding:6px;text-align:center;">Ocupado</td>
+                        <td style="padding:6px;text-align:center;">SC/APC</td>
+                        <td style="padding:6px;text-align:center;">Sí</td>
+                        <td style="padding:6px;">LMLO123-F</td>
+                        <td style="padding:6px;">Puerto operativo</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    {# ─── Upload Form ─── #}
+    <form method="post" enctype="multipart/form-data" action="{% url 'cargar_csv' tipo_csv=tipo_csv %}">
+        {% csrf_token %}
+        <div class="form-group">
+            <label class="form-label" for="id_csv_file">
+                {% if tipo_csv == 'coordenadas_rutas' %}Seleccionar Archivo ZIP{% else %}Seleccionar Archivo CSV{% endif %}
+            </label>
+            <input type="file" id="id_csv_file" name="csv_file"
+                   class="form-control"
+                   accept="{% if tipo_csv == 'coordenadas_rutas' %}.zip{% else %}.csv{% endif %}"
+                   required
+                   style="padding:var(--space-3);">
+        </div>
+        <div style="display:flex;gap:var(--space-3);margin-top:var(--space-4);">
+            <button type="submit" class="btn btn--primary">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+                Subir Archivo
+            </button>
+            <a href="{% url 'configuracion' %}" class="btn btn--secondary">Cancelar</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

@@ -1,0 +1,220 @@
+<div id="modal-ajax-content">
+    <style>
+        .grupo-form-card { max-width: 100%; border: none !important; box-shadow: none !important; padding: 0 !important; background: transparent; }
+        .grupo-form-card .form-group { margin-bottom: 24px; }
+        .grupo-form-card input[type="text"] {
+            width: 100%; padding: 12px 16px; font-family: var(--font-sans); box-sizing: border-box;
+            font-size: 0.95rem; color: var(--text-primary); background: var(--bg-surface-2);
+            border: 1px solid var(--border-input); border-radius: 8px; transition: border-color 0.2s;
+        }
+        .grupo-form-card input[type="text"]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,130,246,0.15); }
+        .grupo-form-card label { font-size: 0.85rem; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; display: block; }
+        
+        .permisos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; margin-top: 16px; }
+        .permiso-modern-card {
+            background: var(--bg-surface-2); border: 1px solid var(--border-color);
+            border-radius: 12px; padding: 20px; transition: all 0.2s ease;
+        }
+        .permiso-modern-card:hover { border-color: var(--border-focus); box-shadow: 0 4px 12px rgba(0,0,0,0.03); }
+        .permiso-modern-card h4 {
+            display: flex; align-items: center; justify-content: space-between;
+            font-size: 0.95rem; font-weight: 600; color: var(--text-primary);
+            margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px dashed var(--dt-border, var(--border-color)); gap: 8px; margin-top:0;
+        }
+        .permiso-modern-card h4 .module-title { display: flex; align-items: center; gap: 8px; }
+        
+        /* Modern Checkboxes inside the module */
+        .permiso-item-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        @media (max-width: 600px) { .permiso-item-grid { grid-template-columns: 1fr; } }
+        .permiso-item { display: flex; align-items: flex-start; gap: 10px; font-size: 0.85rem; }
+        .permiso-item input[type="checkbox"] { 
+            accent-color: var(--accent); width: 16px; height: 16px; cursor: pointer; flex-shrink: 0; margin-top: 2px;
+        }
+        .permiso-item label { cursor: pointer; color: var(--text-secondary); line-height: 1.4; font-weight: 500; font-size:0.85rem; margin-bottom:0; }
+        
+        .hidden-real-inputs { display: none; }
+        
+        .btn-submit-form { width: auto; justify-content: center; padding: 10px 24px; font-size: 0.95rem; border-radius: 8px; }
+        .footer-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border-color);}
+        
+        /* Toggle Switch for "Seleccionar Todo" */
+        .toggle-switch-sm { position: relative; display: inline-flex; align-items: center; cursor: pointer; gap: 8px; user-select: none; }
+        .toggle-switch-sm input[type="checkbox"] { opacity: 0; width: 0; height: 0; position: absolute; margin:0; pointer-events: none;}
+        .toggle-switch-sm__slider { position: relative; width: 36px; height: 20px; background-color: var(--border-input); border-radius: 20px; transition: background-color 0.2s ease; flex-shrink: 0; }
+        .toggle-switch-sm__slider::before { content: ""; position: absolute; height: 14px; width: 14px; left: 3px; bottom: 3px; background-color: white; border-radius: 50%; transition: transform 0.2s cubic-bezier(0.4, 0.0, 0.2, 1); box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+        .toggle-switch-sm input:checked + .toggle-switch-sm__slider { background-color: var(--success, #10b981); }
+        .toggle-switch-sm input:checked + .toggle-switch-sm__slider::before { transform: translateX(16px); }
+        .toggle-switch-sm__label { font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;}
+        
+        /* Fix variables when --dt-primary is missing on this sub-page if not injected correctly */
+        :root { --dt-primary: var(--accent, #0f62fe); }
+        [data-theme="dark"] .permiso-modern-card { background: rgba(30, 41, 59, 0.2); }
+    </style>
+
+    <div class="grupo-form-card">
+        <form method="post" action="{% if form.instance.pk %}{% url 'editar_grupo' form.instance.pk %}{% else %}{% url 'crear_grupo' %}{% endif %}" id="group-form">
+            {% csrf_token %}
+            <div class="form-group">
+                <label for="{{ form.name.id_for_label }}">Nombre del Grupo (Rol Operativo):</label>
+                {{ form.name }}
+                {% for error in form.name.errors %}<div style="color:#ef4444; font-size:0.8rem; margin-top:4px;">{{ error }}</div>{% endfor %}
+            </div>
+
+            <h3 style="font-size: 0.95rem; font-weight: 600; color: var(--text-primary); margin-top: 16px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-secondary);"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="M9 17V7"/><path d="M15 17V7"/></svg>
+                Configuración de Accesos por Módulos
+            </h3>
+            <p style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 20px;">Activa o desactiva los permisos específicos que tendrán los usuarios asignados a este perfil.</p>
+
+            {% for categoria_nombre, modulos in permisos_agrupados.items %}
+            <div class="categoria-section" style="margin-bottom: 32px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 2px solid var(--border-color);">
+                    <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-primary); margin: 0; display: flex; align-items: center; gap: 10px;">
+                        {% if categoria_nombre == 'Operaciones' %}
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#ef4444;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/></svg>
+                        {% elif categoria_nombre == 'Inventario' %}
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#3b82f6;"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/></svg>
+                        {% else %}
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#10b981;"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                        {% endif %}
+                        {{ categoria_nombre }}
+                    </h3>
+                    <label class="toggle-switch-sm" title="Habilitar todos los módulos de {{ categoria_nombre }}">
+                        <span class="toggle-switch-sm__label" style="margin-right: 8px;">Todo</span>
+                        <input type="checkbox" class="cat-toggle-input" onchange="toggleCategoryPermissions(this)">
+                        <div class="toggle-switch-sm__slider" style="width: 44px; height: 24px;"></div>
+                    </label>
+                </div>
+                
+                <div class="permisos-grid">
+                    {% for grupo_nombre, permisos in modulos.items %}
+                    <div class="permiso-modern-card" style="padding: 20px;">
+                        <h4 style="border-bottom: none; padding-bottom: 0; margin-bottom: 0;">
+                            <div class="module-title" style="font-size: 1.05rem;">
+                                {% if "Mapa VeEX" in grupo_nombre %}
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#ef4444;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/></svg>
+                                {% elif "Dashboard" in grupo_nombre %}
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#f59e0b;"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+                                {% elif "Ranking" in grupo_nombre %}
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#8b5cf6;"><path d="m2 9 3-3 3 3"/><path d="M5 6v16"/><path d="m11 15 3 3 3-3"/><path d="M14 22V6"/><path d="m18 12 3-3 3 3"/><path d="M21 9v13"/></svg>
+                                {% elif "Inventario" in grupo_nombre or "Planta" in grupo_nombre %}
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#3b82f6;"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" y1="3" x2="9" y2="18"/><line x1="15" y1="6" x2="15" y2="21"/></svg>
+                                {% elif "Importación" in grupo_nombre %}
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#14b8a6;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                                {% elif "Umbral" in grupo_nombre %}
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#ec4899;"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33h.09a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                                {% elif "Sites" in grupo_nombre %}
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#f97316;"><rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+                                {% elif "Usuar" in grupo_nombre or "Grupos" in grupo_nombre %}
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#10b981;"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                                {% else %}
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-secondary);"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+                                {% endif %}
+                                {{ grupo_nombre }}
+                            </div>
+                            <label class="toggle-switch-sm" title="Habilitar o deshabilitar {{ grupo_nombre }}">
+                                <input type="checkbox" onchange="toggleModulePermissions(this)">
+                                <div class="toggle-switch-sm__slider" style="width: 44px; height: 24px;"></div>
+                            </label>
+                        </h4>
+
+                        <div class="hidden-real-inputs" style="display: none;">
+                            {% for permiso in permisos %}
+                            <input type="checkbox" name="permissions" value="{{ permiso.id }}" class="real-perm"
+                                   {% if permiso.id in permisos_seleccionados %}checked{% endif %}>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endfor %}
+
+            <div class="footer-actions">
+                <button type="button" class="btn btn--secondary" onclick="$('#cerrar-modal-dinamico').click()">Cancelar</button>
+                <button type="submit" class="btn btn--primary btn-submit-form" style="background: var(--dt-primary); color: white; border: none;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                    {% if form.instance.pk %}Guardar Cambios{% else %}Crear Rol Operativo{% endif %}
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        // Init UI checks based on real inputs pre-selected
+        function syncUI() {
+            document.querySelectorAll('.permiso-modern-card').forEach(card => {
+                const hiddenCheckboxes = card.querySelectorAll("input.real-perm");
+                const toggleInput = card.querySelector('.toggle-switch-sm input');
+                
+                if (toggleInput && hiddenCheckboxes.length > 0) {
+                    // Turn ON if ANY hidden checkbox is ON 
+                    const isChecked = Array.from(hiddenCheckboxes).some(cb => cb.checked);
+                    toggleInput.checked = isChecked;
+                }
+            });
+
+            // Sincronizar el toggle maestro de Categoría
+            document.querySelectorAll('.categoria-section').forEach(section => {
+                const moduleToggles = section.querySelectorAll('.permiso-modern-card .toggle-switch-sm input[type="checkbox"]');
+                const catToggle = section.querySelector('.cat-toggle-input');
+                if (catToggle && moduleToggles.length > 0) {
+                    // Turn ON si todos los módulos están ON, o al menos uno (depende de la lógica deseada, aquí hacemos si TODOS están ON o si ALGUNO está ON. Mejor si ALGUNO está ON)
+                    const isChecked = Array.from(moduleToggles).some(toggle => toggle.checked);
+                    catToggle.checked = isChecked;
+                }
+            });
+            
+            // Fix slider CSS dynamically for the slightly bigger new toggles
+            document.querySelectorAll('.toggle-switch-sm__slider').forEach(slider => {
+                const parent = slider.parentElement;
+                slider.style.width = '44px';
+                slider.style.height = '24px';
+                const style = document.createElement('style');
+                style.innerHTML = `
+                    .toggle-switch-sm input:checked + .toggle-switch-sm__slider::before { transform: translateX(20px); }
+                    .toggle-switch-sm__slider::before { height: 18px; width: 18px; left: 3px; bottom: 3px; }
+                `;
+                document.head.appendChild(style);
+            });
+        }
+
+        function toggleModulePermissions(el) {
+            const isChecked = el.checked;
+            const card = el.closest('.permiso-modern-card');
+            const hiddenCheckboxes = card.querySelectorAll("input.real-perm");
+            hiddenCheckboxes.forEach(cb => {
+                cb.checked = isChecked;
+            });
+
+            // Sincronizar hacia arriba a la categoría
+            const section = el.closest('.categoria-section');
+            if (section) {
+                const moduleToggles = section.querySelectorAll('.permiso-modern-card .toggle-switch-sm input[type="checkbox"]');
+                const catToggle = section.querySelector('.cat-toggle-input');
+                if (catToggle) {
+                    catToggle.checked = Array.from(moduleToggles).some(t => t.checked);
+                }
+            }
+        }
+
+        function toggleCategoryPermissions(el) {
+            const isChecked = el.checked;
+            const section = el.closest('.categoria-section');
+            if (section) {
+                const moduleToggles = section.querySelectorAll('.permiso-modern-card .toggle-switch-sm input[type="checkbox"]');
+                moduleToggles.forEach(toggle => {
+                    if (toggle.checked !== isChecked) {
+                        toggle.checked = isChecked;
+                        // Sincronizar hacia abajo a los hidden inputs
+                        toggleModulePermissions(toggle);
+                    }
+                });
+            }
+        }
+
+        // Initialize sync on Ajax load
+        syncUI();
+    </script>
+
+</div>

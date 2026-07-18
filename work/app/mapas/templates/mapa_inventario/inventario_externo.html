@@ -1,0 +1,2922 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Troncales y tramos — Fiber Genius{% endblock %}
+{% block page_title %}Inventario / Troncales y tramos{% endblock %}
+
+{% block extra_css %}
+<style>
+    :root {
+        --card-bg: #ffffff;
+        --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    }
+    [data-theme="dark"] {
+        --card-bg: #1e293b;
+        --card-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+    }
+
+    .dashboard-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+
+    .stat-card {
+        background: var(--card-bg);
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: var(--card-shadow);
+        border: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        transition: transform 0.2s;
+    }
+    .stat-card:hover { transform: translateY(-4px); }
+
+    /* Soft Backgrounds for Cards */
+    .card-blue { background: rgba(59, 130, 246, 0.04); border-left: 4px solid #3b82f6; }
+    .card-purple { background: rgba(139, 92, 246, 0.04); border-left: 4px solid #8b5cf6; }
+    .card-emerald { background: rgba(16, 185, 129, 0.04); border-left: 4px solid #10b981; }
+
+    [data-theme="dark"] .card-blue { background: rgba(59, 130, 246, 0.08); }
+    [data-theme="dark"] .card-purple { background: rgba(139, 92, 246, 0.08); }
+    [data-theme="dark"] .card-emerald { background: rgba(16, 185, 129, 0.08); }
+
+    .stat-icon {
+        width: 56px;
+        height: 56px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 24px;
+        color: white;
+    }
+    .icon-blue { background: linear-gradient(135deg, #3b82f6, #2563eb); }
+    .icon-purple { background: linear-gradient(135deg, #8b5cf6, #7c3aed); }
+    .icon-emerald { background: linear-gradient(135deg, #10b981, #059669); }
+    .icon-orange { background: linear-gradient(135deg, #f59e0b, #d97706); }
+    .icon-pink { background: linear-gradient(135deg, #ec4899, #be185d); }
+    .card-pink { background: rgba(236, 72, 153, 0.04); border-left: 4px solid #ec4899; }
+    [data-theme="dark"] .card-pink { background: rgba(236, 72, 153, 0.08); }
+
+    .stat-content h4 {
+        margin: 0;
+        font-size: 13px;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .stat-content .value {
+        font-size: 28px;
+        font-weight: 800;
+        color: var(--text-primary);
+        margin: 4px 0;
+    }
+
+    /* Charts Row */
+    .charts-container {
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+    .charts-container-third {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+    @media (max-width: 1024px) {
+        .charts-container, .charts-container-half, .charts-container-third { grid-template-columns: 1fr; }
+    }
+
+    .chart-card {
+        background: var(--card-bg);
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: var(--card-shadow);
+        border: 1px solid var(--border);
+    }
+    .chart-card h3 {
+        margin-top: 0;
+        margin-bottom: 20px;
+        font-size: 16px;
+        font-weight: 700;
+        color: var(--text-primary);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    /* Table Container */
+    .table-card {
+        background: var(--card-bg);
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: var(--card-shadow);
+        border: 1px solid var(--border);
+        overflow: hidden;
+    }
+    .custom-table {
+        width: 100%;
+        border-collapse: collapse;
+    }
+    .custom-table th {
+        text-align: left;
+        padding: 12px;
+        font-size: 12px;
+        text-transform: uppercase;
+        color: var(--text-tertiary);
+        border-bottom: 1px solid var(--border);
+    }
+    .custom-table td {
+        padding: 14px 12px;
+        font-size: 14px;
+        color: var(--text-primary);
+        border-bottom: 1px solid var(--border);
+    }
+    .badge {
+        padding: 4px 8px;
+        border-radius: 6px;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+    }
+    .badge-blue { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }
+    .badge-red { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+
+    /* Dropdown Styles */
+    .export-dropdown {
+        position: relative;
+        display: inline-block;
+    }
+    .dropdown-menu {
+        display: none;
+        position: absolute;
+        right: 0;
+        top: 100%;
+        background: var(--card-bg);
+        min-width: 160px;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        z-index: 1000;
+        margin-top: 8px;
+        overflow: hidden;
+        animation: slideDown 0.2s ease-out;
+    }
+    @keyframes slideDown {
+        from { opacity: 0; transform: translateY(-10px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    .dropdown-item {
+        padding: 10px 16px;
+        font-size: 13px;
+        color: var(--text-primary);
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        cursor: pointer;
+        transition: background 0.2s;
+        border: none;
+        background: transparent;
+        width: 100%;
+        text-align: left;
+    }
+    .dropdown-item:hover {
+        background: var(--bg-hover);
+        color: var(--accent);
+    }
+    .dropdown-item svg {
+        opacity: 0.7;
+    }
+    .show { display: block !important; }
+
+    /* Modal Styles */
+    .modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        backdrop-filter: blur(4px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 2000;
+        animation: fadeIn 0.3s ease;
+    }
+    .modal-content {
+        background: var(--card-bg);
+        border-radius: 20px;
+        box-shadow: var(--shadow-2xl);
+        width: 90%;
+        max-width: 1100px;
+        max-height: 85vh;
+        display: flex;
+        flex-direction: column;
+        border: 1px solid var(--border);
+        animation: modalScale 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .modal-header {
+        padding: 20px 24px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .modal-body {
+        padding: 24px;
+        overflow-y: auto;
+    }
+    .btn-close {
+        background: none;
+        border: none;
+        font-size: 28px;
+        color: var(--text-tertiary);
+        cursor: pointer;
+        line-height: 1;
+    }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes modalScale { from { transform: scale(0.9) translateY(20px); opacity: 0; } to { transform: scale(1) translateY(0); opacity: 1; } }
+
+    /* Modal Stats Cards */
+    .modal-stats {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+        margin-bottom: 24px;
+    }
+    .m-stat-card {
+        padding: 20px;
+        border-radius: 16px;
+        border: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        transition: transform 0.2s;
+    }
+    .m-stat-card:hover { transform: translateY(-2px); }
+    .m-stat-icon {
+        width: 42px;
+        height: 42px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .m-stat-content { display: flex; flex-direction: column; }
+    .m-stat-card .label { font-size: 12px; text-transform: uppercase; color: var(--text-tertiary); font-weight: 700; letter-spacing: 0.5px; }
+    .m-stat-card .value { font-size: 24px; font-weight: 800; color: var(--text-primary); line-height: 1.2; }
+    
+    /* Darker, richer colors for modal stats */
+    .m-stat-blue { background: rgba(59, 130, 246, 0.08); border-color: rgba(59, 130, 246, 0.15); }
+    .m-stat-blue .m-stat-icon { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
+    
+    .m-stat-green { background: rgba(16, 185, 129, 0.08); border-color: rgba(16, 185, 129, 0.15); }
+    .m-stat-green .m-stat-icon { background: rgba(16, 185, 129, 0.15); color: #10b981; }
+    
+    .m-stat-orange { background: rgba(239, 68, 68, 0.08); border-color: rgba(239, 68, 68, 0.15); }
+    .m-stat-orange .m-stat-icon { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+
+    /* Custom Status Badges in Modal */
+    .m-badge {
+        padding: 4px 10px;
+        border-radius: 20px;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+    }
+    .m-badge-libre { background: rgba(16, 185, 129, 0.12); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.2); }
+    .m-badge-ocupada { background: rgba(239, 68, 68, 0.12); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.2); }
+    .m-badge-reservada { background: rgba(59, 130, 246, 0.12); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.2); }
+
+    /* Dropdown Item Improvements */
+    .dropdown-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 16px;
+        font-weight: 500;
+    }
+    .dropdown-item svg { opacity: 0.7; }
+
+    /* Pagination SaaS Style */
+    .pagination-container {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 24px;
+        padding-top: 18px;
+        border-top: 1px solid var(--border);
+    }
+    .page-info { font-size: 13px; color: var(--text-tertiary); font-weight: 500; }
+    .page-btns { display: flex; gap: 6px; }
+    .btn-page {
+        padding: 8px 16px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: var(--card-bg);
+        color: var(--text-primary);
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .btn-page:hover:not(:disabled) { 
+        background: var(--accent); 
+        color: white; 
+        border-color: var(--accent);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);
+    }
+    .btn-page:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    /* Action Icon Button */
+    .btn-icon-action {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--border);
+        background: var(--bg-surface);
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .btn-icon-action:hover {
+        background: rgba(59, 130, 246, 0.1);
+        color: #3b82f6;
+        border-color: #3b82f6;
+    }
+
+    /* Modal Form Enhancements */
+    .modal-footer-saas {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        margin-top: 30px;
+        padding-top: 20px;
+        border-top: 1px solid var(--border);
+    }
+    .btn-saas-primary {
+        padding: 10px 24px;
+        border-radius: 10px;
+        background: var(--accent);
+        color: white;
+        font-weight: 600;
+        border: none;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    .btn-saas-primary:hover {
+        filter: brightness(1.1);
+        box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);
+    }
+    .btn-saas-secondary {
+        padding: 10px 24px;
+        border-radius: 10px;
+        background: var(--bg-hover);
+        color: var(--text-primary);
+        font-weight: 600;
+        border: 1px solid var(--border);
+        cursor: pointer;
+    }
+
+    /* Edit Modal Specific */
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .form-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+    .form-group label { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
+    .form-group input, .form-group select {
+        padding: 8px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: var(--bg-surface);
+        color: var(--text-primary);
+        font-size: 14px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid p-4">
+    <!-- Data Detail Section -->
+    <div class="table-card">
+        <div style="display: flex; align-items: center; gap: 20px; margin-bottom: 20px; flex-wrap: wrap;">
+            <h3 style="margin:0; font-size: 18px; white-space: nowrap;">Listado de Troncales</h3>
+            <div style="position: relative; width: 100%; max-width: 300px;">
+                <input type="text" id="searchRutasMain" placeholder="Buscar troncal..." 
+                       oninput="filterRutasTable()"
+                       style="width: 100%; padding: 8px 12px 8px 36px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-surface); color: var(--text-primary); font-size: 13px; transition: all 0.2s;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="position: absolute; left: 12px; top: 10px; opacity: 0.5;"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            </div>
+            <div style="display: flex; gap: 10px; align-items: center; margin-left: auto;">
+                <button onclick="abrirModalNuevaRuta()" class="btn btn-sm" style="display: flex; align-items: center; gap: 8px; border-radius: 10px; padding: 8px 18px; font-weight: 700; background: #6366f1; color: white; border: none; box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Nueva Troncal
+                </button>
+                <div class="export-dropdown">
+                    <button onclick="toggleExportMenu(event)" class="btn btn-sm export-btn" style="display: flex; align-items: center; gap: 8px; font-weight: 700; border-radius: 10px; padding: 8px 16px; background: rgba(14, 165, 233, 0.1); color: #0ea5e9; border: 1px solid rgba(14, 165, 233, 0.2); transition: all 0.2s;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Exportar
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+                    </button>
+                    <div id="exportMenu" class="dropdown-menu">
+                        <button onclick="exportToExcel()" class="dropdown-item">
+                            <svg width="16" height="16" fill="none" stroke="#10b981" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13l2 2 4-4"/></svg>
+                            Excel (.xlsx)
+                        </button>
+                        <button onclick="exportToCSV()" class="dropdown-item">
+                            <svg width="16" height="16" fill="none" stroke="#64748b" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
+                            CSV (.csv)
+                        </button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+        <div style="overflow-x: auto;">
+            <table class="custom-table" id="rutasMainTable">
+                <thead>
+                    <tr>
+                        <th>Nombre de Troncal</th>
+                        <th>Site de origen</th>
+                        <th>Destino</th>
+                        <th>Trazado</th>
+                        <th>Capacidad</th>
+                        <th>Marca / Modelo</th>
+                        <th style="width: 100px;">Distancia</th>
+                        <th style="width: 100px;">Reserva</th>
+                        <th style="width: 120px;">Fibras ópticas</th>
+                        <th>Reservas</th>
+                        <th>ODF</th>
+                        <th style="width: 120px;">Fibras (ocup./reserv./libres)</th>
+                        <th style="text-align: center;">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for ruta in resumen_rutas %}
+                    <tr>
+                        <td style="font-weight: 700;">
+                            <a href="{% url 'mapa_inventario' %}?ruta={{ ruta.nombre|urlencode }}" 
+                               style="color: var(--accent); text-decoration: none; display: flex; align-items: center; gap: 6px;"
+                               class="route-link">
+                                {{ ruta.nombre }}
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.5;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                            </a>
+                        </td>
+                        <td>{{ ruta.hub_origen }}</td>
+                        <td>{{ ruta.destino }}</td>
+                        <td>
+                            {% if ruta.tipo == 'AEREO' %}
+                                <span class="badge badge-blue">AEREO</span>
+                            {% elif ruta.tipo == 'SOTERRADO' %}
+                                <span class="badge badge-red">SOTERRADO</span>
+                            {% elif ruta.tipo == 'HIBRIDO' %}
+                                <span class="badge" style="background: rgba(139, 92, 246, 0.1); color: #8b5cf6;">HIBRIDO</span>
+                            {% else %}
+                                <span class="badge" style="background: rgba(148, 163, 184, 0.1); color: #94a3b8;">{{ ruta.tipo }}</span>
+                            {% endif %}
+                        </td>
+                        <td><span style="font-weight: 600;">{{ ruta.capacidad }}</span></td>
+                        <td><span style="font-size: 12px; color: var(--text-secondary);">{{ ruta.marca_modelo }}</span></td>
+                        <td>{{ ruta.distancia_km }} Km</td>
+                        <td style="font-weight: 500; color: #10b981;">{{ ruta.reservas_km }} Km</td>
+                        <td>
+                            <button onclick="verFibras(this.getAttribute('data-nombre'))" data-nombre="{{ ruta.nombre }}" class="btn btn-sm" style="padding: 5px 14px; border-radius: 8px; font-size: 12px; font-weight: 700; background: rgba(16, 185, 129, 0.1); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.2); transition: all 0.2s;">
+                                Ver fibras
+                            </button>
+                        </td>
+                        <td>
+                            <button onclick="verReservas(this.getAttribute('data-nombre'))" data-nombre="{{ ruta.nombre }}" class="btn btn-sm" style="padding: 5px 14px; border-radius: 8px; font-size: 12px; font-weight: 700; background: rgba(59, 130, 246, 0.1); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.2); transition: all 0.2s;">
+                                Ver Reservas
+                            </button>
+                        </td>
+                        <td style="font-size: 12px; color: var(--accent); font-weight: 600;">{{ ruta.odf_nombre|default:"-" }}</td>
+                        <td style="text-align: center; font-size: 11px; white-space: nowrap;">
+                            <span style="color: #ef4444;" title="Ocupados">{{ ruta.hilos_ocupados }}</span> / 
+                            <span style="color: #3b82f6;" title="Reservados">{{ ruta.hilos_reservados|default:"0" }}</span> / 
+                            <span style="color: #10b981;" title="Libres">{{ ruta.hilos_libres }}</span>
+                        </td>
+                        <td style="display: flex; gap: 8px; justify-content: center; align-items: center; padding-top: 12px;">
+                            <button onclick="prepararEdicionRuta(this)" class="btn-icon-action" style="color: #6366f1; border: 1px solid rgba(99, 102, 241, 0.2); background: rgba(99, 102, 241, 0.05);" title="Editar Ruta"
+                                data-nombre="{{ ruta.nombre }}"
+                                data-hub="{{ ruta.hub_origen }}"
+                                data-destino="{{ ruta.destino }}"
+                                data-tipo="{{ ruta.tipo }}"
+                                data-capacidad="{{ ruta.capacidad }}"
+                                data-marca="{{ ruta.marca_modelo }}"
+                                data-tipofibra="{{ ruta.tipo_fibra }}"
+                                data-serial="{{ ruta.serial }}"
+                                data-estado="{{ ruta.estado }}"
+                                data-mufas="{{ ruta.mufas }}"
+                                data-splitters="{{ ruta.splitters }}"
+                                data-distancia="{{ ruta.distancia_km }}"
+                                data-reserva="{{ ruta.reservas_km }}"
+                                data-odf="{{ ruta.odf_nombre }}"
+                                data-ocupados="{{ ruta.hilos_ocupados }}"
+                                data-libres="{{ ruta.hilos_libres }}">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                            </button>
+                            <button onclick="confirmarEliminacion('ruta', this.getAttribute('data-nombre'))" data-nombre="{{ ruta.nombre }}" class="btn-icon-action" style="color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.2); background: rgba(239, 68, 68, 0.05);" title="Eliminar Ruta">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+    <!-- Modal Detalle Fibras -->
+<div id="fibraModal" class="modal-overlay" style="display:none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <div>
+                <h3 id="modalRutaNombre" style="margin:0; font-size: 18px; color: var(--text-primary);">Detalle de fibras ópticas</h3>
+                <p id="modalRutaSub" style="margin:5px 0 0; font-size: 13px; color: var(--text-tertiary);">Estado individual de cada fibra</p>
+            </div>
+            <button onclick="cerrarModalFibras()" class="btn-close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <!-- Modal Stats -->
+            <div class="modal-stats" style="grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));">
+                <div class="m-stat-card m-stat-blue" onclick="setHiloEstadoFilter('')" style="cursor: pointer;">
+                    <div class="m-stat-icon">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                    </div>
+                    <div class="m-stat-content">
+                        <span class="label">Total de fibras</span>
+                        <span class="value" id="statTotalHilos">0</span>
+                    </div>
+                </div>
+                <div class="m-stat-card m-stat-green" onclick="setHiloEstadoFilter('Libre')" style="cursor: pointer;">
+                    <div class="m-stat-icon">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+                    </div>
+                    <div class="m-stat-content">
+                        <span class="label">Libres</span>
+                        <span class="value" id="statLibres">0</span>
+                    </div>
+                </div>
+                <div class="m-stat-card m-stat-orange" onclick="setHiloEstadoFilter('Ocupada')" style="cursor: pointer;">
+                    <div class="m-stat-icon">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                    </div>
+                    <div class="m-stat-content">
+                        <span class="label">Ocupados</span>
+                        <span class="value" id="statOcupados">0</span>
+                    </div>
+                </div>
+                <div class="m-stat-card" onclick="setHiloEstadoFilter('Reservado')" style="cursor: pointer; background: rgba(99,102,241,0.05); border: 1px solid rgba(99,102,241,0.2);">
+                    <div class="m-stat-icon" style="color: #6366f1; background: rgba(99,102,241,0.1);">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+                    </div>
+                    <div class="m-stat-content">
+                        <span class="label">Reservados</span>
+                        <span class="value" id="statReservados" style="color: #6366f1;">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Filters Area -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; gap: 15px; flex-wrap: wrap;">
+                <div style="display: flex; gap: 12px; flex: 1;">
+                    <div style="position: relative; flex: 1; max-width: 320px;">
+                        <input type="text" id="searchHilo" placeholder="Buscar por hilo o servicio..." 
+                               style="width: 100%; padding: 10px 12px 10px 40px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-surface); color: var(--text-primary); font-size: 14px;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="position: absolute; left: 12px; top: 11px; opacity: 0.5;"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <button onclick="abrirModalImportarFibras()" class="btn btn-sm" style="display:flex; align-items:center; gap:6px; padding: 10px 16px; border-radius: 10px; font-weight: 600; background: rgba(99,102,241,0.1); color: var(--accent); border: 1px solid rgba(99,102,241,0.2);">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        Importar CSV
+                    </button>
+                    <button onclick="abrirModalNuevoHilo()" class="btn btn-sm" style="display:flex; align-items:center; gap:6px; padding: 10px 16px; border-radius: 10px; font-weight: 600; background: var(--accent); color: white; border: none;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        Añadir Hilo
+                    </button>
+                
+                    <div class="export-dropdown">
+                    <button onclick="toggleSubExportMenu(event)" class="btn btn-sm btn-primary" style="display:flex; align-items:center; gap:8px; padding: 10px 18px; border-radius: 10px; font-weight: 600;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Exportar Datos
+                    </button>
+                    <div id="subExportMenu" class="dropdown-menu">
+                        <button onclick="exportFibrasToExcel()" class="dropdown-item">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13l2 2 4-4"/></svg>
+                            Excel (.xlsx)
+                        </button>
+                        <button onclick="exportFibrasToCSV()" class="dropdown-item">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
+                            CSV (.csv)
+                        </button>
+                    </div>
+                </div>
+                </div>
+            </div>
+
+            <div id="loadingFibras" style="text-align: center; padding: 40px; display: none;">
+                <div class="spinner" style="margin: 0 auto 15px;"></div>
+                <p style="color: var(--text-secondary);">Cargando detalle de fibras…</p>
+            </div>
+
+            <div id="containerTablaFibras">
+                <table class="custom-table" style="min-width: 900px;">
+                    <thead>
+                        <tr>
+                            <th>Fibra óptica</th>
+                            <th>Estado</th>
+                            <th>Tipo de Servicio</th>
+                            <th>Origen ODF</th>
+                            <th>Destino</th>
+                            <th>Conector</th>
+                            <th style="text-align: center;">Acción</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbodyFibras">
+                        <!-- Dinámico -->
+                    </tbody>
+                </table>
+
+                <!-- Pagination -->
+                <div class="pagination-container">
+                    <div class="page-info" id="fibraPageInfo">Mostrando 0 - 0 de 0</div>
+                    <div class="page-btns">
+                        <button class="btn-page" id="btnPrevFibra" onclick="changeFibraPage(-1)" disabled>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m15 18-6-6 6-6"/></svg>
+                            Anterior
+                        </button>
+                        <button class="btn-page" id="btnNextFibra" onclick="changeFibraPage(1)" disabled>
+                            Siguiente
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Editar Fibra -->
+<div id="editFibraModal" class="modal-overlay" style="display:none; z-index: 3000;">
+    <div class="modal-content" style="max-width: 580px; border-radius: 20px;">
+        <div class="modal-header" style="border-bottom: none; padding-bottom: 0;">
+            <h3 style="margin:0; font-size: 20px; font-weight: 700;">Editar fibra óptica</h3>
+            <button onclick="cerrarModalEditar()" class="btn-close">&times;</button>
+        </div>
+        <div class="modal-body" style="padding-top: 25px;">
+            <form id="editFibraForm">
+                <input type="hidden" id="editFibraId">
+                <input type="hidden" id="editOriginalFibraNumero">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Número de Fibra</label>
+                        <input type="text" id="editFibraNumero" placeholder="Ej: F01" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Estado</label>
+                        <select id="editEstado" style="cursor: pointer;">
+                            <option value="Libre">Libre</option>
+                            <option value="Ocupado">Ocupado</option>
+                            <option value="Reservado">Reservado</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Tipo de Servicio</label>
+                        <input type="text" id="editNombreFibra" placeholder="Ej: Reserva TR01">
+                    </div>
+                    <div class="form-group">
+                        <label>Tipo de Conector</label>
+                        <input type="text" id="editTipoConector" placeholder="Ej: SC/APC">
+                    </div>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Origen ODF</label>
+                        <input type="text" id="editOrigenODF">
+                    </div>
+                    <div class="form-group">
+                        <label>Destino</label>
+                        <input type="text" id="editDestino">
+                    </div>
+                </div>
+                
+                <div class="modal-footer-saas">
+                    <button type="button" onclick="cerrarModalEditar()" class="btn-saas-secondary">Cancelar</button>
+                    <button type="button" onclick="guardarCambiosFibra()" class="btn-saas-primary">Guardar Cambios</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<!-- Modal Importar Fibras CSV -->
+<div id="importFibrasModal" class="modal-overlay" style="display:none; z-index: 3000;">
+    <div class="modal-content" style="max-width: 600px; border-radius: 20px;">
+        <div class="modal-header" style="border-bottom: 1px solid var(--border); padding-bottom: 15px; margin-bottom: 20px;">
+            <h3 style="margin:0; font-size: 18px; color: var(--text-primary); font-weight: 700;">Cargar detalle de fibras ópticas (.csv)</h3>
+            <button onclick="cerrarModalImportarFibras()" class="btn-close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <!-- Box info -->
+            <div style="background: rgba(99,102,241,0.03); border: 1px solid rgba(99,102,241,0.15); border-radius: 12px; padding: 15px; margin-bottom: 20px;">
+                <p style="margin: 0 0 10px 0; font-size: 13px; font-weight: 600; color: var(--text-primary);">Requisitos del CSV: Detalle de Fibras</p>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 15px;">
+                    <span class="badge badge-blue">Fibra</span>
+                    <span class="badge badge-blue">Estado</span>
+                    <span class="badge badge-blue">Tipo de Servicio</span>
+                    <span class="badge badge-blue">Origen</span>
+                    <span class="badge badge-blue">Destino</span>
+                    <span class="badge badge-blue">Conector</span>
+                </div>
+                
+                <div style="overflow-x: auto; font-size: 11px; background: var(--bg-surface); border-radius: 8px; border: 1px solid var(--border);">
+                    <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                        <thead style="background: var(--bg-body); color: var(--text-secondary);">
+                            <tr>
+                                <th style="padding: 6px 10px; border-bottom: 1px solid var(--border);">Fibra</th>
+                                <th style="padding: 6px 10px; border-bottom: 1px solid var(--border);">Estado</th>
+                                <th style="padding: 6px 10px; border-bottom: 1px solid var(--border);">Tipo de Servicio</th>
+                                <th style="padding: 6px 10px; border-bottom: 1px solid var(--border);">Origen</th>
+                                <th style="padding: 6px 10px; border-bottom: 1px solid var(--border);">Destino</th>
+                                <th style="padding: 6px 10px; border-bottom: 1px solid var(--border);">Conector</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td style="padding: 6px 10px;">F61</td>
+                                <td style="padding: 6px 10px;">Ocupado</td>
+                                <td style="padding: 6px 10px;">Reserva TR01</td>
+                                <td style="padding: 6px 10px;">TR01</td>
+                                <td style="padding: 6px 10px;">LMLO123-F</td>
+                                <td style="padding: 6px 10px;">SC/APC</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Upload Box -->
+            <div style="border: 1px dashed var(--border); border-radius: 12px; padding: 20px; background: var(--bg-body);">
+                <p style="margin: 0 0 10px 0; font-size: 13px; font-weight: 600; color: var(--text-primary);">Seleccionar Archivo CSV (.csv)</p>
+                <input type="file" id="importFibrasCSV" accept=".csv" style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-surface); color: var(--text-primary); font-size: 13px;">
+            </div>
+
+            <div class="modal-footer-saas" style="margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--border);">
+                <button type="button" onclick="cerrarModalImportarFibras()" class="btn-saas-secondary">Cancelar</button>
+                <button type="button" onclick="uploadFibrasCSV()" class="btn-saas-primary" style="display: flex; align-items: center; gap: 6px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    Subir Archivo
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Detalle Puertos ODF -->
+<div id="odfPuertoModal" class="modal-overlay" style="display:none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <div>
+                <h3 id="modalODFNombre" style="margin:0; font-size: 18px; color: var(--text-primary);">Detalle de Puertos ODF</h3>
+                <p id="modalODFSub" style="margin:5px 0 0; font-size: 13px; color: var(--text-tertiary);">Estado granular de cada puerto</p>
+            </div>
+            <button onclick="cerrarModalPuertos()" class="btn-close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <!-- Modal Stats -->
+            <div class="modal-stats">
+                <div class="m-stat-card m-stat-blue">
+                    <div class="m-stat-icon">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+                    </div>
+                    <div class="m-stat-content">
+                        <span class="label">Total Puertos</span>
+                        <span class="value" id="statTotalPuertos">0</span>
+                    </div>
+                </div>
+                <div class="m-stat-card m-stat-green">
+                    <div class="m-stat-icon">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
+                    </div>
+                    <div class="m-stat-content">
+                        <span class="label">Disponibles</span>
+                        <span class="value" id="statPuertosLibres">0</span>
+                    </div>
+                </div>
+                <div class="m-stat-card m-stat-orange">
+                    <div class="m-stat-icon">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                    </div>
+                    <div class="m-stat-content">
+                        <span class="label">Ocupados</span>
+                        <span class="value" id="statPuertosOcupados">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Filters Area -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; gap: 15px; flex-wrap: wrap;">
+                <div style="display: flex; gap: 12px; flex: 1;">
+                    <div style="position: relative; flex: 1; max-width: 320px;">
+                        <input type="text" id="searchPuerto" placeholder="Buscar puerto, fibra o destino..." 
+                               oninput="applyPuertosFilters()"
+                               style="width: 100%; padding: 10px 12px 10px 40px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-surface); color: var(--text-primary); font-size: 14px;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="position: absolute; left: 12px; top: 11px; opacity: 0.5;"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                    </div>
+                    <select id="filterEstadoPuerto" onchange="applyPuertosFilters()" style="padding: 10px 16px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-surface); color: var(--text-primary); font-size: 14px; cursor: pointer;">
+                        <option value="all">Estado: Todos</option>
+                        <option value="Libre">Estado: Libre</option>
+                        <option value="Ocupado">Estado: Ocupado</option>
+                    </select>
+                </div>
+                
+                <div class="export-dropdown">
+                    <button onclick="togglePuertosExportMenu(event)" class="btn btn-sm btn-primary" style="display:flex; align-items:center; gap:8px; padding: 10px 18px; border-radius: 10px; font-weight: 600;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Exportar Datos
+                    </button>
+                    <div id="puertosExportMenu" class="dropdown-menu">
+                        <button onclick="exportPuertosToExcel()" class="dropdown-item">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13l2 2 4-4"/></svg>
+                            Excel (.xlsx)
+                        </button>
+                        <button onclick="exportPuertosToCSV()" class="dropdown-item">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
+                            CSV (.csv)
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="loadingPuertos" style="text-align: center; padding: 40px; display: none;">
+                <div class="spinner" style="margin: 0 auto 15px;"></div>
+                <p style="color: var(--text-secondary);">Cargando detalle de puertos...</p>
+            </div>
+
+            <div id="containerTablaPuertos">
+                <table class="custom-table" style="min-width: 900px;">
+                    <thead>
+                        <tr>
+                            <th>Bandeja</th>
+                            <th>Puerto</th>
+                            <th>Fibra óptica</th>
+                            <th>Estado</th>
+                            <th>Conector</th>
+                            <th>Patchcord</th>
+                            <th>Destino</th>
+                            <th>Observaciones</th>
+                            <th style="text-align: center;">Acción</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbodyPuertos">
+                        <!-- Dinámico -->
+                    </tbody>
+                </table>
+
+                <!-- Pagination -->
+                <div class="pagination-container">
+                    <div class="page-info" id="puertoPageInfo">Mostrando 0 - 0 de 0</div>
+                    <div class="page-btns">
+                        <button class="btn-page" id="btnPrevPuerto" onclick="changePuertoPage(-1)" disabled>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m15 18-6-6 6-6"/></svg>
+                            Anterior
+                        </button>
+                        <button class="btn-page" id="btnNextPuerto" onclick="changePuertoPage(1)" disabled>
+                            Siguiente
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Reservas Modal -->
+<div class="modal-overlay" id="reservasModal" style="display:none; z-index: 3000;">
+    <div class="modal-content" style="max-width: 900px; width: 95%;">
+        <div class="modal-header">
+            <div>
+                <h3 style="margin: 0; font-size: 18px; color: var(--text-primary); font-weight: 700;" id="reservasModalTitle">Detalle de Reservas</h3>
+                <p style="margin: 4px 0 0; font-size: 13px; color: var(--text-secondary);">Reservas y elementos asociados a la troncal</p>
+            </div>
+            <button class="btn-close" onclick="cerrarReservas()">&times;</button>
+        </div>
+        
+        <div class="modal-body">
+            <!-- Modal Stats -->
+            <div class="modal-stats" style="grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));">
+                <div class="m-stat-card m-stat-blue" onclick="setReservaTypeFilter('')" style="cursor: pointer;">
+                    <div class="m-stat-icon">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                    </div>
+                    <div class="m-stat-content">
+                        <span class="label">Total</span>
+                        <span class="value" id="statTotalReservas">0</span>
+                    </div>
+                </div>
+                <div class="m-stat-card m-stat-green" onclick="setReservaTypeFilter('SITE')" style="cursor: pointer;">
+                    <div class="m-stat-icon">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+                    </div>
+                    <div class="m-stat-content">
+                        <span class="label">Sites</span>
+                        <span class="value" id="statSites">0</span>
+                    </div>
+                </div>
+                <div class="m-stat-card m-stat-orange" onclick="setReservaTypeFilter('MUFA')" style="cursor: pointer;">
+                    <div class="m-stat-icon">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                    </div>
+                    <div class="m-stat-content">
+                        <span class="label">Mufas</span>
+                        <span class="value" id="statMufas">0</span>
+                    </div>
+                </div>
+                <div class="m-stat-card" onclick="setReservaTypeFilter('CAMARA')" style="cursor: pointer; background: rgba(139, 92, 246, 0.05); border: 1px solid rgba(139, 92, 246, 0.2);">
+                    <div class="m-stat-icon" style="color: #8b5cf6; background: rgba(139, 92, 246, 0.1);">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="4" y="2" width="16" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>
+                    </div>
+                    <div class="m-stat-content">
+                        <span class="label" style="color: var(--text-secondary);">Cámaras</span>
+                        <span class="value" id="statCamaras" style="color: #8b5cf6;">0</span>
+                    </div>
+                </div>
+                <div class="m-stat-card" onclick="setReservaTypeFilter('POSTE')" style="cursor: pointer; background: rgba(148, 163, 184, 0.05); border: 1px solid rgba(148, 163, 184, 0.2);">
+                    <div class="m-stat-icon" style="color: #64748b; background: rgba(148, 163, 184, 0.1);">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="2" x2="12" y2="22"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="18" x2="16" y2="18"/></svg>
+                    </div>
+                    <div class="m-stat-content">
+                        <span class="label" style="color: var(--text-secondary);">Postes</span>
+                        <span class="value" id="statPostes" style="color: #64748b;">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Filters Area -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; margin-top: 24px; gap: 15px; flex-wrap: wrap;">
+                <div style="display: flex; gap: 12px; flex: 1;">
+                    <div style="position: relative; flex: 1; max-width: 320px;">
+                        <input type="text" id="searchReserva" placeholder="Buscar por nombre o coordenadas..." 
+                               oninput="applyReservasFilters()"
+                               style="width: 100%; padding: 10px 12px 10px 40px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-surface); color: var(--text-primary); font-size: 14px;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="position: absolute; left: 12px; top: 11px; opacity: 0.5;"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 12px; align-items: center;">
+                    <button onclick="abrirModalImportarReservas()" class="btn btn-sm" style="display:flex; align-items:center; gap:6px; padding: 10px 16px; border-radius: 10px; font-weight: 600; background: rgba(99,102,241,0.1); color: var(--accent); border: 1px solid rgba(99,102,241,0.2);">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        Importar CSV
+                    </button>
+                    <button onclick="abrirModalAgregarReserva()" class="btn btn-sm" style="display:flex; align-items:center; gap:6px; padding: 10px 16px; border-radius: 10px; font-weight: 600; background: var(--accent); color: white; border: none;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                        Añadir Reserva
+                    </button>
+                    <div class="export-dropdown">
+                    <button onclick="toggleReservasExportMenu(event)" class="btn btn-sm btn-primary" style="display:flex; align-items:center; gap:8px; padding: 10px 18px; border-radius: 10px; font-weight: 600;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Exportar Datos
+                    </button>
+                    <div id="reservasExportMenu" class="dropdown-menu">
+                        <button onclick="exportReservasToExcel()" class="dropdown-item">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13l2 2 4-4"/></svg>
+                            Excel (.xlsx)
+                        </button>
+                        <button onclick="exportReservasToCSV()" class="dropdown-item">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
+                            CSV (.csv)
+                        </button>
+                    </div>
+                </div>
+                </div>
+            </div>
+
+            <div id="loadingReservas" style="text-align: center; padding: 40px; display: none;">
+                <div class="spinner" style="margin: 0 auto 15px;"></div>
+                <p style="color: var(--text-secondary);">Cargando reservas...</p>
+            </div>
+
+            <div id="containerTablaReservas" style="overflow-x: auto;">
+                <table class="custom-table" style="min-width: 800px;">
+                    <thead>
+                        <tr>
+                            <th>Nombre</th>
+                            <th>Tipo</th>
+                            <th>Reserva (m)</th>
+                            <th>Latitud</th>
+                            <th>Longitud</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tbodyReservas">
+                        <!-- Dinámico -->
+                    </tbody>
+                </table>
+                
+                <!-- Pagination -->
+                <div class="pagination-container">
+                    <div class="page-info" id="reservaPageInfo">Mostrando 0 - 0 de 0</div>
+                    <div class="page-btns">
+                        <button class="btn-page" id="btnPrevReserva" onclick="changeReservaPage(-1)" disabled>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m15 18-6-6 6-6"/></svg>
+                            Anterior
+                        </button>
+                        <button class="btn-page" id="btnNextReserva" onclick="changeReservaPage(1)" disabled>
+                            Siguiente
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="m9 18 6-6-6-6"/></svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Agregar Reserva -->
+<div id="addReservaModal" class="modal-overlay" style="display:none; z-index: 3100;">
+    <div class="modal-content" style="max-width: 580px; border-radius: 20px;">
+        <div class="modal-header" style="border-bottom: none; padding-bottom: 0;">
+            <h3 style="margin:0; font-size: 20px; font-weight: 800;">Agregar Reserva</h3>
+            <button onclick="cerrarModalAgregarReserva()" class="btn-close">&times;</button>
+        </div>
+        <div class="modal-body" style="padding-top: 25px;">
+            <form id="addReservaForm">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Nombre del elemento</label>
+                        <input type="text" id="newReservaNombre" placeholder="Ej: Site Principal" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Tipo</label>
+                        <select id="newReservaTipo" style="cursor: pointer;">
+                            <option value="Site">Site</option>
+                            <option value="Mufa">Mufa</option>
+                            <option value="Camara">Cámara</option>
+                            <option value="Poste">Poste</option>
+                            <option value="Otro">Otro</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Latitud</label>
+                        <input type="number" step="any" id="newReservaLat" placeholder="Ej: -12.04318" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Longitud</label>
+                        <input type="number" step="any" id="newReservaLon" placeholder="Ej: -77.02824" required>
+                    </div>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Reserva (m)</label>
+                        <input type="number" step="any" id="newReservaM" placeholder="Ej: 30.5">
+                    </div>
+                </div>
+                
+                <div class="modal-footer-saas">
+                    <button type="button" onclick="cerrarModalAgregarReserva()" class="btn-saas-secondary">Cancelar</button>
+                    <button type="button" onclick="guardarNuevaReserva()" class="btn-saas-primary">Guardar Reserva</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Importar Reservas CSV -->
+<div id="importReservasModal" class="modal-overlay" style="display:none; z-index: 3100;">
+    <div class="modal-content" style="max-width: 600px; border-radius: 20px;">
+        <div class="modal-header" style="border-bottom: 1px solid var(--border); padding-bottom: 15px; margin-bottom: 20px;">
+            <h3 style="margin:0; font-size: 18px; color: var(--text-primary); font-weight: 700;">Importar Reservas (.csv / .xlsx)</h3>
+            <button onclick="cerrarModalImportarReservas()" class="btn-close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <!-- Box info -->
+            <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4); margin-bottom: 20px;">
+                <p style="margin: 0 0 10px 0; font-size: 13px; font-weight: 600; color: var(--text-primary);">Columnas requeridas:</p>
+                <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
+                    <span class="badge badge--accent">Nombre del elemento (Landmark name)</span>
+                    <span class="badge badge--accent">Connection type</span>
+                    <span class="badge badge--accent">Reserva (m)</span>
+                    <span class="badge badge--accent">Latitud</span>
+                    <span class="badge badge--accent">Longitud</span>
+                </div>
+                <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo:</h5>
+                <div style="overflow-x: auto; margin-top: 8px; border: 1px solid var(--border-color); border-radius: 8px;">
+                    <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);">
+                        <thead style="border-bottom:1px solid var(--border-color);background:var(--bg-surface-2);color:var(--text-secondary);">
+                            <tr>
+                                <th style="text-align:left;padding:6px 12px;">Nombre del elemento</th>
+                                <th style="text-align:center;padding:6px;">Connection type</th>
+                                <th style="text-align:center;padding:6px;">Reserva (m)</th>
+                                <th style="text-align:center;padding:6px;">Latitud</th>
+                                <th style="text-align:center;padding:6px;">Longitud</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr style="border-bottom:1px solid var(--border-color);">
+                                <td style="padding:6px 12px;font-weight:600;color:var(--text-primary);">Mufa Lampa 01</td>
+                                <td style="text-align:center;padding:6px;">Mufa</td>
+                                <td style="text-align:center;padding:6px;">20</td>
+                                <td style="text-align:center;padding:6px;">-33.4048927</td>
+                                <td style="text-align:center;padding:6px;">-70.6735327</td>
+                            </tr>
+                            <tr style="border-bottom:1px solid var(--border-color);">
+                                <td style="padding:6px 12px;font-weight:600;color:var(--text-primary);">Cámara Recoleta 04</td>
+                                <td style="text-align:center;padding:6px;">Cámara</td>
+                                <td style="text-align:center;padding:6px;">-</td>
+                                <td style="text-align:center;padding:6px;">-33.4215000</td>
+                                <td style="text-align:center;padding:6px;">-70.6890000</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Upload Box -->
+            <div style="border: 1px dashed var(--border); border-radius: 12px; padding: 20px; background: var(--bg-body);">
+                <p style="margin: 0 0 10px 0; font-size: 13px; font-weight: 600; color: var(--text-primary);">Seleccionar Archivo (.csv, .xlsx)</p>
+                <input type="file" id="importReservasFile" accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" style="width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-surface); color: var(--text-primary); font-size: 13px;">
+            </div>
+
+            <div class="modal-footer-saas" style="margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--border);">
+                <button type="button" onclick="cerrarModalImportarReservas()" class="btn-saas-secondary">Cancelar</button>
+                <button type="button" onclick="uploadReservasFile(this)" class="btn-saas-primary" style="display: flex; align-items: center; gap: 6px;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    Subir Archivo
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Editar Puerto ODF -->
+<div id="editPuertoModal" class="modal-overlay" style="display:none; z-index: 3000;">
+    <div class="modal-content" style="max-width: 580px; border-radius: 20px;">
+        <div class="modal-header" style="border-bottom: none; padding-bottom: 0;">
+            <h3 style="margin:0; font-size: 20px; font-weight: 800;">Editar Puerto ODF</h3>
+            <button onclick="cerrarModalEditarPuerto()" class="btn-close">&times;</button>
+        </div>
+        <div class="modal-body" style="padding-top: 25px;">
+            <form id="editPuertoForm">
+                <input type="hidden" id="editPuertoId">
+                <input type="hidden" id="editOriginalPuertoNombre">
+                <input type="hidden" id="editOriginalODFNombre">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Bandeja</label>
+                        <input type="text" id="editBandeja" placeholder="Ej: B01">
+                    </div>
+                    <div class="form-group">
+                        <label>Puerto ODF</label>
+                        <input type="text" id="editPuertoNum" placeholder="Ej: 61" required>
+                    </div>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Fibra Asociada</label>
+                        <input type="text" id="editPuertoFibra" placeholder="Ej: F61">
+                    </div>
+                    <div class="form-group">
+                        <label>Estado del Puerto</label>
+                        <select id="editEstadoPuerto" style="cursor: pointer;">
+                            <option value="Libre">Libre</option>
+                            <option value="Ocupado">Ocupado</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Tipo Conector</label>
+                        <input type="text" id="editPuertoConector" placeholder="Ej: SC/APC">
+                    </div>
+                    <div class="form-group">
+                        <label>Patchcord</label>
+                        <select id="editPatchcord" style="cursor: pointer;">
+                            <option value="Sí">Sí</option>
+                            <option value="No">No</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Destino</label>
+                        <input type="text" id="editPuertoDestino">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Observaciones</label>
+                    <textarea id="editPuertoObs" rows="2" style="width:100%; border-radius:8px; border:1px solid var(--border); background:var(--bg-surface); color:var(--text-primary); padding:8px;"></textarea>
+                </div>
+                
+                <div class="modal-footer-saas">
+                    <button type="button" onclick="cerrarModalEditarPuerto()" class="btn-saas-secondary">Cancelar</button>
+                    <button type="button" onclick="guardarCambiosPuerto()" class="btn-saas-primary">Guardar Cambios</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Nueva Troncal -->
+<div id="newRutaModal" class="modal-overlay" style="display:none;">
+    <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+            <h3 style="margin:0; font-size: 20px; font-weight: 800;">Nueva Troncal</h3>
+            <button onclick="cerrarModalNuevaRuta()" class="btn-close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="newRutaForm">
+                <input type="hidden" id="editRutaOriginalNombre">
+                <div class="form-group">
+                    <label>Nombre de la Troncal</label>
+                    <input type="text" id="newRutaNombre" placeholder="Ej: Lampa OLT1 Primario 42" required>
+                </div>
+                
+                <div class="form-group" style="background: rgba(99,102,241,0.03); border: 1px dashed rgba(99,102,241,0.3); padding: 16px; border-radius: 12px; margin-bottom: 20px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                        <label style="margin:0; font-weight: 700; color: var(--accent); display: flex; align-items: center; gap: 6px;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                            Importar Coordenadas (.csv)
+                        </label>
+                        <span style="font-size: 10px; background: rgba(245,158,11,0.1); color: #d97706; padding: 2px 6px; border-radius: 4px; font-weight: 600;">Opcional</span>
+                    </div>
+                    <p style="font-size: 12px; color: var(--text-tertiary); margin-bottom: 12px;">El archivo asociará sus coordenadas directamente al <b>nombre de la troncal</b> indicado.</p>
+                    
+                    <div style="display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px;">
+                        <span style="font-size: 10px; background: rgba(16,185,129,0.1); color: #10b981; padding: 4px 8px; border-radius: 20px; font-weight: 600;">Latitude (requerido)</span>
+                        <span style="font-size: 10px; background: rgba(59,130,246,0.1); color: #3b82f6; padding: 4px 8px; border-radius: 20px; font-weight: 600;">Longitude (requerido)</span>
+                        <span style="font-size: 10px; background: rgba(99,102,241,0.1); color: #6366f1; padding: 4px 8px; border-radius: 20px; font-weight: 600;">tipo_trazado</span>
+                        <span style="font-size: 10px; background: rgba(139,92,246,0.1); color: #8b5cf6; padding: 4px 8px; border-radius: 20px; font-weight: 600;">hub_site</span>
+                    </div>
+
+                    <input type="file" id="newRutaCSV" accept=".csv" style="width: 100%; border: 1px solid var(--border); padding: 8px; border-radius: 8px; background: var(--bg-body); cursor: pointer; color: var(--text-primary); font-size: 13px;">
+                </div>
+
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Site de origen</label>
+                        <select id="newRutaHub" onchange="actualizarODFsPorSite()">
+                            <option value="">-- Seleccionar Site --</option>
+                            {% for site in hub_sites %}
+                                <option value="{{ site }}">{{ site }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Destino</label>
+                        <input type="text" id="newRutaDestino" placeholder="Ej: Lampa">
+                    </div>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Tipo de Trazado</label>
+                        <select id="newRutaTipo">
+                            <option value="AEREO">AEREO</option>
+                            <option value="SOTERRADO">SOTERRADO</option>
+                            <option value="HIBRIDO">HIBRIDO</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Capacidad (Solo número)</label>
+                        <input type="number" id="newRutaCapacidad" placeholder="Ej: 64">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Marca / Modelo de Cable</label>
+                    <input type="text" id="newRutaMarca" placeholder="Ej: Cable FO Troncal">
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Tipo de Fibra</label>
+                        <input type="text" id="newRutaTipoFibra" placeholder="Ej: ADSS">
+                    </div>
+                    <div class="form-group">
+                        <label>Serial</label>
+                        <input type="text" id="newRutaSerial" placeholder="Ej: N/A">
+                    </div>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Estado</label>
+                        <input type="text" id="newRutaEstado" placeholder="Ej: Construido">
+                    </div>
+                    <div class="form-group">
+                        <label>Mufas</label>
+                        <input type="number" id="newRutaMufas" placeholder="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Splitters</label>
+                        <input type="number" id="newRutaSplitters" placeholder="0">
+                    </div>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Nombre de ODF</label>
+                        <select id="newRutaODF" onchange="autocompletarRutaTroncal()">
+                            <option value="">-- Seleccionar ODF --</option>
+                            {% for o in odf_list %}
+                                <option value="{{ o.odf }}" data-site="{{ o.hub_site }}" data-troncal="{{ o.troncal }}">{{ o.odf }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <div style="display: flex; gap: 10px;">
+                            <div style="flex: 1;">
+                                <label>Fibras ocupadas</label>
+                                <input type="number" id="newRutaHilosOcupados" value="0">
+                            </div>
+                            <div style="flex: 1;">
+                                <label>Fibras libres</label>
+                                <input type="number" id="newRutaHilosLibres" value="0">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Distancia Total (Km)</label>
+                        <input type="number" step="0.01" id="newRutaDistancia" placeholder="0.00">
+                    </div>
+                    <div class="form-group">
+                        <label>Reserva Técnica (Km)</label>
+                        <input type="number" step="0.01" id="newRutaReserva" placeholder="0.00">
+                    </div>
+                </div>
+                <div class="modal-footer-saas">
+                    <button type="button" onclick="cerrarModalNuevaRuta()" class="btn-saas-secondary">Cancelar</button>
+                    <button type="button" id="btnGuardarRuta" onclick="crearRutaManual()" class="btn-saas-primary">Crear troncal</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Nuevo ODF -->
+<div id="newODFModal" class="modal-overlay" style="display:none;">
+    <div class="modal-content" style="max-width: 600px;">
+        <div class="modal-header">
+            <h3 style="margin:0; font-size: 20px; font-weight: 800;">Nuevo ODF / Rack</h3>
+            <button onclick="cerrarModalNuevoODF()" class="btn-close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="newODFForm">
+                <input type="hidden" id="editODFId">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Site</label>
+                        <select id="newODFHub">
+                            <option value="">-- Seleccionar Site --</option>
+                            {% for site in hub_sites %}
+                                <option value="{{ site }}">{{ site }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Sala</label>
+                        <input type="text" id="newODFSala" placeholder="Ej: Sala FO 1">
+                    </div>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Rack</label>
+                        <input type="text" id="newODFRack" placeholder="Ej: Rack 03">
+                    </div>
+                    <div class="form-group">
+                        <label>Nombre ODF</label>
+                        <input type="text" id="newODFNombre" placeholder="Ej: ODF TR01" required>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Troncal Asociada</label>
+                    <select id="newODFTroncal">
+                        <option value="">-- Seleccionar troncal --</option>
+                        {% for ruta in resumen_rutas %}
+                        <option value="{{ ruta.nombre }}">{{ ruta.nombre }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Capacidad (Puertos)</label>
+                        <input type="number" id="newODFCapacidad" placeholder="Ej: 48">
+                    </div>
+                    <div class="form-group">
+                        <label>Tipo Conector</label>
+                        <input type="text" id="newODFConector" placeholder="Ej: SC/APC">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Estado</label>
+                    <select id="newODFEstado">
+                        <option value="Activo">Activo</option>
+                        <option value="Inactivo">Inactivo</option>
+                    </select>
+                </div>
+                <div class="modal-footer-saas">
+                    <button type="button" onclick="cerrarModalNuevoODF()" class="btn-saas-secondary">Cancelar</button>
+                    <button type="button" id="btnGuardarODF" onclick="crearODFManual()" class="btn-saas-primary">Crear ODF</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Confirmación Eliminación -->
+<div id="deleteConfirmModal" class="modal-overlay" style="display:none;">
+    <div class="modal-content" style="max-width: 450px; text-align: center; padding-top: 30px;">
+        <div style="width: 60px; height: 60px; border-radius: 50%; background: rgba(239, 68, 68, 0.1); display: flex; align-items: center; justify-content: center; margin: 0 auto 20px;">
+            <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </div>
+        <h3 style="margin: 0 0 10px; font-size: 22px; font-weight: 800; color: var(--text-primary);">¿Eliminar <span id="deleteItemType"></span>?</h3>
+        <p style="margin: 0 0 24px; color: var(--text-secondary); font-size: 15px; line-height: 1.5;">Esta acción es irreversible. Se eliminarán permanentemente todos los datos técnicos y asociativos de <strong id="deleteItemName" style="color: var(--text-primary);"></strong>.</p>
+        <div style="display: flex; gap: 12px; justify-content: center;">
+            <button onclick="document.getElementById('deleteConfirmModal').style.display = 'none'" class="btn-saas-secondary" style="flex: 1;">Cancelar</button>
+            <button onclick="ejecutarEliminacion()" class="btn-saas-primary" style="flex: 1; background: #ef4444; border-color: #ef4444;">Sí, Eliminar</button>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+    <!-- Datos para exportación en JSON seguro -->
+    {{ resumen_rutas|json_script:"rutas-data" }}
+
+<script src="{% static 'vendor/chartjs/chart-4.5.1.umd.min.js' %}"></script>
+<script src="{% static 'vendor/chartjs/chartjs-plugin-datalabels-2.2.0.min.js' %}"></script>
+<script src="{% static 'vendor/xlsx/xlsx-0.18.5.full.min.js' %}"></script>
+
+<script>
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+
+    function toggleExportMenu(event) {
+        if (event) event.stopPropagation();
+        const menu = document.getElementById('exportMenu');
+        menu.classList.toggle('show');
+    }
+
+    // Cerrar dropdown al hacer click fuera
+    document.addEventListener('click', function(event) {
+        const menu = document.getElementById('exportMenu');
+        const btn = event.target.closest('.export-btn');
+        if (!btn && menu && menu.classList.contains('show')) {
+            menu.classList.remove('show');
+        }
+
+        const subMenu = document.getElementById('subExportMenu');
+        if (subMenu && subMenu.classList.contains('show') && !event.target.closest('.export-dropdown')) {
+            subMenu.classList.remove('show');
+        }
+
+        const portsMenu = document.getElementById('puertosExportMenu');
+        if (portsMenu && portsMenu.classList.contains('show') && !event.target.closest('.export-dropdown')) {
+            portsMenu.classList.remove('show');
+        }
+    });
+
+    function getExportData() {
+        try {
+            const raw = JSON.parse(document.getElementById('rutas-data').textContent);
+            const term = (document.getElementById('searchRutasMain')?.value || "").toLowerCase();
+            
+            return raw.filter(r => {
+                const searchStr = `${r.nombre} ${r.hub_origen} ${r.destino} ${r.tipo}`.toLowerCase();
+                return searchStr.includes(term);
+            }).map(r => {
+                // Aplanar hitos
+                let hitosStr = "";
+                if (r.conteo_reservas) {
+                    hitosStr = Object.entries(r.conteo_reservas)
+                        .map(([tipo, count]) => `${tipo}: ${count}`)
+                        .join(" | ");
+                }
+                return {
+                    "Nombre": r.nombre,
+                    "Site de origen": r.hub_origen,
+                    "Destino": r.destino,
+                    "Tipo Trazado": r.tipo,
+                    "Capacidad": r.capacidad,
+                    "Marca/Modelo": r.marca_modelo,
+                    "Distancia (Km)": r.distancia_km || 0,
+                    "Reserva (Km)": r.reservas_km || 0,
+                    "Hitos": hitosStr || "Ninguno"
+                };
+            });
+        } catch (e) {
+            console.error("Error procesando datos para exportación:", e);
+            return [];
+        }
+    }
+
+    function exportToExcel() {
+        const data = getExportData();
+        if (data.length === 0) return;
+        const worksheet = XLSX.utils.json_to_sheet(data);
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Inventario");
+        XLSX.writeFile(workbook, `Inventario_Rutas_${new Date().toISOString().split('T')[0]}.xlsx`);
+    }
+
+    function exportToCSV() {
+        const data = getExportData();
+        if (data.length === 0) return;
+        const worksheet = XLSX.utils.json_to_sheet(data);
+        const csv = XLSX.utils.sheet_to_csv(worksheet);
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `Inventario_Rutas_${new Date().toISOString().split('T')[0]}.csv`;
+        link.click();
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+
+        // Cargar datos de ODFs
+        fetchODFData();
+    });
+
+    // --- Lógica de Inventario ODF ---
+    let allODFData = [];
+    let currentODFPuertos = '';
+    let currentHubSite = '';
+    let allPuertosData = [];
+    let filteredPuertosData = [];
+    let puertoCurrentPage = 1;
+    const puertoPageSize = 20;
+
+    function fetchODFData() {
+        fetch(`/api/inventario/odfs/?t=${new Date().getTime()}`)
+            .then(res => res.json())
+            .then(res => {
+                if (res.status === 'success') {
+                    allODFData = res.data;
+                    renderODFTable(allODFData);
+                    updateRutaODFSelect(); // Mantiene actualizado el dropdown del modal de Rutas
+                }
+            })
+            .catch(err => console.error("Error cargando ODFs:", err));
+    }
+
+    function updateRutaODFSelect() {
+        const odfSelect = document.getElementById('newRutaODF');
+        if (!odfSelect) return;
+        const currentValue = odfSelect.value;
+        
+        // Reconstruir la copia de seguridad global
+        window.allOdfOptionsBackup = [];
+        
+        const defaultOpt = document.createElement('option');
+        defaultOpt.value = "";
+        defaultOpt.textContent = "-- Seleccionar ODF --";
+        window.allOdfOptionsBackup.push(defaultOpt);
+        
+        const sortedOdfs = [...allODFData].sort((a,b) => (a.odf || '').localeCompare(b.odf || ''));
+        
+        sortedOdfs.forEach(o => {
+            const opt = document.createElement('option');
+            opt.value = o.odf;
+            opt.textContent = o.odf;
+            opt.setAttribute('data-site', o.hub_site || '');
+            opt.setAttribute('data-troncal', o.troncal || '');
+            window.allOdfOptionsBackup.push(opt);
+        });
+        
+        actualizarODFsPorSite(); // Reconstruye el select filtrado
+        
+        // Restaurar valor si sigue disponible
+        if (Array.from(odfSelect.options).some(o => o.value === currentValue)) {
+            odfSelect.value = currentValue;
+        }
+    }
+
+    function renderODFTable(data) {
+        const tbody = document.getElementById('tbodyODFMain');
+        tbody.innerHTML = '';
+        
+        if (data.length > 0) {
+            data.forEach(odf => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>${odf.hub_site || '-'}</td>
+                    <td>${odf.sala || '-'}</td>
+                    <td>${odf.rack || '-'}</td>
+                    <td style="font-weight:700; color:var(--accent);">${odf.odf}</td>
+                    <td><span style="font-size:12px; opacity:0.8;">${odf.troncal || '-'}</span></td>
+                    <td style="text-align:center;"><b>${odf.capacidad_puertos}</b></td>
+                    <td style="text-align:center; color:#ef4444;">${odf.puertos_ocupados}</td>
+                    <td style="text-align:center; color:#10b981;">${odf.puertos_libres}</td>
+                    <td>${odf.tipo_conector || '-'}</td>
+                    <td><span class="badge ${odf.estado === 'Activo' ? 'badge-blue' : 'badge-red'}">${odf.estado || 'N/A'}</span></td>
+                    <td style="display: flex; gap: 8px; justify-content: center; align-items: center;">
+                        <button onclick="verPuertosODF('${odf.odf.replace(/'/g, "\\'")}', '${(odf.hub_site || '').replace(/'/g, "\\'")}')" class="btn btn-sm" style="padding: 5px 14px; border-radius: 8px; font-size: 12px; font-weight: 700; background: rgba(16, 185, 129, 0.1); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.2); transition: all 0.2s;" title="Ver Puertos">
+                            Ver Puertos
+                        </button>
+                        <button onclick="prepararEdicionODF(${odf.id})" class="btn-icon-action" style="color: #6366f1; border: 1px solid rgba(99, 102, 241, 0.2); background: rgba(99, 102, 241, 0.05);" title="Editar ODF">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                        </button>
+                        <button onclick="confirmarEliminacion('odf', '${odf.id}', '${odf.odf.replace(/'/g, "\\'")}')" class="btn-icon-action" style="color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.2); background: rgba(239, 68, 68, 0.05);" title="Eliminar ODF">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        } else {
+            tbody.innerHTML = '<tr><td colspan="11" style="text-align:center; padding:30px; color:var(--text-tertiary);">No se encontraron ODFs.</td></tr>';
+        }
+    }
+
+    function filterODFTable() {
+        const term = document.getElementById('searchODFMain').value.toLowerCase();
+        const filtered = allODFData.filter(o => 
+            o.odf.toLowerCase().includes(term) || 
+            (o.hub_site || '').toLowerCase().includes(term) || 
+            (o.rack || '').toLowerCase().includes(term) || 
+            (o.sala || '').toLowerCase().includes(term) ||
+            (o.troncal || '').toLowerCase().includes(term)
+        );
+        renderODFTable(filtered);
+    }
+
+    // --- Detalle de Puertos ---
+    function verPuertosODF(odfNombre, hubSite) {
+        currentODFPuertos = odfNombre;
+        currentHubSite = hubSite || '';
+        const modal = document.getElementById('odfPuertoModal');
+        const loading = document.getElementById('loadingPuertos');
+        const container = document.getElementById('containerTablaPuertos');
+        
+        document.getElementById('modalODFNombre').textContent = `Detalle de Puertos: ${odfNombre}`;
+        modal.style.display = 'flex';
+        loading.style.display = 'block';
+        container.style.display = 'none';
+
+        fetch(`/api/inventario/odfs/puertos/${encodeURIComponent(odfNombre)}/?hub_site=${encodeURIComponent(currentHubSite)}&t=${new Date().getTime()}`)
+            .then(res => res.json())
+            .then(res => {
+                loading.style.display = 'none';
+                container.style.display = 'block';
+                allPuertosData = res.data || [];
+                puertoCurrentPage = 1;
+                
+                // Reiniciar filtros
+                document.getElementById('searchPuerto').value = '';
+                document.getElementById('filterEstadoPuerto').value = 'all';
+                
+                applyPuertosFilters();
+            })
+            .catch(err => {
+                console.error("Error:", err);
+                loading.innerHTML = '<p style="color:var(--danger);">Error al cargar datos.</p>';
+            });
+    }
+
+    function applyPuertosFilters() {
+        const term = document.getElementById('searchPuerto').value.toLowerCase();
+        const estado = document.getElementById('filterEstadoPuerto').value;
+
+        filteredPuertosData = allPuertosData.filter(p => {
+            const matchesSearch = (p.puerto_odf || '').toString().toLowerCase().includes(term) || 
+                                 (p.fibra || '').toLowerCase().includes(term) || 
+                                 (p.destino || '').toLowerCase().includes(term);
+            const matchesEstado = estado === 'all' || p.estado_puerto === estado;
+            return matchesSearch && matchesEstado;
+        });
+
+        updatePuertosStats();
+        puertoCurrentPage = 1;
+        renderPuertosPage();
+    }
+
+    function updatePuertosStats() {
+        const total = allPuertosData.length;
+        const ocupados = allPuertosData.filter(p => p.estado_puerto === 'Ocupado').length;
+        const libres = allPuertosData.filter(p => p.estado_puerto === 'Libre').length;
+
+        document.getElementById('statTotalPuertos').textContent = total;
+        document.getElementById('statPuertosOcupados').textContent = ocupados;
+        document.getElementById('statPuertosLibres').textContent = libres;
+    }
+
+    function renderPuertosPage() {
+        const tbody = document.getElementById('tbodyPuertos');
+        tbody.innerHTML = '';
+
+        const start = (puertoCurrentPage - 1) * puertoPageSize;
+        const end = start + puertoPageSize;
+        const pageData = filteredPuertosData.slice(start, end);
+
+        if (pageData.length > 0) {
+            pageData.forEach((p, i) => {
+                const estadoLower = p.estado_puerto ? p.estado_puerto.toLowerCase() : '';
+                let badgeClass = 'm-badge-libre';
+                if (estadoLower === 'ocupada' || estadoLower === 'ocupado') badgeClass = 'm-badge-ocupada';
+                else if (estadoLower === 'reservada' || estadoLower === 'reservado') badgeClass = 'm-badge-reservada';
+                const tr = document.createElement('tr');
+                const pIndex = start + i;
+                
+                tr.innerHTML = `
+                    <td style="text-align:center;">${p.bandeja || '-'}</td>
+                    <td style="font-weight:700;">${p.puerto_odf}</td>
+                    <td><span style="font-weight:600; color:var(--text-secondary);">${p.fibra || '-'}</span></td>
+                    <td><span class="m-badge ${badgeClass}">${p.estado_puerto}</span></td>
+                    <td><span style="font-size:12px;">${p.tipo_conector || '-'}</span></td>
+                    <td style="text-align:center;">${p.patchcord || 'No'}</td>
+                    <td>${p.destino || '-'}</td>
+                    <td><span style="font-size:11px; font-style:italic;">${p.observaciones || ''}</span></td>
+                    <td style="text-align:center;">
+                        <button onclick="prepararEdicionPuerto(${pIndex})" class="btn-icon-action" title="Editar Puerto">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        } else {
+            tbody.innerHTML = '<tr><td colspan="10" style="text-align:center; padding:30px; color:var(--text-tertiary);">Sin registros.</td></tr>';
+        }
+
+        const totalItems = filteredPuertosData.length;
+        const totalPages = Math.ceil(totalItems / puertoPageSize);
+        document.getElementById('puertoPageInfo').textContent = `Mostrando ${totalItems > 0 ? start + 1 : 0} - ${Math.min(end, totalItems)} de ${totalItems}`;
+        document.getElementById('btnPrevPuerto').disabled = puertoCurrentPage === 1;
+        document.getElementById('btnNextPuerto').disabled = puertoCurrentPage >= totalPages || totalItems === 0;
+    }
+
+    function changePuertoPage(delta) {
+        puertoCurrentPage += delta;
+        renderPuertosPage();
+    }
+
+    function prepararEdicionPuerto(idx) {
+        const p = filteredPuertosData[idx];
+        if (!p) return;
+        
+        document.getElementById('editPuertoId').value = p.id;
+        document.getElementById('editOriginalODFNombre').value = p.odf;
+        document.getElementById('editOriginalPuertoNombre').value = p.puerto_odf;
+        document.getElementById('editBandeja').value = p.bandeja || '';
+        document.getElementById('editPuertoNum').value = p.puerto_odf;
+        document.getElementById('editPuertoFibra').value = p.fibra || '';
+        document.getElementById('editEstadoPuerto').value = p.estado_puerto;
+        document.getElementById('editPuertoConector').value = p.tipo_conector || '';
+        document.getElementById('editPatchcord').value = p.patchcord || 'No';
+        document.getElementById('editPuertoDestino').value = p.destino || '';
+        document.getElementById('editPuertoObs').value = p.observaciones || '';
+        
+        document.getElementById('editPuertoModal').style.display = 'flex';
+    }
+
+    function cerrarModalPuertos() { document.getElementById('odfPuertoModal').style.display = 'none'; }
+    function cerrarModalEditarPuerto() { document.getElementById('editPuertoModal').style.display = 'none'; }
+
+    function guardarCambiosPuerto() {
+        const data = {
+            id: document.getElementById('editPuertoId').value,
+            odf_nombre_original: document.getElementById('editOriginalODFNombre').value,
+            puerto_odf_original: document.getElementById('editOriginalPuertoNombre').value,
+            bandeja: document.getElementById('editBandeja').value,
+            puerto_odf: document.getElementById('editPuertoNum').value,
+            fibra: document.getElementById('editPuertoFibra').value,
+            estado_puerto: document.getElementById('editEstadoPuerto').value,
+            tipo_conector: document.getElementById('editPuertoConector').value,
+            patchcord: document.getElementById('editPatchcord').value,
+            destino: document.getElementById('editPuertoDestino').value,
+            observaciones: document.getElementById('editPuertoObs').value
+        };
+
+        fetch('/api/inventario/odfs/puertos/update/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}' },
+            body: JSON.stringify(data)
+        })
+        .then(res => res.json())
+        .then(res => {
+            if (res.status === 'success') {
+                cerrarModalEditarPuerto();
+                verPuertosODF(currentODFPuertos);
+                fetchODFData(); // Actualizar ocupación en la tabla principal
+            } else {
+                alert("Error: " + res.message);
+            }
+        })
+        .catch(err => console.error("Error:", err));
+    }
+
+    // --- Lógica avanzada de Hilos ---
+    let currentRutaFibras = '';
+    let allFibrasData = [];
+    let filteredFibrasData = [];
+    let fibraCurrentPage = 1;
+    // --- Funciones de Búsqueda ---
+    function filterRutasTable() {
+        const term = document.getElementById('searchRutasMain').value.toLowerCase();
+        const rows = document.querySelectorAll('#rutasMainTable tbody tr');
+        
+        rows.forEach(row => {
+            const text = row.textContent.toLowerCase();
+            row.style.display = text.includes(term) ? '' : 'none';
+        });
+    }
+
+    function toggleExportMenuODF(e) {
+        e.stopPropagation();
+        document.getElementById('exportMenuODF').classList.toggle('show');
+    }
+
+    function exportODFToCSV() {
+        const table = document.getElementById('odfMainTable');
+        let csv = [];
+        
+        // Header
+        const headerCols = table.querySelectorAll("thead th");
+        let headerRow = [];
+        for (let j = 0; j < headerCols.length - 1; j++) { // Evitar la columna de Acción
+            headerRow.push('"' + headerCols[j].innerText.replace(/"/g, '""') + '"');
+        }
+        csv.push(headerRow.join(","));
+
+        // Data (only visible)
+        const rows = table.querySelectorAll("tbody tr");
+        rows.forEach(row => {
+            if (row.style.display !== 'none' && !row.innerText.includes("Cargando")) {
+                let rowData = [];
+                const cols = row.querySelectorAll("td");
+                for (let j = 0; j < cols.length - 1; j++) { // Evitar la columna de Acción
+                    rowData.push('"' + cols[j].innerText.replace(/"/g, '""') + '"');
+                }
+                csv.push(rowData.join(","));
+            }
+        });
+        
+        const csvFile = new Blob([csv.join("\n")], {type: "text/csv"});
+        const downloadLink = document.createElement("a");
+        downloadLink.download = `Inventario_ODF_${new Date().toISOString().split('T')[0]}.csv`;
+        downloadLink.href = window.URL.createObjectURL(csvFile);
+        downloadLink.style.display = "none";
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+    }
+
+    function exportODFToExcel() {
+        const table = document.getElementById('odfMainTable');
+        const visibleRows = Array.from(table.querySelectorAll("tbody tr")).filter(r => r.style.display !== 'none' && !r.innerText.includes("Cargando"));
+        
+        // Crear tabla temporal sin columna de Acción
+        let html = `<table border="1"><thead><tr>`;
+        const headers = table.querySelectorAll("thead th");
+        for (let i = 0; i < headers.length - 1; i++) {
+            html += `<th style="background-color: #f1f5f9;">${headers[i].innerText}</th>`;
+        }
+        html += `</tr></thead><tbody>`;
+        
+        visibleRows.forEach(r => {
+            html += `<tr>`;
+            const cols = r.querySelectorAll("td");
+            for (let j = 0; j < cols.length - 1; j++) {
+                html += `<td>${cols[j].innerText}</td>`;
+            }
+            html += `</tr>`;
+        });
+        html += '</tbody></table>';
+        
+        const url = 'data:application/vnd.ms-excel,' + encodeURIComponent(html);
+        const link = document.createElement("a");
+        link.download = `Inventario_ODF_${new Date().toISOString().split('T')[0]}.xls`;
+        link.href = url;
+        link.click();
+    }
+
+    const fibraPageSize = 20;
+    const odfPageSize = 10;
+
+    let currentHiloEstadoFilter = '';
+
+    function setHiloEstadoFilter(estado) {
+        currentHiloEstadoFilter = estado;
+        applyFibrasFilters();
+    }
+
+    function verFibras(rutaNombre) {
+        currentRutaFibras = rutaNombre;
+        const modal = document.getElementById('fibraModal');
+        const title = document.getElementById('modalRutaNombre');
+        const loading = document.getElementById('loadingFibras');
+        const container = document.getElementById('containerTablaFibras');
+
+        title.textContent = `Detalle de fibras: ${rutaNombre}`;
+        modal.style.display = 'flex';
+        loading.style.display = 'block';
+        container.style.display = 'none';
+
+        fetch(`/api/inventario/fibras/${encodeURIComponent(rutaNombre)}/?t=${new Date().getTime()}`)
+            .then(response => response.json())
+            .then(res => {
+                loading.style.display = 'none';
+                container.style.display = 'block';
+                allFibrasData = res.data || [];
+                fibraCurrentPage = 1;
+                
+                // Reiniciar filtros
+                document.getElementById('searchHilo').value = '';
+                currentHiloEstadoFilter = '';
+                
+                applyFibrasFilters();
+            })
+            .catch(err => {
+                console.error("Error cargando hilos:", err);
+                loading.innerHTML = '<p style="color:var(--danger);">Error al cargar los datos.</p>';
+            });
+    }
+
+    function applyFibrasFilters() {
+        const searchTerm = document.getElementById('searchHilo').value.toLowerCase();
+
+        filteredFibrasData = allFibrasData.filter(f => {
+            const matchesSearch = (f.fibra_numero || '').toLowerCase().includes(searchTerm) || 
+                                 (f.nombre_fibra || '').toLowerCase().includes(searchTerm);
+            const matchesEstado = currentHiloEstadoFilter === '' || f.estado === currentHiloEstadoFilter;
+            return matchesSearch && matchesEstado;
+        });
+
+        updateFibrasStats();
+        fibraCurrentPage = 1;
+        renderFibrasPage();
+    }
+
+    function updateFibrasStats() {
+        const total = allFibrasData.length;
+        const ocupados = allFibrasData.filter(f => f.estado === 'Ocupado').length;
+        const libres = allFibrasData.filter(f => f.estado === 'Libre').length;
+        const reservados = allFibrasData.filter(f => f.estado === 'Reservado').length;
+
+        document.getElementById('statTotalHilos').textContent = total;
+        document.getElementById('statOcupados').textContent = ocupados;
+        document.getElementById('statLibres').textContent = libres;
+        document.getElementById('statReservados').textContent = reservados;
+    }
+
+    function renderFibrasPage() {
+        const tbody = document.getElementById('tbodyFibras');
+        tbody.innerHTML = '';
+
+        const start = (fibraCurrentPage - 1) * fibraPageSize;
+        const end = start + fibraPageSize;
+        const pageData = filteredFibrasData.slice(start, end);
+
+        if (pageData.length > 0) {
+            pageData.forEach((f, i) => {
+                const estadoLower = f.estado ? f.estado.toLowerCase() : '';
+                let badgeClass = 'm-badge-libre';
+                if (estadoLower === 'ocupada' || estadoLower === 'ocupado') badgeClass = 'm-badge-ocupada';
+                else if (estadoLower === 'reservada' || estadoLower === 'reservado') badgeClass = 'm-badge-reservada';
+                
+                const tr = document.createElement('tr');
+                const fiberIndex = start + i;
+                
+                tr.innerHTML = `
+                    <td style="font-weight:700;">${f.fibra_numero}</td>
+                    <td><span class="m-badge ${badgeClass}">${f.estado}</span></td>
+                    <td><span style="font-weight:500;">${f.nombre_fibra || '-'}</span></td>
+                    <td>${f.origen_odf || '-'}</td>
+                    <td>${f.destino || '-'}</td>
+                    <td><span style="font-size:11px; color:var(--text-tertiary);">${f.tipo_conector || '-'}</span></td>
+                    <td style="display: flex; justify-content: center;">
+                        <button onclick="prepararEdicion(${fiberIndex})" class="btn-icon-action" title="Editar Hilo">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        } else {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:30px; color:var(--text-tertiary);">No se encontraron registros.</td></tr>';
+        }
+
+        // Update Pagination Controls
+        const totalItems = filteredFibrasData.length;
+        const totalPages = Math.ceil(totalItems / fibraPageSize);
+        document.getElementById('fibraPageInfo').textContent = `Mostrando ${totalItems > 0 ? start + 1 : 0} - ${Math.min(end, totalItems)} de ${totalItems}`;
+        document.getElementById('btnPrevFibra').disabled = fibraCurrentPage === 1;
+        document.getElementById('btnNextFibra').disabled = fibraCurrentPage >= totalPages || totalItems === 0;
+    }
+
+    function prepararEdicion(index) {
+        const f = filteredFibrasData[index];
+        if (f) abrirModalEditar(f);
+    }
+
+    function changeFibraPage(delta) {
+        fibraCurrentPage += delta;
+        renderFibrasPage();
+    }
+
+    // Listeners para filtros instantáneos
+    document.getElementById('searchHilo').addEventListener('input', () => {
+        fibraCurrentPage = 1;
+        applyFibrasFilters();
+    });
+
+    function toggleSubExportMenu(e) {
+        if (e) e.stopPropagation();
+        document.getElementById('subExportMenu').classList.toggle('show');
+    }
+
+    function exportFibrasToExcel() {
+        if (!filteredFibrasData.length) return;
+        const ws = XLSX.utils.json_to_sheet(filteredFibrasData);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Fibras");
+        XLSX.writeFile(wb, `Fibras_${currentRutaFibras}.xlsx`);
+    }
+
+    function exportFibrasToCSV() {
+        if (!filteredFibrasData.length) return;
+        const ws = XLSX.utils.json_to_sheet(filteredFibrasData);
+        const csv = XLSX.utils.sheet_to_csv(ws);
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        link.setAttribute("href", URL.createObjectURL(blob));
+        link.setAttribute("download", `Fibras_${currentRutaFibras}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    function togglePuertosExportMenu(e) {
+        if (e) e.stopPropagation();
+        document.getElementById('puertosExportMenu').classList.toggle('show');
+    }
+
+    function exportPuertosToExcel() {
+        if (!filteredPuertosData.length) return;
+        // Clean columns that aren't useful or rename them for presentation
+        const cleanData = filteredPuertosData.map(p => ({
+            "Bandeja": p.bandeja || "",
+            "Puerto ODF": p.puerto_odf,
+            "Fibra / Hilo": p.fibra || "",
+            "Estado": p.estado_puerto,
+            "Conector": p.tipo_conector || "",
+            "Patchcord": p.patchcord || "No",
+            "Destino": p.destino || "",
+            "Observaciones": p.observaciones || ""
+        }));
+        const ws = XLSX.utils.json_to_sheet(cleanData);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Puertos ODF");
+        XLSX.writeFile(wb, `Puertos_ODF_${currentODFPuertos}.xlsx`);
+    }
+
+    function exportPuertosToCSV() {
+        if (!filteredPuertosData.length) return;
+        const cleanData = filteredPuertosData.map(p => ({
+            "Bandeja": p.bandeja || "",
+            "Puerto ODF": p.puerto_odf,
+            "Fibra / Hilo": p.fibra || "",
+            "Estado": p.estado_puerto,
+            "Conector": p.tipo_conector || "",
+            "Patchcord": p.patchcord || "No",
+            "Destino": p.destino || "",
+            "Observaciones": p.observaciones || ""
+        }));
+        const ws = XLSX.utils.json_to_sheet(cleanData);
+        const csv = XLSX.utils.sheet_to_csv(ws);
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        link.setAttribute("href", URL.createObjectURL(blob));
+        link.setAttribute("download", `Puertos_ODF_${currentODFPuertos}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+
+    function abrirModalNuevoHilo() {
+        document.getElementById('editFibraId').value = '';
+        document.getElementById('editOriginalFibraNumero').value = '';
+        document.getElementById('editFibraNumero').value = '';
+        document.getElementById('editEstado').value = 'Libre';
+        document.getElementById('editNombreFibra').value = '';
+        document.getElementById('editOrigenODF').value = '';
+        document.getElementById('editDestino').value = '';
+        document.getElementById('editTipoConector').value = '';
+        
+        document.querySelector('#editFibraModal h3').textContent = 'Nuevo Hilo de Fibra';
+        document.querySelector('#editFibraModal .btn-saas-primary').textContent = 'Añadir Hilo';
+        document.getElementById('editFibraModal').style.display = 'flex';
+    }
+
+    function abrirModalEditar(f) {
+        document.getElementById('editFibraId').value = f.id;
+        document.getElementById('editOriginalFibraNumero').value = f.fibra_numero;
+        document.getElementById('editFibraNumero').value = f.fibra_numero;
+        document.getElementById('editEstado').value = f.estado;
+        document.getElementById('editNombreFibra').value = f.nombre_fibra || '';
+        document.getElementById('editOrigenODF').value = f.origen_odf || '';
+        document.getElementById('editDestino').value = f.destino || '';
+        document.getElementById('editTipoConector').value = f.tipo_conector || '';
+        
+        document.querySelector('#editFibraModal h3').textContent = 'Editar Hilo de Fibra';
+        document.querySelector('#editFibraModal .btn-saas-primary').textContent = 'Guardar Cambios';
+        document.getElementById('editFibraModal').style.display = 'flex';
+    }
+
+    function cerrarModalEditar() {
+        document.getElementById('editFibraModal').style.display = 'none';
+    }
+
+    function guardarCambiosFibra() {
+        const data = {
+            id: document.getElementById('editFibraId').value,
+            ruta_nombre: currentRutaFibras,
+            fibra_numero_original: document.getElementById('editOriginalFibraNumero').value,
+            fibra_numero: document.getElementById('editFibraNumero').value,
+            estado: document.getElementById('editEstado').value,
+            nombre_fibra: document.getElementById('editNombreFibra').value,
+            origen_odf: document.getElementById('editOrigenODF').value,
+            destino: document.getElementById('editDestino').value,
+            tipo_conector: document.getElementById('editTipoConector').value
+        };
+
+        if (!data.fibra_numero) {
+            showSaaSAlert("El Número de Fibra es obligatorio.", "error");
+            return;
+        }
+
+        const endpoint = data.id ? '/api/inventario/fibras/update/' : '/api/inventario/fibras/create/';
+
+        fetch(endpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(res => {
+            if (res.status === 'success') {
+                cerrarModalEditar();
+                verFibras(currentRutaFibras);
+            } else {
+                showSaaSAlert("Error: " + res.message, "error");
+            }
+        })
+        .catch(err => console.error("Error al guardar:", err));
+    }
+
+    function abrirModalImportarFibras() {
+        document.getElementById('importFibrasModal').style.display = 'flex';
+    }
+
+    function cerrarModalImportarFibras() {
+        document.getElementById('importFibrasModal').style.display = 'none';
+        document.getElementById('importFibrasCSV').value = ''; // Reset input
+    }
+
+    function uploadFibrasCSV() {
+        const fileInput = document.getElementById('importFibrasCSV');
+        if (fileInput.files.length === 0) {
+            showSaaSAlert("Por favor selecciona un archivo CSV primero.", "error");
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('csv_fibras', fileInput.files[0]);
+        formData.append('ruta_nombre', currentRutaFibras);
+
+        fetch('/api/inventario/fibras/import/', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': '{{ csrf_token }}' },
+            body: formData
+        })
+        .then(res => res.json())
+        .then(res => {
+            if (res.status === 'success') {
+                showSaaSAlert(res.message, "success");
+                cerrarModalImportarFibras();
+                verFibras(currentRutaFibras); // Recargar la tabla
+            } else {
+                showSaaSAlert("Error: " + res.message, "error");
+            }
+            fileInput.value = ''; // Limpiar input
+        })
+        .catch(err => {
+            showSaaSAlert("Error al procesar el archivo.", "error");
+            fileInput.value = '';
+        });
+    }
+
+    // --- Creación/Edición Manual de Rutas ---
+    function abrirModalNuevaRuta() {
+        document.getElementById('newRutaForm').reset();
+        document.getElementById('editRutaOriginalNombre').value = '';
+        document.querySelector('#newRutaModal h3').textContent = 'Nueva Troncal';
+        document.getElementById('btnGuardarRuta').textContent = 'Crear Troncal';
+        document.getElementById('newRutaModal').style.display = 'flex';
+    }
+    
+    function prepararEdicionRuta(btn) {
+        document.getElementById('newRutaForm').reset();
+        
+        const nombre = btn.getAttribute('data-nombre');
+        document.getElementById('editRutaOriginalNombre').value = nombre;
+        document.getElementById('newRutaNombre').value = nombre;
+        document.getElementById('newRutaHub').value = btn.getAttribute('data-hub') !== 'N/A' ? btn.getAttribute('data-hub') : '';
+        document.getElementById('newRutaDestino').value = btn.getAttribute('data-destino') !== 'N/A' ? btn.getAttribute('data-destino') : '';
+        
+        const tipo = btn.getAttribute('data-tipo');
+        if (['AEREO', 'SOTERRADO', 'HIBRIDO'].includes(tipo)) {
+            document.getElementById('newRutaTipo').value = tipo;
+        }
+        
+        let capVal = btn.getAttribute('data-capacidad') || '';
+        document.getElementById('newRutaCapacidad').value = capVal.replace(' Hilos', '').trim();
+        
+        document.getElementById('newRutaMarca').value = btn.getAttribute('data-marca') !== 'N/A' ? btn.getAttribute('data-marca') : '';
+        document.getElementById('newRutaTipoFibra').value = btn.getAttribute('data-tipofibra');
+        document.getElementById('newRutaSerial').value = btn.getAttribute('data-serial');
+        document.getElementById('newRutaEstado').value = btn.getAttribute('data-estado');
+        document.getElementById('newRutaMufas').value = btn.getAttribute('data-mufas');
+        document.getElementById('newRutaSplitters').value = btn.getAttribute('data-splitters');
+        document.getElementById('newRutaDistancia').value = btn.getAttribute('data-distancia');
+        document.getElementById('newRutaReserva').value = btn.getAttribute('data-reserva');
+        
+        document.getElementById('newRutaODF').value = btn.getAttribute('data-odf') || '';
+        document.getElementById('newRutaHilosOcupados').value = btn.getAttribute('data-ocupados') || 0;
+        document.getElementById('newRutaHilosLibres').value = btn.getAttribute('data-libres') || 0;
+        
+        document.querySelector('#newRutaModal h3').textContent = 'Editar Troncal';
+        document.getElementById('btnGuardarRuta').textContent = 'Guardar Cambios';
+        document.getElementById('newRutaModal').style.display = 'flex';
+    }
+
+    function cerrarModalNuevaRuta() { document.getElementById('newRutaModal').style.display = 'none'; }
+
+    function crearRutaManual() {
+        const originalNombre = document.getElementById('editRutaOriginalNombre').value;
+        const isEditing = originalNombre !== '';
+        
+        const nombreRuta = document.getElementById('newRutaNombre').value;
+        if (!nombreRuta) { showSaaSAlert("El nombre de la troncal es obligatorio.", "error"); return; }
+
+        const formData = new FormData();
+        formData.append('nombre_original', originalNombre);
+        formData.append('nombre', nombreRuta);
+        formData.append('hub_origen', document.getElementById('newRutaHub').value);
+        formData.append('destino', document.getElementById('newRutaDestino').value);
+        formData.append('tipo_trazado', document.getElementById('newRutaTipo').value);
+        formData.append('capacidad', document.getElementById('newRutaCapacidad').value);
+        formData.append('marca_modelo', document.getElementById('newRutaMarca').value);
+        formData.append('tipo_fibra', document.getElementById('newRutaTipoFibra').value);
+        formData.append('serial', document.getElementById('newRutaSerial').value);
+        formData.append('estado', document.getElementById('newRutaEstado').value);
+        formData.append('mufas', document.getElementById('newRutaMufas').value);
+        formData.append('splitters', document.getElementById('newRutaSplitters').value);
+        formData.append('distancia_km', document.getElementById('newRutaDistancia').value);
+        formData.append('reserva_km', document.getElementById('newRutaReserva').value);
+        formData.append('odf_nombre', document.getElementById('newRutaODF').value);
+        formData.append('hilos_ocupados', document.getElementById('newRutaHilosOcupados').value);
+        formData.append('hilos_libres', document.getElementById('newRutaHilosLibres').value);
+
+        const fileInput = document.getElementById('newRutaCSV');
+        if (fileInput.files.length > 0) {
+            formData.append('csv_coordenadas', fileInput.files[0]);
+        }
+
+        const endpoint = isEditing ? '/api/inventario/rutas/update/' : '/api/inventario/rutas/create/';
+
+        document.getElementById('btnGuardarRuta').disabled = true;
+        document.getElementById('btnGuardarRuta').textContent = 'Guardando...';
+
+        fetch(endpoint, {
+            method: 'POST',
+            headers: { 'X-CSRFToken': '{{ csrf_token }}' },
+            body: formData
+        })
+        .then(res => res.json())
+        .then(res => {
+            if (res.status === 'success') {
+                location.reload(); // Recargamos para actualizar tablas y gráficas globales
+            } else {
+                showSaaSAlert(res.message, "error");
+                document.getElementById('btnGuardarRuta').disabled = false;
+                document.getElementById('btnGuardarRuta').textContent = isEditing ? 'Guardar Cambios' : 'Crear Ruta';
+            }
+        })
+        .catch(err => {
+            showSaaSAlert("Error de conexión al servidor.", "error");
+            document.getElementById('btnGuardarRuta').disabled = false;
+            document.getElementById('btnGuardarRuta').textContent = isEditing ? 'Guardar Cambios' : 'Crear Ruta';
+        });
+    }
+
+    // --- Creación/Edición Manual de ODFs ---
+    function abrirModalNuevoODF() {
+        document.getElementById('newODFForm').reset();
+        document.getElementById('editODFId').value = '';
+        document.querySelector('#newODFModal h3').textContent = 'Nuevo ODF / Rack';
+        document.getElementById('btnGuardarODF').textContent = 'Crear ODF';
+        document.getElementById('newODFModal').style.display = 'flex';
+    }
+    
+    function prepararEdicionODF(id) {
+        document.getElementById('newODFForm').reset();
+        const odf = allODFData.find(o => o.id === parseInt(id));
+        if (!odf) return;
+        
+        document.getElementById('editODFId').value = odf.id;
+        document.getElementById('newODFHub').value = odf.hub_site || '';
+        document.getElementById('newODFSala').value = odf.sala || '';
+        document.getElementById('newODFRack').value = odf.rack || '';
+        document.getElementById('newODFNombre').value = odf.odf;
+        document.getElementById('newODFTroncal').value = odf.troncal || '';
+        document.getElementById('newODFCapacidad').value = odf.capacidad_puertos || '';
+        document.getElementById('newODFConector').value = odf.tipo_conector || '';
+        document.getElementById('newODFEstado').value = odf.estado || 'Activo';
+        
+        document.querySelector('#newODFModal h3').textContent = 'Editar ODF / Rack';
+        document.getElementById('btnGuardarODF').textContent = 'Guardar Cambios';
+        document.getElementById('newODFModal').style.display = 'flex';
+    }
+
+    function cerrarModalNuevoODF() { document.getElementById('newODFModal').style.display = 'none'; }
+
+    function crearODFManual() {
+        const idODF = document.getElementById('editODFId').value;
+        const isEditing = idODF !== '';
+        
+        const data = {
+            id: idODF,
+            hub_site: document.getElementById('newODFHub').value,
+            sala: document.getElementById('newODFSala').value,
+            rack: document.getElementById('newODFRack').value,
+            odf: document.getElementById('newODFNombre').value,
+            troncal: document.getElementById('newODFTroncal').value,
+            capacidad_puertos: document.getElementById('newODFCapacidad').value,
+            tipo_conector: document.getElementById('newODFConector').value,
+            estado: document.getElementById('newODFEstado').value
+        };
+
+        if (!data.odf) { showSaaSAlert("El nombre del ODF es obligatorio.", "error"); return; }
+
+        const endpoint = isEditing ? '/api/inventario/odfs/update/' : '/api/inventario/odfs/create/';
+
+        fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}' },
+            body: JSON.stringify(data)
+        })
+        .then(res => res.json())
+        .then(res => {
+            if (res.status === 'success') {
+                cerrarModalNuevoODF();
+                fetchODFData(); // Solo recargamos la tabla de ODFs
+                showSaaSAlert(isEditing ? "ODF actualizado exitosamente." : "ODF creado exitosamente.", "success");
+            } else {
+                showSaaSAlert(res.message, "error");
+            }
+        });
+    }
+
+    // --- Lógica de Eliminación (SaaS Modal) ---
+    let pendingDelete = { tipo: null, id: null };
+
+    function confirmarEliminacion(tipo, id, displayName = null) {
+        pendingDelete = { tipo, id };
+        document.getElementById('deleteItemType').textContent = tipo === 'ruta' ? 'Troncal' : 'ODF / Rack';
+        document.getElementById('deleteItemName').textContent = displayName ? displayName : id;
+        document.getElementById('deleteConfirmModal').style.display = 'flex';
+    }
+
+    function ejecutarEliminacion() {
+        if (!pendingDelete.tipo || !pendingDelete.id) return;
+        
+        const endpoint = pendingDelete.tipo === 'ruta' 
+            ? '/api/inventario/rutas/delete/' 
+            : '/api/inventario/odfs/delete/';
+            
+        const payload = pendingDelete.tipo === 'ruta' 
+            ? { nombre: pendingDelete.id } 
+            : { id: pendingDelete.id };
+
+        fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}' },
+            body: JSON.stringify(payload)
+        })
+        .then(res => res.json())
+        .then(res => {
+            document.getElementById('deleteConfirmModal').style.display = 'none';
+            if (res.status === 'success') {
+                if (pendingDelete.tipo === 'ruta') {
+                    location.reload();
+                } else {
+                    fetchODFData();
+                    showSaaSAlert("ODF eliminado correctamente.", "success");
+                }
+            } else {
+                showSaaSAlert(res.message, "error");
+            }
+            pendingDelete = { tipo: null, id: null };
+        });
+    }
+
+    function cerrarModalFibras() {
+        document.getElementById('fibraModal').style.display = 'none';
+    }
+
+    window.onclick = function(event) {
+        const modal = document.getElementById('fibraModal');
+        const editModal = document.getElementById('editFibraModal');
+        const odfModal = document.getElementById('odfPuertoModal');
+        const editPuertoModal = document.getElementById('editPuertoModal');
+        const exportMenu = document.getElementById('exportMenu');
+        const subExportMenu = document.getElementById('subExportMenu');
+
+        if (event.target == modal) cerrarModalFibras();
+        if (event.target == editModal) cerrarModalEditar();
+        if (event.target == odfModal) cerrarModalPuertos();
+        if (event.target == editPuertoModal) cerrarModalEditarPuerto();
+        
+        // Nuevos Modales
+        if (event.target == document.getElementById('newRutaModal')) cerrarModalNuevaRuta();
+        if (event.target == document.getElementById('newODFModal')) cerrarModalNuevoODF();
+
+        if (exportMenu && !event.target.closest('.export-dropdown')) exportMenu.classList.remove('show');
+        if (subExportMenu && !event.target.closest('.export-dropdown')) subExportMenu.classList.remove('show');
+    }
+
+    // --- Sistema de Alertas SaaS ---
+    function showSaaSAlert(message, type = 'error') {
+        const existingAlert = document.getElementById('saas-alert-container');
+        if (existingAlert) existingAlert.remove();
+
+        const alertContainer = document.createElement('div');
+        alertContainer.id = 'saas-alert-container';
+        
+        const isDark = document.body.classList.contains('dark-mode');
+        const bg = isDark ? '#1e293b' : '#ffffff';
+        const textColor = isDark ? '#f8fafc' : '#0f172a';
+        
+        // Colores por tipo
+        const typeColors = {
+            'error': { icon: '#ef4444', border: '#ef4444' },
+            'success': { icon: '#10b981', border: '#10b981' },
+            'warning': { icon: '#f59e0b', border: '#f59e0b' }
+        };
+        const config = typeColors[type] || typeColors['error'];
+
+        // Icono por tipo
+        let iconSvg = '';
+        if (type === 'error') {
+            iconSvg = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="${config.icon}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`;
+        } else if (type === 'success') {
+            iconSvg = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="${config.icon}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`;
+        } else {
+            iconSvg = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="${config.icon}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
+        }
+
+        alertContainer.style.cssText = `
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 9999;
+            background: ${bg};
+            color: ${textColor};
+            padding: 16px 24px;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border-left: 4px solid ${config.border};
+            transform: translateX(120%);
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            max-width: 400px;
+            font-family: inherit;
+        `;
+
+        alertContainer.innerHTML = `
+            ${iconSvg}
+            <div style="display: flex; flex-direction: column;">
+                <span style="font-weight: 700; font-size: 14px;">${type === 'error' ? 'Error' : type === 'success' ? 'Éxito' : 'Atención'}</span>
+                <span style="font-size: 13px; opacity: 0.9; margin-top: 2px;">${message}</span>
+            </div>
+            <button onclick="this.parentElement.remove()" style="margin-left: auto; background: none; border: none; color: inherit; cursor: pointer; opacity: 0.5; padding: 4px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+        `;
+
+        document.body.appendChild(alertContainer);
+        
+        // Trigger animation
+        setTimeout(() => {
+            alertContainer.style.transform = 'translateX(0)';
+        }, 10);
+
+        // Auto remove
+        setTimeout(() => {
+            if (alertContainer.parentElement) {
+                alertContainer.style.transform = 'translateX(120%)';
+                setTimeout(() => alertContainer.remove(), 300);
+            }
+        }, 5000);
+    }
+    // --- Lógica de Formularios Dependientes (Sites/Hubs -> ODF) ---
+    function actualizarODFsPorSite() {
+        const siteSeleccionado = document.getElementById('newRutaHub').value;
+        const odfSelect = document.getElementById('newRutaODF');
+        if(!odfSelect) return;
+        // Si no existe el backup, crearlo desde el estado inicial de la vista
+        if (!window.allOdfOptionsBackup) {
+            window.allOdfOptionsBackup = Array.from(odfSelect.options).map(opt => opt.cloneNode(true));
+        }
+        
+        // Vaciar completamente el select
+        odfSelect.innerHTML = '';
+        
+        // Agregar solo las opciones que coincidan
+        window.allOdfOptionsBackup.forEach(opt => {
+            const clone = opt.cloneNode(true);
+            if (clone.value === "") {
+                odfSelect.appendChild(clone);
+            } else {
+                const optionSite = clone.getAttribute('data-site');
+                if (!siteSeleccionado || optionSite === siteSeleccionado) {
+                    odfSelect.appendChild(clone);
+                }
+            }
+        });
+        
+        odfSelect.value = ""; // Resetear selección al cambiar
+    }
+    function autocompletarRutaTroncal() {
+        const odfSelect = document.getElementById('newRutaODF');
+        const selectedOption = odfSelect.options[odfSelect.selectedIndex];
+        if (selectedOption && selectedOption.value !== "") {
+            const troncalAsociada = selectedOption.getAttribute('data-troncal');
+            if (troncalAsociada && troncalAsociada !== 'None' && troncalAsociada !== 'null') {
+                const nombreRutaInput = document.getElementById('newRutaNombre');
+                // Solo autocompletar si el campo de nombre de ruta está vacío o el usuario lo confirma
+                if (!nombreRutaInput.value || confirm("¿Desea autocompletar el Nombre de Ruta Troncal con la ruta asociada al ODF seleccionado (" + troncalAsociada + ")?")) {
+                    nombreRutaInput.value = troncalAsociada;
+                }
+            }
+        }
+    }
+
+    // Lógica para Reservas
+    let allReservasData = [];
+    let filteredReservasData = [];
+    let currentReservaPage = 1;
+    const reservaPageSize = 15;
+    let currentRutaReservas = "";
+
+    function cerrarReservas() {
+        document.getElementById('reservasModal').style.display = 'none';
+    }
+
+    function verReservas(rutaNombre) {
+        currentRutaReservas = rutaNombre;
+        document.getElementById('reservasModalTitle').textContent = 'Reservas de: ' + rutaNombre;
+        document.getElementById('loadingReservas').style.display = 'block';
+        document.getElementById('containerTablaReservas').style.display = 'none';
+        document.getElementById('reservasModal').style.display = 'flex';
+        document.getElementById('searchReserva').value = '';
+
+        fetch(`/api/inventario/reservas/?ruta=${encodeURIComponent(rutaNombre)}`)
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('loadingReservas').style.display = 'none';
+                if (data.status === 'success') {
+                    allReservasData = data.reservas || [];
+                    
+                    // Estadísticas
+                    document.getElementById('statTotalReservas').textContent = allReservasData.length;
+                    
+                    let sites = 0, mufas = 0, camaras = 0, postes = 0;
+                    allReservasData.forEach(r => {
+                        const tipo = (r.tipo || '').toUpperCase();
+                        if (tipo.includes('SITE')) sites++;
+                        else if (tipo.includes('MUFA')) mufas++;
+                        else if (tipo.includes('CAMARA') || tipo.includes('CÁMARA')) camaras++;
+                        else if (tipo.includes('POSTE')) postes++;
+                    });
+                    
+                    document.getElementById('statSites').textContent = sites;
+                    document.getElementById('statMufas').textContent = mufas;
+                    document.getElementById('statCamaras').textContent = camaras;
+                    document.getElementById('statPostes').textContent = postes;
+
+                    document.getElementById('containerTablaReservas').style.display = 'block';
+                    applyReservasFilters();
+                } else {
+                    showSaaSAlert("Error al cargar reservas: " + data.message, "error");
+                }
+            })
+            .catch(err => {
+                console.error("Error fetching reservas:", err);
+                document.getElementById('loadingReservas').style.display = 'none';
+                showSaaSAlert("Error de conexión al cargar reservas", "error");
+            });
+    }
+
+    let currentReservaTypeFilter = "";
+
+    function setReservaTypeFilter(tipo) {
+        currentReservaTypeFilter = tipo;
+        applyReservasFilters();
+    }
+
+    function applyReservasFilters() {
+        const query = document.getElementById('searchReserva').value.toLowerCase();
+
+        filteredReservasData = allReservasData.filter(r => {
+            const matchName = (r.nombre || '').toLowerCase().includes(query);
+            const matchLat = (r.latitud || '').toString().toLowerCase().includes(query);
+            const matchLon = (r.longitud || '').toString().toLowerCase().includes(query);
+            const matchQuery = matchName || matchLat || matchLon;
+            
+            let matchType = true;
+            if (currentReservaTypeFilter) {
+                const rTipo = (r.tipo || '').toUpperCase();
+                if (currentReservaTypeFilter === 'CAMARA') {
+                    matchType = rTipo.includes('CAMARA') || rTipo.includes('CÁMARA');
+                } else {
+                    matchType = rTipo.includes(currentReservaTypeFilter);
+                }
+            }
+            
+            return matchQuery && matchType;
+        });
+
+        currentReservaPage = 1;
+        renderReservasTable();
+    }
+
+    function renderReservasTable() {
+        const tbody = document.getElementById('tbodyReservas');
+        tbody.innerHTML = '';
+
+        const totalItems = filteredReservasData.length;
+        const totalPages = Math.ceil(totalItems / reservaPageSize) || 1;
+        
+        const start = (currentReservaPage - 1) * reservaPageSize;
+        const end = Math.min(start + reservaPageSize, totalItems);
+        const pageData = filteredReservasData.slice(start, end);
+
+        if (totalItems === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:30px; color:var(--text-tertiary);">No se encontraron reservas que coincidan con la búsqueda.</td></tr>';
+        } else {
+            pageData.forEach(r => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td style="font-weight:600;">${r.nombre || '-'}</td>
+                    <td>${r.tipo || '-'}</td>
+                    <td><span style="font-weight:500; color:#10b981;">${r.reserva_m || 0} m</span></td>
+                    <td>${r.latitud || '-'}</td>
+                    <td>${r.longitud || '-'}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // Pagination info
+        document.getElementById('reservaPageInfo').textContent = totalItems > 0 
+            ? `Mostrando ${start + 1} - ${end} de ${totalItems}` 
+            : 'Mostrando 0 - 0 de 0';
+
+        document.getElementById('btnPrevReserva').disabled = currentReservaPage === 1;
+        document.getElementById('btnNextReserva').disabled = currentReservaPage === totalPages || totalItems === 0;
+    }
+
+    function changeReservaPage(delta) {
+        currentReservaPage += delta;
+        renderReservasTable();
+    }
+
+    // Export functions
+    function toggleReservasExportMenu(e) {
+        e.stopPropagation();
+        const menu = document.getElementById('reservasExportMenu');
+        menu.classList.toggle('show');
+    }
+
+    function exportReservasToCSV() {
+        if (allReservasData.length === 0) {
+            showSaaSAlert("No hay datos para exportar", "warning");
+            return;
+        }
+        
+        const headers = ["Nombre", "Tipo", "Reserva (m)", "Latitud", "Longitud"];
+        let csvContent = headers.join(",") + "\n";
+        
+        allReservasData.forEach(r => {
+            const row = [
+                `"${r.nombre || ''}"`,
+                `"${r.tipo || ''}"`,
+                `"${r.reserva_m || 0}"`,
+                `"${r.latitud || ''}"`,
+                `"${r.longitud || ''}"`
+            ];
+            csvContent += row.join(",") + "\n";
+        });
+        
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        link.setAttribute("href", url);
+        link.setAttribute("download", `Reservas_${currentRutaReservas}_${new Date().toISOString().split('T')[0]}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        document.getElementById('reservasExportMenu').classList.remove('show');
+    }
+
+    function exportReservasToExcel() {
+        if (allReservasData.length === 0) {
+            showSaaSAlert("No hay datos para exportar", "warning");
+            return;
+        }
+        
+        let tableHTML = `
+            <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+            <head><meta charset="utf-8"></head>
+            <body>
+                <table border="1">
+                    <thead>
+                        <tr>
+                            <th style="background-color: #3b82f6; color: white;">Nombre</th>
+                            <th style="background-color: #3b82f6; color: white;">Tipo</th>
+                            <th style="background-color: #3b82f6; color: white;">Reserva (m)</th>
+                            <th style="background-color: #3b82f6; color: white;">Latitud</th>
+                            <th style="background-color: #3b82f6; color: white;">Longitud</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+        
+        allReservasData.forEach(r => {
+            tableHTML += `
+                <tr>
+                    <td>${r.nombre || ''}</td>
+                    <td>${r.tipo || ''}</td>
+                    <td>${r.reserva_m || 0}</td>
+                    <td>${r.latitud || ''}</td>
+                    <td>${r.longitud || ''}</td>
+                </tr>
+            `;
+        });
+        
+        tableHTML += "</tbody></table></body></html>";
+        
+        const blob = new Blob([tableHTML], { type: 'application/vnd.ms-excel' });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `Reservas_${currentRutaReservas}_${new Date().toISOString().split('T')[0]}.xls`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        document.getElementById('reservasExportMenu').classList.remove('show');
+    }
+
+    // Agregar Reserva JS
+    function abrirModalAgregarReserva() {
+        if (!currentRutaReservas) {
+            showSaaSAlert("Debe abrir las reservas de una ruta primero", "warning");
+            return;
+        }
+        document.getElementById('addReservaForm').reset();
+        document.getElementById('addReservaModal').style.display = 'flex';
+    }
+
+    function cerrarModalAgregarReserva() {
+        document.getElementById('addReservaModal').style.display = 'none';
+    }
+
+    function guardarNuevaReserva() {
+        const payload = {
+            ruta: currentRutaReservas,
+            nombre: document.getElementById('newReservaNombre').value,
+            tipo: document.getElementById('newReservaTipo').value,
+            latitud: document.getElementById('newReservaLat').value,
+            longitud: document.getElementById('newReservaLon').value,
+            reserva_m: document.getElementById('newReservaM').value
+        };
+
+        if (!payload.nombre || !payload.latitud || !payload.longitud) {
+            showSaaSAlert("Por favor, complete los campos obligatorios", "error");
+            return;
+        }
+
+        fetch('/api/inventario/reservas/add/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(payload)
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === 'success') {
+                cerrarModalAgregarReserva();
+                showSaaSAlert(data.message, "success");
+                verReservas(currentRutaReservas); // recargar
+            } else {
+                showSaaSAlert(data.message, "error");
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            showSaaSAlert("Error al guardar reserva", "error");
+        });
+    }
+
+    // Importar Reservas JS
+    function abrirModalImportarReservas() {
+        if (!currentRutaReservas) {
+            showSaaSAlert("Debe abrir las reservas de una ruta primero", "warning");
+            return;
+        }
+        document.getElementById('importReservasFile').value = '';
+        document.getElementById('importReservasModal').style.display = 'flex';
+    }
+
+    function cerrarModalImportarReservas() {
+        document.getElementById('importReservasModal').style.display = 'none';
+    }
+
+    function uploadReservasFile(btn) {
+        const fileInput = document.getElementById('importReservasFile');
+        const file = fileInput.files[0];
+        if (!file) {
+            showSaaSAlert("Seleccione un archivo primero.", "warning");
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('archivo', file);
+        formData.append('ruta_nombre', currentRutaReservas);
+        
+        let originalText = "";
+        if(btn) {
+            originalText = btn.innerHTML;
+            btn.innerHTML = 'Subiendo...';
+            btn.disabled = true;
+        }
+
+        fetch('/api/inventario/reservas/import/', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: formData
+        })
+        .then(res => res.json())
+        .then(data => {
+            if(btn) { btn.innerHTML = originalText; btn.disabled = false; }
+            if (data.status === 'success') {
+                cerrarModalImportarReservas();
+                showSaaSAlert(data.message, "success");
+                verReservas(currentRutaReservas);
+            } else {
+                showSaaSAlert(data.message, "error");
+            }
+        })
+        .catch(err => {
+            if(btn) { btn.innerHTML = originalText; btn.disabled = false; }
+            console.error(err);
+            showSaaSAlert("Error al procesar el archivo.", "error");
+        });
+    }
+</script>
+{% endblock %}

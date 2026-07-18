@@ -1,0 +1,580 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Traza Bajo Demanda - {{ route_name }}{% endblock %}
+
+{% block extra_css %}
+<style>
+    .visor-container {
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - var(--topbar-height) - var(--space-8));
+        width: 100%;
+        overflow: hidden;
+        background-color: var(--bg-surface);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-sm);
+    }
+
+    .visor-header {
+        border-bottom: 1px solid var(--border-color);
+        padding: var(--space-4) var(--space-6);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-shrink: 0;
+    }
+
+    .header-left {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .header-title {
+        font-size: var(--text-lg);
+        font-weight: 700;
+        margin: 0;
+        color: var(--text-primary);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .status-badge {
+        font-size: var(--text-xs);
+        padding: 2px 8px;
+        border-radius: var(--radius-full);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .status-running { background-color: rgba(59, 130, 246, 0.15); color: var(--accent); border: 1px solid rgba(59, 130, 246, 0.3); }
+    .status-completed { background-color: var(--success-light); color: var(--success-dark); border: 1px solid rgba(16, 185, 129, 0.3); }
+    .status-failed { background-color: var(--danger-light); color: var(--danger-dark); border: 1px solid rgba(239, 68, 68, 0.3); }
+    
+    [data-theme="dark"] .status-completed { background-color: rgba(16, 185, 129, 0.15); color: var(--success); }
+    [data-theme="dark"] .status-failed { background-color: rgba(239, 68, 68, 0.15); color: var(--danger); }
+
+    .header-subtitle {
+        font-size: var(--text-sm);
+        color: var(--text-secondary);
+        display: flex;
+        align-items: center;
+        gap: 16px;
+    }
+
+    .header-right {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+    }
+
+    .btn-primary {
+        background-color: var(--accent);
+        color: white;
+        padding: 8px 16px;
+        border-radius: 6px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        text-decoration: none;
+        border: none;
+        cursor: pointer;
+        transition: opacity 0.2s;
+        box-shadow: 0 2px 4px rgba(14, 165, 233, 0.2);
+    }
+    
+    .btn-primary:hover {
+        opacity: 0.9;
+    }
+
+    .visor-content {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        padding: var(--space-4);
+        gap: var(--space-4);
+        overflow-y: auto;
+    }
+
+    .info-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: var(--space-4);
+        flex-shrink: 0;
+    }
+
+    .info-card {
+        background-color: var(--bg-surface-2);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        padding: var(--space-3) var(--space-4);
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .info-card.bg-danger { background-color: rgba(239, 68, 68, 0.08); border-color: rgba(239, 68, 68, 0.2); }
+    .info-card.bg-warning { background-color: rgba(245, 158, 11, 0.08); border-color: rgba(245, 158, 11, 0.2); }
+    .info-card.bg-info { background-color: rgba(59, 130, 246, 0.08); border-color: rgba(59, 130, 246, 0.2); }
+    .info-card.bg-success { background-color: rgba(16, 185, 129, 0.08); border-color: rgba(16, 185, 129, 0.2); }
+    .info-card.bg-neutral { background-color: rgba(148, 163, 184, 0.08); border-color: rgba(148, 163, 184, 0.2); }
+    
+    [data-theme="dark"] .info-card.bg-danger { background-color: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.3); }
+    [data-theme="dark"] .info-card.bg-warning { background-color: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.3); }
+    [data-theme="dark"] .info-card.bg-info { background-color: rgba(59, 130, 246, 0.12); border-color: rgba(59, 130, 246, 0.3); }
+    [data-theme="dark"] .info-card.bg-success { background-color: rgba(16, 185, 129, 0.12); border-color: rgba(16, 185, 129, 0.3); }
+    [data-theme="dark"] .info-card.bg-neutral { background-color: rgba(148, 163, 184, 0.12); border-color: rgba(148, 163, 184, 0.3); }
+
+    .info-label {
+        font-size: 11px;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        font-weight: 600;
+    }
+
+    .info-value {
+        font-size: var(--text-md);
+        font-weight: 700;
+        color: var(--text-primary);
+    }
+
+    .chart-container {
+        flex: 1;
+        background-color: var(--bg-surface-2);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        position: relative;
+        min-height: 350px;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    .chart-header {
+        padding: 8px 16px;
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .chart-title {
+        font-size: var(--text-sm);
+        font-weight: 600;
+        color: var(--text-secondary);
+    }
+
+    .chart-body {
+        flex: 1;
+        width: 100%;
+        position: relative;
+    }
+
+    #echart-canvas {
+        width: 100%;
+        height: 100%;
+        position: absolute;
+        top: 0;
+        left: 0;
+    }
+
+    .loader-overlay {
+        position: absolute;
+        inset: 0;
+        background: var(--bg-surface);
+        opacity: 0.95;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 10;
+    }
+
+    .spinner {
+        width: 40px;
+        height: 40px;
+        border: 4px solid var(--border-color);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin-bottom: 16px;
+    }
+
+    @keyframes spin { 
+        to { transform: rotate(360deg); } 
+    }
+
+    .initial-state {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background-color: var(--bg-surface-2);
+        z-index: 5;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<script src="{% static 'vendor/echarts/echarts-5.5.0.min.js' %}"></script>
+
+<div class="visor-container">
+    <div class="visor-header">
+        <div class="header-left">
+            <h1 class="header-title">
+                <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="none" viewBox="0 0 24 24" stroke="currentColor" class="text-accent"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+                Diagnóstico OTDR
+                <span id="header-status-badge" class="status-badge" style="display: none;"></span>
+            </h1>
+            <div class="header-subtitle">
+                <span><strong>Troncal:</strong> <span id="route-name">{{ route_name }}</span></span>
+                <span>•</span>
+                <span><strong>RFTS:</strong> On-Demand</span>
+                <span>•</span>
+                <span><strong>Fecha:</strong> <span id="header-date">{% if traza %}{{ traza.fecha_solicitud|date:"Y-m-d H:i:s" }}{% else %}{% now "Y-m-d H:i:s" %}{% endif %}</span></span>
+            </div>
+        </div>
+        <div class="header-right" style="display: flex; gap: 12px;">
+            <button id="btn-request" class="btn-primary" onclick="requestOnDemandTrace()" style="background-color: #3b82f6; color: white; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; font-size: 13px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                Solicitar Traza en Vivo
+            </button>
+            <a id="btn-download" href="#" style="display: none; background-color: var(--accent); color: white; padding: 8px 16px; border-radius: 6px; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; text-decoration: none; transition: opacity 0.2s; box-shadow: 0 2px 4px rgba(14, 165, 233, 0.2);" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                Descargar traza
+            </a>
+        </div>
+    </div>
+
+    <div class="visor-content">
+        <div class="info-grid">
+            <div class="info-card bg-danger">
+                <span class="info-label" style="color: var(--danger);">Distancia de Falla</span>
+                <span class="info-value" style="color: var(--danger);" id="ui-distance">-</span>
+            </div>
+            <div class="info-card bg-neutral" id="card-type">
+                <span class="info-label">Tipo de Evento</span>
+                <span class="info-value" id="ui-type" style="color: var(--text-secondary); font-weight: 700;">Traza Bajo Demanda</span>
+            </div>
+            <div class="info-card" id="card-severity">
+                <span class="info-label">Severidad</span>
+                <span class="info-value" id="ui-severity" style="color: var(--text-tertiary)">N/A</span>
+            </div>
+            <div class="info-card bg-info">
+                <span class="info-label" style="color: var(--accent);">Link Loss</span>
+                <span class="info-value" style="color: var(--accent);" id="ui-link-loss">-</span>
+            </div>
+            <div class="info-card bg-neutral">
+                <span class="info-label">Coordenadas GPS</span>
+                <span class="info-value" style="font-size: 13px;">-</span>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <div class="chart-header">
+                <span class="chart-title">Análisis de Traza OTDR</span>
+            </div>
+            <div class="chart-body">
+                <div id="echart-canvas"></div>
+                
+                <div class="loader-overlay" id="chart-loader" style="display: none;">
+                    <div class="spinner"></div>
+                    <span id="loader-text" style="font-weight: 500; color: var(--text-secondary); text-align: center;">Iniciando traza en equipo VeEX...</span>
+                </div>
+                
+                {% if not traza %}
+                <div class="initial-state" id="initial-state">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="color: var(--text-tertiary); margin-bottom: 16px;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+                    <h3 style="color: var(--text-primary); margin: 0 0 8px 0;">No hay traza cargada</h3>
+                    <p style="color: var(--text-secondary); margin: 0;">Presiona "Solicitar Traza en Vivo" para realizar una medición ahora mismo.</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const routeName = "{{ route_name }}";
+    let currentTrazaId = "{% if traza %}{{ traza.id }}{% else %}{% endif %}";
+    let pollInterval = null;
+    let myChart = null;
+
+    function getChartTheme() {
+        return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : null;
+    }
+    
+    function initChart() {
+        const chartDom = document.getElementById('echart-canvas');
+        if (myChart) myChart.dispose();
+        myChart = echarts.init(chartDom, getChartTheme());
+    }
+
+    const observer = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+            if (mutation.attributeName === 'data-theme') {
+                if (window.cachedChartOption) {
+                    initChart();
+                    myChart.setOption(window.cachedChartOption);
+                }
+            }
+        });
+    });
+    observer.observe(document.documentElement, { attributes: true });
+
+    initChart();
+    
+    window.addEventListener('resize', () => {
+        if (myChart) myChart.resize();
+    });
+
+    function requestOnDemandTrace() {
+        if (!routeName) {
+            alert('No se especificó la troncal.');
+            return;
+        }
+
+        const btnReq = document.getElementById('btn-request');
+        btnReq.disabled = true;
+        btnReq.style.opacity = '0.5';
+
+        document.getElementById('initial-state') && (document.getElementById('initial-state').style.display = 'none');
+        document.getElementById('chart-loader').style.display = 'flex';
+        document.getElementById('loader-text').textContent = 'Solicitando medición al equipo...';
+        
+        updateStatusUI('Pending');
+
+        fetch('/api/traza-en-vivo/iniciar/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ route_name: routeName })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === 'success') {
+                currentTrazaId = data.traza_id;
+                startPolling();
+            } else {
+                alert('Error: ' + data.message);
+                resetUI();
+            }
+        })
+        .catch(err => {
+            console.error(err);
+            alert('Error de conexión.');
+            resetUI();
+        });
+    }
+
+    function startPolling() {
+        if (pollInterval) clearInterval(pollInterval);
+        
+        document.getElementById('loader-text').textContent = 'Midiendo (el láser está activo)...';
+        
+        pollInterval = setInterval(() => {
+            fetch(`/api/traza-en-vivo/status/${currentTrazaId}/`)
+            .then(res => res.json())
+            .then(data => {
+                updateStatusUI(data.status, data.error_message);
+                
+                if (data.status.toLowerCase() === 'completed') {
+                    clearInterval(pollInterval);
+                    document.getElementById('loader-text').textContent = 'Descargando resultados...';
+                    loadTraceData();
+                    setupDownloadButton();
+                } else if (data.status.toLowerCase() === 'failed') {
+                    clearInterval(pollInterval);
+                    alert('Fallo en la traza: ' + (data.error_message || 'Error desconocido'));
+                    resetUI();
+                }
+            });
+        }, 5000);
+    }
+
+    function loadTraceData() {
+        fetch(`/api/traza-datos/0/?ondemand_id=${currentTrazaId}`)
+        .then(res => res.json())
+        .then(res => {
+            document.getElementById('chart-loader').style.display = 'none';
+            document.getElementById('btn-request').disabled = false;
+            document.getElementById('btn-request').style.opacity = '1';
+            
+            if (res.status === 'success') {
+                renderChart(res.data);
+                if (res.data.link_loss > 0) {
+                    document.getElementById('ui-link-loss').textContent = res.data.link_loss.toFixed(3) + ' dB';
+                }
+            } else {
+                alert('Error al cargar datos de la traza: ' + res.message);
+            }
+        });
+    }
+
+    function setupDownloadButton() {
+        const btn = document.getElementById('btn-download');
+        btn.style.display = 'inline-flex';
+        btn.href = `/api/descargar-sor/0/?ondemand_id=${currentTrazaId}`;
+    }
+
+    function updateStatusUI(status, error_msg = '') {
+        const badge = document.getElementById('header-status-badge');
+        
+        badge.style.display = 'inline-block';
+        badge.className = 'status-badge';
+        badge.textContent = status;
+
+        if (status.toLowerCase() === 'completed') {
+            badge.classList.add('status-completed');
+        } else if (status.toLowerCase() === 'failed') {
+            badge.classList.add('status-failed');
+            uiStatus.textContent = 'Failed: ' + error_msg;
+        } else {
+            badge.classList.add('status-running');
+        }
+    }
+
+    function resetUI() {
+        document.getElementById('chart-loader').style.display = 'none';
+        const btnReq = document.getElementById('btn-request');
+        btnReq.disabled = false;
+        btnReq.style.opacity = '1';
+    }
+
+    function renderChart(rawData) {
+        const lineData = [];
+        let baseValue = 0;
+
+        if (rawData.y.length > 0) {
+            for (let i = 5; i < rawData.y.length - 1; i++) {
+                if (rawData.y[i] > 0 && Math.abs(rawData.y[i] - rawData.y[i+1]) < 0.05) {
+                    baseValue = rawData.y[i];
+                    break;
+                }
+            }
+            if (baseValue === 0) {
+                let fallback = rawData.y.find(v => v > 0);
+                baseValue = fallback !== undefined ? fallback : 0;
+            }
+        }
+
+        for (let i = 0; i < rawData.x.length; i++) {
+            let yValue = rawData.y[i] - baseValue; 
+            lineData.push([rawData.x[i], yValue]);
+        }
+
+        const markLineData = [];
+        
+        if (rawData.events && rawData.events.length > 0) {
+            rawData.events.forEach(ev => {
+                let evColor = '#3b82f6';
+                if (ev.type && ev.type.toLowerCase().includes('reflect')) evColor = '#f59e0b';
+                
+                let details = `Pérdida Empalme: ${ev.loss || '0'} dB\nReflectancia: ${ev.reflectance || '0'} dB`;
+                
+                markLineData.push({
+                    xAxis: ev.distance,
+                    lineStyle: { color: evColor, width: 1, type: 'dashed' },
+                    label: { show: true, position: 'start', formatter: `Evt ${ev.number}`, color: evColor, fontSize: 10 },
+                    tooltip: { formatter: `<strong>Evento ${ev.number}</strong><br/>${details.replace('\n', '<br/>')}` }
+                });
+            });
+        }
+
+        let baseOption = {
+            backgroundColor: 'transparent',
+            tooltip: {
+                trigger: 'axis',
+                axisPointer: { type: 'cross' },
+                formatter: function (params) {
+                    let m = params[0].value[0];
+                    let db = params[0].value[1];
+                    return `<strong>${m.toFixed(2)} m</strong><br/>${db.toFixed(3)} dB`;
+                }
+            },
+            toolbox: {
+                show: true,
+                feature: {
+                    dataZoom: { yAxisIndex: 'none' },
+                    restore: {},
+                    saveAsImage: {}
+                }
+            },
+            dataZoom: [
+                { type: 'inside', start: 0, end: 100 },
+                { type: 'slider', start: 0, end: 100, bottom: 10 }
+            ],
+            grid: { top: 40, left: 50, right: 40, bottom: 60, containLabel: true },
+            xAxis: {
+                type: 'value',
+                name: 'Distancia (m)',
+                nameLocation: 'middle',
+                nameGap: 30,
+                scale: true,
+                splitLine: { show: true }
+            },
+            yAxis: {
+                type: 'value',
+                name: '(dB)',
+                scale: true,
+                splitLine: { show: true }
+            },
+            series: [
+                {
+                    name: 'Traza OTDR',
+                    type: 'line',
+                    showSymbol: false,
+                    sampling: 'lttb',
+                    itemStyle: { color: '#0ea5e9' },
+                    lineStyle: { width: 1.5 },
+                    data: lineData,
+                    markLine: {
+                        symbol: ['none', 'none'],
+                        data: markLineData
+                    }
+                }
+            ]
+        };
+
+        window.cachedChartOption = baseOption;
+        myChart.setOption(window.cachedChartOption, true);
+    }
+
+    // CSRF Helper
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+
+    // Si la pagina cargó con una traza ya completa, dibujarla
+    if (currentTrazaId && "{{ traza.status|lower }}" === "completed") {
+        document.getElementById('initial-state') && (document.getElementById('initial-state').style.display = 'none');
+        document.getElementById('chart-loader').style.display = 'flex';
+        document.getElementById('loader-text').textContent = 'Cargando traza guardada...';
+        loadTraceData();
+        setupDownloadButton();
+        updateStatusUI('Completed');
+    }
+</script>
+{% endblock %}
