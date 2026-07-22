@@ -85,9 +85,14 @@ from .inventario import (
 )
 
 from .operacion_inventario import (
+    api_odfs_paginados,
+    api_mapa_site_navigation,
     api_puertos_paginados,
+    api_troncales_paginadas,
+    api_tramos_paginados,
     api_fibras_paginadas,
     api_elementos_paginados,
+    create_tramo_manual,
     exportar_inventario,
     busqueda_global,
     asset_360,

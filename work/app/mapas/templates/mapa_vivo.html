@@ -1490,6 +1490,8 @@
 <script src="{% static 'vendor/leaflet-measure/leaflet-measure-3.1.0.js' %}"></script>
 
 <script>
+    const escapeHTML = window.FiberGeniusSafe.escapeHTML;
+
     // Inicializar variables del Backend
     const backendData = JSON.parse(document.getElementById('backend-data').textContent);
     const routesData = backendData.rutas;
@@ -1686,7 +1688,7 @@
                 tiposReservas.forEach(tipo => {
                     reservasResumenHtml += `
                         <div class="ruta-popup__field">
-                            <span class="ruta-popup__label">${tipo}</span>
+                            <span class="ruta-popup__label">${escapeHTML(tipo)}</span>
                             <span class="ruta-popup__value">${conteoReservas[tipo]}</span>
                         </div>
                     `;
@@ -1713,7 +1715,7 @@
                         </div>
                         <div>
                             <a href="/mapa/traza-en-vivo/?route_name=${encodeURIComponent(ruta.nombre)}" class="ruta-popup__title" style="color: #fff; font-size:14px; font-weight:700; text-decoration: none; cursor: pointer; display: flex; align-items: center; gap: 6px;" title="Solicitar traza en vivo">
-                                ${ruta.nombre}
+                                ${escapeHTML(ruta.nombre)}
                                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="opacity: 0.8;">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                                 </svg>
@@ -1725,7 +1727,7 @@
                     <div class="ruta-popup__grid">
                         <div class="ruta-popup__field">
                             <span class="ruta-popup__label">Site de origen</span>
-                            <span class="ruta-popup__value">${ruta.otu}</span>
+                            <span class="ruta-popup__value">${escapeHTML(ruta.otu)}</span>
                         </div>
                         <div class="ruta-popup__field">
                             <span class="ruta-popup__label">Estado</span>
@@ -1733,7 +1735,7 @@
                         </div>
                         <div class="ruta-popup__field" style="grid-column: span 2; border-top: 1px solid #f1f5f9;">
                             <span class="ruta-popup__label">Tipo de Trazado</span>
-                            <span class="ruta-popup__value"><span class="badge ${trazadoBadge}" style="${trazadoEstilo} padding:2px 8px; border-radius:12px; font-weight:600; font-size:11px; text-transform: uppercase;">${ruta.tipo_trazado || 'Sin Clasificar'}</span></span>
+                            <span class="ruta-popup__value"><span class="badge ${trazadoBadge}" style="${trazadoEstilo} padding:2px 8px; border-radius:12px; font-weight:600; font-size:11px; text-transform: uppercase;">${escapeHTML(ruta.tipo_trazado || 'Sin Clasificar')}</span></span>
                         </div>
                     </div>
 
@@ -1757,7 +1759,7 @@
                                 <span class="ruta-popup__toggle-label">Mostrar reservas de esta ruta</span>
                             </div>
                             <label class="ruta-popup__switch">
-                                <input type="checkbox" onchange="window.toggleReservasRuta('${ruta.nombre}', this.checked)" ${window.rutasMostrandoReservas.has(ruta.nombre) ? 'checked' : ''}>
+                                <input type="checkbox" data-route="${encodeURIComponent(ruta.nombre)}" onchange="window.toggleReservasRuta(decodeURIComponent(this.dataset.route), this.checked)" ${window.rutasMostrandoReservas.has(ruta.nombre) ? 'checked' : ''}>
                                 <span class="ruta-popup__slider"></span>
                             </label>
                         </div>
@@ -1783,7 +1785,7 @@
             if (ruta.reservas_nodos && ruta.reservas_nodos.length > 0) {
                 ruta.reservas_nodos.forEach(res => {
                     const tipo = (res.tipo || 'default').toLowerCase();
-                    const iconUrl = `/static/img/iconos/${tipo}-icono.png`;
+                    const iconUrl = `/static/img/iconos/${encodeURIComponent(tipo)}-icono.png`;
                     const customIcon = L.icon({ 
                         iconUrl: iconUrl, 
                         iconSize: [32, 32], 
@@ -1793,10 +1795,10 @@
                     
                     const resPopup = `
                         <div style="font-family: var(--font-sans); padding: 5px;">
-                            <h4 style="margin:0 0 8px 0; color:var(--primary); font-size:14px; border-bottom:1px solid var(--border-color); padding-bottom:4px;">${res.nombre}</h4>
-                            <div style="font-size:12px; margin-bottom:4px;"><strong>Tipo:</strong> ${res.tipo}</div>
-                            <div style="font-size:12px; margin-bottom:4px;"><strong>Reserva Fija:</strong> ${res.reserva_m} m</div>
-                            <div style="font-size:12px; color:var(--text-secondary);">Pertenece a: ${ruta.nombre}</div>
+                            <h4 style="margin:0 0 8px 0; color:var(--primary); font-size:14px; border-bottom:1px solid var(--border-color); padding-bottom:4px;">${escapeHTML(res.nombre)}</h4>
+                            <div style="font-size:12px; margin-bottom:4px;"><strong>Tipo:</strong> ${escapeHTML(res.tipo)}</div>
+                            <div style="font-size:12px; margin-bottom:4px;"><strong>Reserva Fija:</strong> ${escapeHTML(res.reserva_m)} m</div>
+                            <div style="font-size:12px; color:var(--text-secondary);">Pertenece a: ${escapeHTML(ruta.nombre)}</div>
                         </div>
                     `;
                     
@@ -2100,27 +2102,27 @@
 
                 if (esMonitoreado) {
                     tooltip.innerHTML = `
-                        <div class="port-tooltip-box__title">Puerto ${puerto.numero}</div>
+                        <div class="port-tooltip-box__title">Puerto ${escapeHTML(puerto.numero)}</div>
                         <div class="port-tooltip-box__row">
                             <span class="port-tooltip-box__label">Estado:</span>
                             <span class="port-tooltip-box__value" style="color: #10b981; font-weight: 600;">Monitoreado</span>
                         </div>
                         <div class="port-tooltip-box__row">
                             <span class="port-tooltip-box__label">Ruta:</span>
-                            <span class="port-tooltip-box__value" style="word-break: break-all;">${puerto.enlace || 'N/A'}</span>
+                            <span class="port-tooltip-box__value" style="word-break: break-all;">${escapeHTML(puerto.enlace || 'N/A')}</span>
                         </div>
                         <div class="port-tooltip-box__row">
                             <span class="port-tooltip-box__label">Distancia:</span>
-                            <span class="port-tooltip-box__value">${ruta ? ruta.distancia + ' km' : 'N/A'}</span>
+                            <span class="port-tooltip-box__value">${escapeHTML(ruta ? ruta.distancia + ' km' : 'N/A')}</span>
                         </div>
                         <div class="port-tooltip-box__row">
                             <span class="port-tooltip-box__label">OLT/PON:</span>
-                            <span class="port-tooltip-box__value">${ruta ? ruta.olt + ' (' + ruta.pon + ')' : 'N/A'}</span>
+                            <span class="port-tooltip-box__value">${escapeHTML(ruta ? ruta.olt + ' (' + ruta.pon + ')' : 'N/A')}</span>
                         </div>
                     `;
                 } else {
                     tooltip.innerHTML = `
-                        <div class="port-tooltip-box__title">Puerto ${puerto.numero}</div>
+                        <div class="port-tooltip-box__title">Puerto ${escapeHTML(puerto.numero)}</div>
                         <div class="port-tooltip-box__row">
                             <span class="port-tooltip-box__label">Estado:</span>
                             <span class="port-tooltip-box__value" style="color: var(--text-tertiary);">Libre</span>
@@ -2486,15 +2488,15 @@
                         <div style="font-family: var(--font-family); font-size: var(--text-sm); line-height: 1.4; width: 240px;">
                             <h4 style="margin: 0 0 6px 0; font-weight: 700; color: ${markerColor}; text-transform: uppercase; display: flex; align-items: center; gap: 6px;">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                                ${friendlyType.toUpperCase()} ACTIVO
+                                ${escapeHTML(friendlyType.toUpperCase())} ACTIVO
                             </h4>
-                            <p style="margin: 2px 0;"><strong>Ruta:</strong> ${alarm.route_name}</p>
-                            <p style="margin: 2px 0;"><strong>RFTS / Puerto:</strong> ${alarm.device_serial} (Puerto ${alarm.port})</p>
-                            <p style="margin: 2px 0;"><strong>Distancia Falla:</strong> <span style="color: ${markerColor}; font-weight: 700;">${alarm.distance ? alarm.distance.toFixed(2) + ' m' : 'Desconocida'}</span></p>
-                            <p style="margin: 2px 0; font-size: 10px; color: var(--text-tertiary);"><strong>Inicio de Evento:</strong> ${alarm.timestamp}</p>
+                            <p style="margin: 2px 0;"><strong>Ruta:</strong> ${escapeHTML(alarm.route_name)}</p>
+                            <p style="margin: 2px 0;"><strong>RFTS / Puerto:</strong> ${escapeHTML(alarm.device_serial)} (Puerto ${escapeHTML(alarm.port)})</p>
+                            <p style="margin: 2px 0;"><strong>Distancia Falla:</strong> <span style="color: ${markerColor}; font-weight: 700;">${escapeHTML(alarm.distance ? alarm.distance.toFixed(2) + ' m' : 'Desconocida')}</span></p>
+                            <p style="margin: 2px 0; font-size: 10px; color: var(--text-tertiary);"><strong>Inicio de Evento:</strong> ${escapeHTML(alarm.timestamp)}</p>
                             ${alarm.veex_alarm_id ? `
                             <div style="margin-top: 8px;">
-                                <a href="/mapa/visor-traza/${alarm.veex_alarm_id}/" style="background-color: #3b82f6; color: white; padding: 4px 8px; border-radius: 4px; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; font-size: 11px;">
+                                <a href="/mapa/visor-traza/${encodeURIComponent(String(alarm.veex_alarm_id))}/" style="background-color: #3b82f6; color: white; padding: 4px 8px; border-radius: 4px; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; font-size: 11px;">
                                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
                                     Abrir Visor de Traza
                                 </a>
@@ -2507,16 +2509,16 @@
                         <div style="font-family: var(--font-family); font-size: var(--text-sm); line-height: 1.4; width: 240px;">
                             <h4 style="margin: 0 0 6px 0; font-weight: 700; color: ${markerColor}; text-transform: uppercase; display: flex; align-items: center; gap: 6px;">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
-                                ${friendlyType.toUpperCase()} CORREGIDO
+                                ${escapeHTML(friendlyType.toUpperCase())} CORREGIDO
                             </h4>
-                            <p style="margin: 2px 0;"><strong>Ruta:</strong> ${alarm.route_name}</p>
-                            <p style="margin: 2px 0;"><strong>RFTS / Puerto:</strong> ${alarm.device_serial} (Puerto ${alarm.port})</p>
+                            <p style="margin: 2px 0;"><strong>Ruta:</strong> ${escapeHTML(alarm.route_name)}</p>
+                            <p style="margin: 2px 0;"><strong>RFTS / Puerto:</strong> ${escapeHTML(alarm.device_serial)} (Puerto ${escapeHTML(alarm.port)})</p>
                             <p style="margin: 2px 0;"><strong>Distancia Falla:</strong> <span style="color: ${markerColor}; font-weight: 700;">${alarm.distance ? alarm.distance.toFixed(2) + ' m' : 'Desconocida'}</span></p>
-                            <p style="margin: 2px 0; font-size: 10px; color: var(--text-tertiary);"><strong>Inicio de Evento:</strong> ${alarm.timestamp}</p>
-                            <p style="margin: 2px 0; font-size: 10px; color: var(--text-tertiary);"><strong>Hora Corrección:</strong> ${alarm.fecha_resolucion || 'Recientemente'}</p>
+                            <p style="margin: 2px 0; font-size: 10px; color: var(--text-tertiary);"><strong>Inicio de Evento:</strong> ${escapeHTML(alarm.timestamp)}</p>
+                            <p style="margin: 2px 0; font-size: 10px; color: var(--text-tertiary);"><strong>Hora Corrección:</strong> ${escapeHTML(alarm.fecha_resolucion || 'Recientemente')}</p>
                             ${alarm.veex_alarm_id ? `
                             <div style="margin-top: 8px;">
-                                <a href="/mapa/visor-traza/${alarm.veex_alarm_id}/" style="background-color: #3b82f6; color: white; padding: 4px 8px; border-radius: 4px; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; font-size: 11px;">
+                                <a href="/mapa/visor-traza/${encodeURIComponent(String(alarm.veex_alarm_id))}/" style="background-color: #3b82f6; color: white; padding: 4px 8px; border-radius: 4px; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; font-size: 11px;">
                                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
                                     Visor de Traza Histórica
                                 </a>
@@ -2692,25 +2694,25 @@
             card.className = claseCard;
             card.innerHTML = `
                 <div class="alarm-card__header">
-                    <span>${alarm.route_name}</span>
+                    <span>${escapeHTML(alarm.route_name)}</span>
                 </div>
                 <div class="alarm-card__details">
-                    <span><strong>Tipo de Evento:</strong> <span class="${typeTagClass}" style="margin-left: 6px; display: inline-block;">${friendlyType}</span></span>
-                    <span><strong>Severidad:</strong> <span class="${severityTagClass}" style="margin-left: 6px; display: inline-block; font-size: 9px; padding: 2px 6px;">${(alarm.alarm_level || 'Warning').toUpperCase()}</span></span>
-                    <span><strong>ID Evento:</strong> <span style="margin-left: 6px; font-weight: 700; color: #0ea5e9;">${alarm.id}</span>
+                    <span><strong>Tipo de Evento:</strong> <span class="${typeTagClass}" style="margin-left: 6px; display: inline-block;">${escapeHTML(friendlyType)}</span></span>
+                    <span><strong>Severidad:</strong> <span class="${severityTagClass}" style="margin-left: 6px; display: inline-block; font-size: 9px; padding: 2px 6px;">${escapeHTML((alarm.alarm_level || 'Warning').toUpperCase())}</span></span>
+                    <span><strong>ID Evento:</strong> <span style="margin-left: 6px; font-weight: 700; color: #0ea5e9;">${escapeHTML(alarm.id)}</span>
                         ${alarm.veex_alarm_id ? `
-                        <a href="/mapa/visor-traza/${alarm.veex_alarm_id}/?incident_id=${alarm.id}" title="Abrir visor interactivo" style="margin-left: 8px; font-size: 10px; background-color: #3b82f6; color: white; padding: 2px 8px; border-radius: 4px; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; transition: background 0.2s;" onmouseover="this.style.backgroundColor='#2563eb'" onmouseout="this.style.backgroundColor='#3b82f6'">
+                        <a href="/mapa/visor-traza/${encodeURIComponent(String(alarm.veex_alarm_id))}/?incident_id=${encodeURIComponent(String(alarm.id))}" title="Abrir visor interactivo" style="margin-left: 8px; font-size: 10px; background-color: #3b82f6; color: white; padding: 2px 8px; border-radius: 4px; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; transition: background 0.2s;" onmouseover="this.style.backgroundColor='#2563eb'" onmouseout="this.style.backgroundColor='#3b82f6'">
                             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
                             Ver Traza
                         </a>
                         ` : ''}
                     </span>
-                    <span><strong>Distancia:</strong> ${alarm.distance ? alarm.distance.toFixed(2) + ' metros' : 'Validando...'}</span>
-                    <span><strong>RFTS/Puerto:</strong> ${alarm.device_serial} (Pto ${alarm.port})</span>
+                    <span><strong>Distancia:</strong> ${escapeHTML(alarm.distance ? alarm.distance.toFixed(2) + ' metros' : 'Validando...')}</span>
+                    <span><strong>RFTS/Puerto:</strong> ${escapeHTML(alarm.device_serial)} (Pto ${escapeHTML(alarm.port)})</span>
                 </div>
                 <div class="alarm-card__time" style="display: flex; flex-direction: column; gap: 2px; text-align: left; margin-top: 4px;">
-                    <div><strong>Inicio:</strong> ${alarm.timestamp}</div>
-                    ${!esActiva && alarm.fecha_resolucion ? `<div><strong>Resolución:</strong> ${alarm.fecha_resolucion}</div>` : ''}
+                    <div><strong>Inicio:</strong> ${escapeHTML(alarm.timestamp)}</div>
+                    ${!esActiva && alarm.fecha_resolucion ? `<div><strong>Resolución:</strong> ${escapeHTML(alarm.fecha_resolucion)}</div>` : ''}
                 </div>
             `;
 
@@ -2808,14 +2810,17 @@
                     </div>
                 `;
             } else {
-                searchSuggestions.innerHTML = matches.map(ruta => `
-                    <div class="search-suggestion-item" data-route="${ruta.nombre}">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="#3b82f6" stroke-width="2.5">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
-                        </svg>
-                        <span>${ruta.nombre}</span>
-                    </div>
-                `).join('');
+                searchSuggestions.replaceChildren();
+                matches.forEach(ruta => {
+                    const item = document.createElement('div');
+                    item.className = 'search-suggestion-item';
+                    item.dataset.route = ruta.nombre;
+                    item.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="#3b82f6" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>';
+                    const label = document.createElement('span');
+                    label.textContent = ruta.nombre;
+                    item.appendChild(label);
+                    searchSuggestions.appendChild(item);
+                });
 
                 // Agregar listeners a los elementos de sugerencia
                 searchSuggestions.querySelectorAll('.search-suggestion-item').forEach(item => {

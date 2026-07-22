@@ -2,7 +2,7 @@
 
 import logging
 import time
-import xml.etree.ElementTree as ET
+from defusedxml import ElementTree as ET
 from datetime import datetime, timezone
 
 import requests

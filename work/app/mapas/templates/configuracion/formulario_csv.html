@@ -238,7 +238,7 @@
     {% elif tipo_csv == 'puertos_odf_inventario' %}
     <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
         <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Detalle de Puertos ODF (Archivo E)</h4>
-        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Sube el estado granular de cada puerto dentro de los ODFs. Columnas requeridas:</p>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Sube el estado granular de cada puerto dentro de los ODFs. <strong>estado_puerto</strong> acepta Libre, Ocupado o Reservado. Columnas requeridas:</p>
         <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
             <span class="badge badge--accent">odf</span> <span class="badge badge--accent">bandeja</span>
             <span class="badge badge--accent">puerto_odf</span> <span class="badge badge--accent">fibra</span>

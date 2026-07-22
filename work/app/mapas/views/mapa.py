@@ -25,7 +25,9 @@ logger = logging.getLogger('mapas')
 
 
 def obtener_equipos_desde_db():
-    equipos_queryset = OTU.objects.prefetch_related('puertos', 'puertos__ruta_asociada').all()
+    equipos_queryset = OTU.objects.prefetch_related(
+        'puertos', 'puertos__ruta_asociada', 'rutas'
+    ).all()
 
     equipos_data = []
     for equipo in equipos_queryset:

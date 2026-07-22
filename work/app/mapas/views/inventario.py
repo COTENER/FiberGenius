@@ -1,14 +1,27 @@
 import json
 import logging
+from django.conf import settings
 from django.shortcuts import render
 from django.http import JsonResponse
 from django.contrib.auth.decorators import login_required, permission_required
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.views.decorators.http import require_http_methods, require_POST
-from django.db import transaction
-from ..models import Ruta, CoordenadaRuta, InventarioTramo
+from django.db import IntegrityError, transaction
+from ..models import (
+    Ruta, CoordenadaRuta, InventarioTramo, normalizar_estado_puerto_odf,
+)
 
 logger = logging.getLogger('mapas')
+
+
+def _archivo_dentro_del_limite(archivo):
+    limite = int(getattr(settings, 'FIBERGENIUS_MAX_UPLOAD_BYTES', 25 * 1024 * 1024))
+    return getattr(archivo, 'size', 0) <= limite
+
+
+def _mensaje_limite_archivo():
+    limite = int(getattr(settings, 'FIBERGENIUS_MAX_UPLOAD_BYTES', 25 * 1024 * 1024))
+    return f'El archivo supera el limite permitido de {limite // (1024 * 1024)} MB.'
 
 def calculate_coordinate_distance(coordenadas):
     import math
@@ -48,10 +61,30 @@ def dashboard_inventario(request):
     Vista para el Dashboard de Inventario.
     Agrupa estadísticas por RUTA TRONCAL completa.
     """
-    from django.db.models import Sum, Count
-    from ..models import Ruta, InventarioTramo, Reserva, InventarioODF, DetallePuertoODF, InventarioFibra, HubSite
+    from collections import defaultdict
+    from django.db.models import Count, Q
+    from ..models import (
+        Ruta, InventarioTramo, Reserva, InventarioODF, DetallePuertoODF,
+        InventarioFibra, HubSite, LoteImportacion,
+    )
+
+    site_seleccionado = request.GET.get('site', '').strip()
+    trazado_seleccionado = request.GET.get('trazado', '').strip().upper()
+    if trazado_seleccionado not in {'AEREO', 'SOTERRADO', 'HIBRIDO'}:
+        trazado_seleccionado = ''
     
-    rutas_db = Ruta.objects.prefetch_related('tramos_inventario', 'reservas').filter(tramos_inventario__isnull=False).distinct()
+    rutas_db = Ruta.objects.prefetch_related(
+        'tramos_inventario', 'reservas', 'coordenadas', 'fibras_inventario'
+    ).filter(tramos_inventario__isnull=False).distinct()
+    if site_seleccionado:
+        rutas_db = rutas_db.filter(
+            Q(tramos_inventario__hub_site=site_seleccionado)
+            | Q(tramos_inventario__destino=site_seleccionado)
+        ).distinct()
+    if trazado_seleccionado:
+        rutas_db = rutas_db.filter(
+            tramos_inventario__tipo_trazado=trazado_seleccionado
+        ).distinct()
     
     total_rutas = rutas_db.count()
     
@@ -69,7 +102,7 @@ def dashboard_inventario(request):
         # Ruta.distancia_m contiene el total; cada InventarioTramo conserva solo su segmento.
         distancia_ruta_m = r.distancia_m or sum((t.distancia_m or 0 for t in tramos), 0)
         if not distancia_ruta_m:
-            coords = list(r.coordenadas.all().order_by('orden'))
+            coords = sorted(r.coordenadas.all(), key=lambda coordenada: coordenada.orden)
             if len(coords) >= 2:
                 distancia_ruta_m = calculate_coordinate_distance(coords)
                 
@@ -128,12 +161,12 @@ def dashboard_inventario(request):
             hilos_ocupados_total += (t.hilos_ocupados or 0)
             hilos_libres_total += (t.hilos_libres or 0)
             
-        fibras_qs = r.fibras_inventario.all()
-        if fibras_qs.exists():
+        fibras = list(r.fibras_inventario.all())
+        if fibras:
             hilos_ocupados_total = 0
             hilos_reservados_total = 0
             hilos_libres_total = 0
-            for f in fibras_qs:
+            for f in fibras:
                 est = (f.estado or '').lower()
                 if est in ['ocupado', 'ocupada']:
                     hilos_ocupados_total += 1
@@ -152,7 +185,14 @@ def dashboard_inventario(request):
             tipo_res = res.tipo if res.tipo else "Otro"
             conteo_reservas_nodos[tipo_res] = conteo_reservas_nodos.get(tipo_res, 0) + 1
         
+        total_hilos_ruta = hilos_ocupados_total + hilos_reservados_total + hilos_libres_total
+        utilizacion_hilos = round(
+            ((hilos_ocupados_total + hilos_reservados_total) / total_hilos_ruta) * 100,
+            1,
+        ) if total_hilos_ruta else 0
+
         resumen_rutas.append({
+            'id': r.id,
             'nombre': r.nombre,
             'hub_origen': hub_origen,
             'destino': destino,
@@ -170,12 +210,149 @@ def dashboard_inventario(request):
             'odf_nombre': odf_nombre,
             'hilos_ocupados': hilos_ocupados_total,
             'hilos_reservados': hilos_reservados_total,
-            'hilos_libres': hilos_libres_total
+            'hilos_libres': hilos_libres_total,
+            'total_hilos': total_hilos_ruta,
+            'utilizacion_hilos': utilizacion_hilos,
+            'nivel_capacidad': (
+                'critico' if utilizacion_hilos >= 85
+                else 'atencion' if utilizacion_hilos >= 70
+                else 'disponible'
+            ),
         })
 
     # Totales para los cards superiores
     total_km_global = sum(r['distancia_km'] for r in resumen_rutas)
     total_res_global_km = sum(r['reservas_km'] for r in resumen_rutas)
+
+    rutas_ids = [ruta['id'] for ruta in resumen_rutas]
+    tramos_filtrados = InventarioTramo.objects.filter(ruta_id__in=rutas_ids)
+    fibras_filtradas = InventarioFibra.objects.filter(ruta_id__in=rutas_ids)
+    reservas_filtradas = Reserva.objects.filter(ruta_id__in=rutas_ids)
+    coordenadas_filtradas = CoordenadaRuta.objects.filter(ruta_id__in=rutas_ids)
+    odfs_filtrados = InventarioODF.objects.all()
+    if site_seleccionado:
+        odfs_filtrados = odfs_filtrados.filter(hub_site=site_seleccionado)
+    puertos_filtrados = DetallePuertoODF.objects.filter(odf_obj__in=odfs_filtrados)
+
+    conteo_puertos = defaultdict(int)
+    for fila in puertos_filtrados.values('estado_puerto').annotate(total=Count('id')):
+        conteo_puertos[(fila['estado_puerto'] or '').strip().lower()] += fila['total']
+
+    conteo_fibras = defaultdict(int)
+    for fila in fibras_filtradas.values('estado').annotate(total=Count('id')):
+        conteo_fibras[(fila['estado'] or '').strip().lower()] += fila['total']
+
+    puertos_libres = conteo_puertos['libre']
+    puertos_ocupados = conteo_puertos['ocupado'] + conteo_puertos['ocupada']
+    puertos_reservados = conteo_puertos['reservado'] + conteo_puertos['reservada']
+    total_puertos = puertos_libres + puertos_ocupados + puertos_reservados
+    fibras_libres = conteo_fibras['libre']
+    fibras_ocupadas = conteo_fibras['ocupado'] + conteo_fibras['ocupada']
+    fibras_reservadas = conteo_fibras['reservado'] + conteo_fibras['reservada']
+    total_fibras = fibras_libres + fibras_ocupadas + fibras_reservadas
+
+    odfs_data = list(odfs_filtrados.values(
+        'id', 'odf', 'hub_site', 'sala', 'rack', 'capacidad_puertos',
+        'puertos_ocupados', 'puertos_libres', 'puertos_reservados',
+    ).order_by('odf'))
+    total_odfs = len(odfs_data)
+    total_salas = len({
+        (odf['hub_site'], odf['sala']) for odf in odfs_data
+        if odf['sala'] and odf['sala'].strip()
+    })
+    total_racks = len({
+        (odf['hub_site'], odf['sala'], odf['rack']) for odf in odfs_data
+        if odf['rack'] and odf['rack'].strip()
+    })
+
+    top_rutas_capacidad = sorted(
+        (ruta for ruta in resumen_rutas if ruta['total_hilos']),
+        key=lambda ruta: (ruta['utilizacion_hilos'], ruta['hilos_ocupados']),
+        reverse=True,
+    )[:5]
+    rutas_alta_ocupacion = sum(
+        1 for ruta in resumen_rutas if ruta['total_hilos'] and ruta['utilizacion_hilos'] >= 85
+    )
+    odfs_alta_ocupacion = sum(
+        1 for odf in odfs_data
+        if (odf['capacidad_puertos'] or 0) > 0
+        and ((odf['puertos_ocupados'] or 0) / odf['capacidad_puertos']) >= .85
+    )
+
+    sites_disponibles = list(
+        HubSite.objects.values('id', 'nombre', 'latitud', 'longitud').order_by('nombre')
+    )
+    sites = [
+        site for site in sites_disponibles
+        if not site_seleccionado or site['nombre'] == site_seleccionado
+    ]
+    total_sites = len(sites)
+    sites_georreferenciados = sum(
+        1 for site in sites if site['latitud'] is not None and site['longitud'] is not None
+    )
+    sites_sin_coordenadas = total_sites - sites_georreferenciados
+    rutas_sin_geometria = sum(1 for ruta in rutas_db if len(ruta.coordenadas.all()) < 2)
+    odfs_sin_ubicacion = sum(
+        1 for odf in odfs_data if not odf['hub_site'] or not odf['sala'] or not odf['rack']
+    )
+
+    controles_calidad = total_rutas + total_odfs + total_sites
+    incidencias_calidad = min(
+        rutas_sin_geometria + odfs_sin_ubicacion + sites_sin_coordenadas,
+        controles_calidad,
+    )
+    calidad_inventario = round(
+        (1 - incidencias_calidad / controles_calidad) * 100
+    ) if controles_calidad else 0
+
+    alertas_inventario = []
+    if not controles_calidad:
+        alertas_inventario.append({
+            'nivel': 'datos',
+            'titulo': 'Inventario sin registros',
+            'detalle': 'Importa o registra activos para habilitar los indicadores operativos.',
+        })
+    if rutas_alta_ocupacion:
+        alertas_inventario.append({
+            'nivel': 'critico',
+            'titulo': f'{rutas_alta_ocupacion} troncales con alta ocupacion',
+            'detalle': 'Superan el 85 % de fibras ocupadas o reservadas.',
+        })
+    if odfs_alta_ocupacion:
+        alertas_inventario.append({
+            'nivel': 'atencion',
+            'titulo': f'{odfs_alta_ocupacion} ODF con capacidad limitada',
+            'detalle': 'Superan el 85 % de puertos ocupados.',
+        })
+    if rutas_sin_geometria:
+        alertas_inventario.append({
+            'nivel': 'datos',
+            'titulo': f'{rutas_sin_geometria} troncales sin geometria completa',
+            'detalle': 'Necesitan al menos dos coordenadas para visualizarse correctamente.',
+        })
+    if sites_sin_coordenadas:
+        alertas_inventario.append({
+            'nivel': 'datos',
+            'titulo': f'{sites_sin_coordenadas} sites sin georreferenciar',
+            'detalle': 'No aparecen en el mapa de cobertura del inventario.',
+        })
+
+    lotes_recientes = []
+    lotes_qs = LoteImportacion.objects.select_related('usuario').order_by('-creado_en')[:5]
+    for lote in lotes_qs:
+        lotes_recientes.append({
+            'archivo': lote.archivo_origen,
+            'tipo': lote.tipo,
+            'registros': lote.filas_creadas + lote.filas_actualizadas,
+            'fecha': lote.creado_en,
+            'estado': lote.estado,
+            'estado_label': lote.get_estado_display(),
+            'usuario': lote.usuario.get_username() if lote.usuario else 'Sistema',
+        })
+    actividad_cargas = list(reversed(lotes_recientes))
+    total_tramos = sum(len(ruta.tramos_inventario.all()) for ruta in rutas_db)
+    total_reservas = sum(len(ruta.reservas.all()) for ruta in rutas_db)
+    total_coordenadas = sum(len(ruta.coordenadas.all()) for ruta in rutas_db)
 
     context = {
         'total_rutas': total_rutas,
@@ -189,143 +366,127 @@ def dashboard_inventario(request):
         'capacidad_count_values': list(stats_capacidad.values()),
         
         # Nuevas estadísticas para gráficas
-        'total_odfs': InventarioODF.objects.count() if hasattr(InventarioODF, 'objects') else 0,
-        'puertos_libres': DetallePuertoODF.objects.filter(estado_puerto__iexact='Libre').count() if hasattr(DetallePuertoODF, 'objects') else 0,
-        'puertos_ocupados': DetallePuertoODF.objects.filter(estado_puerto__iexact='Ocupado').count() if hasattr(DetallePuertoODF, 'objects') else 0,
-        'fibras_libres': InventarioFibra.objects.filter(estado__iexact='Libre').count() if hasattr(InventarioFibra, 'objects') else 0,
-        'fibras_ocupadas': InventarioFibra.objects.filter(estado__iexact='Ocupada').count() + InventarioFibra.objects.filter(estado__iexact='Ocupado').count() if hasattr(InventarioFibra, 'objects') else 0,
-        'odf_list': list(InventarioODF.objects.values('odf', 'hub_site').order_by('odf')),
-        'hub_sites': list(HubSite.objects.values_list('nombre', flat=True).order_by('nombre')) if hasattr(HubSite, 'objects') else [],
+        'total_odfs': total_odfs,
+        'total_salas': total_salas,
+        'total_racks': total_racks,
+        'total_sites': total_sites,
+        'total_tramos': total_tramos,
+        'total_reservas': total_reservas,
+        'total_coordenadas': total_coordenadas,
+        'sites_georreferenciados': sites_georreferenciados,
+        'puertos_libres': puertos_libres,
+        'puertos_ocupados': puertos_ocupados,
+        'puertos_reservados': puertos_reservados,
+        'total_puertos': total_puertos,
+        'ocupacion_puertos_pct': round(puertos_ocupados / total_puertos * 100, 1) if total_puertos else 0,
+        'fibras_libres': fibras_libres,
+        'fibras_ocupadas': fibras_ocupadas,
+        'fibras_reservadas': fibras_reservadas,
+        'total_fibras': total_fibras,
+        'ocupacion_fibras_pct': round(
+            (fibras_ocupadas + fibras_reservadas) / total_fibras * 100, 1
+        ) if total_fibras else 0,
+        'calidad_inventario': calidad_inventario,
+        'inventario_con_datos': bool(controles_calidad),
+        'alertas_inventario': alertas_inventario[:4],
+        'top_rutas_capacidad': top_rutas_capacidad,
+        'site_seleccionado': site_seleccionado,
+        'trazado_seleccionado': trazado_seleccionado,
+        'sites_disponibles': sites_disponibles,
+        'inventario_tipo_labels': ['ODF', 'Puertos', 'Tramos', 'Fibras', 'Reservas', 'Coordenadas'],
+        'inventario_tipo_values': [
+            total_odfs, total_puertos, total_tramos, total_fibras,
+            total_reservas, total_coordenadas,
+        ],
+        'actividad_cargas_labels': [
+            lote['fecha'].strftime('%d/%m') for lote in actividad_cargas
+        ],
+        'actividad_cargas_values': [lote['registros'] for lote in actividad_cargas],
+        'lotes_recientes': lotes_recientes,
+        'odf_list': [{'odf': odf['odf'], 'hub_site': odf['hub_site']} for odf in odfs_data],
+        'hub_sites': [site['nombre'] for site in sites_disponibles],
     }
 
     # Datos para el mapa de sites
-    from django.db.models import Q
     sites_map_data = []
-    if hasattr(HubSite, 'objects'):
-        sites_con_coords = HubSite.objects.filter(latitud__isnull=False, longitud__isnull=False)
-        for site in sites_con_coords:
-            rutas_qs = Ruta.objects.filter(
-                Q(tramos_inventario__hub_site=site.nombre) | Q(tramos_inventario__destino=site.nombre)
-            ).distinct()
-            rutas_count = rutas_qs.count()
-            
-            odf_count = 0
-            if hasattr(InventarioODF, 'objects'):
-                odf_count = InventarioODF.objects.filter(hub_site=site.nombre).count()
-                
-            hilos_count = 0
-            if hasattr(InventarioFibra, 'objects'):
-                hilos_count = InventarioFibra.objects.filter(ruta__in=rutas_qs).count()
-            
-            sites_map_data.append({
-                'nombre': site.nombre,
-                'lat': float(site.latitud),
-                'lng': float(site.longitud),
-                'rutas_count': rutas_count,
-                'odf_count': odf_count,
-                'hilos_count': hilos_count
-            })
-    import json
+    rutas_por_site = defaultdict(set)
+    for tramo in tramos_filtrados.values('ruta_id', 'hub_site', 'destino'):
+        for nombre_site in (tramo['hub_site'], tramo['destino']):
+            if nombre_site:
+                rutas_por_site[nombre_site].add(tramo['ruta_id'])
+    fibras_por_ruta = {
+        fila['ruta_id']: fila['total']
+        for fila in fibras_filtradas.values('ruta_id').annotate(total=Count('id'))
+    }
+    odfs_por_site = defaultdict(int)
+    for odf in odfs_data:
+        if odf['hub_site']:
+            odfs_por_site[odf['hub_site']] += 1
+
+    for site in sites:
+        if site['latitud'] is None or site['longitud'] is None:
+            continue
+        rutas_site = rutas_por_site[site['nombre']]
+        sites_map_data.append({
+            'nombre': site['nombre'],
+            'lat': float(site['latitud']),
+            'lng': float(site['longitud']),
+            'rutas_count': len(rutas_site),
+            'odf_count': odfs_por_site[site['nombre']],
+            'hilos_count': sum(fibras_por_ruta.get(ruta_id, 0) for ruta_id in rutas_site),
+        })
     context['sites_map_data'] = json.dumps(sites_map_data)
     return render(request, 'mapa_inventario/dashboard_inventario.html', context)
 
 @login_required
 @permission_required('mapas.view_ruta', raise_exception=True)
 def inventario_externo(request):
-    """Vista para Listado de Rutas Troncales (Inventario Externo)."""
-    from ..models import Ruta
-    rutas_db = Ruta.objects.prefetch_related('tramos_inventario', 'reservas').filter(tramos_inventario__isnull=False).distinct()
-    resumen_rutas = []
-    
-    for r in rutas_db:
-        tramos = r.tramos_inventario.all()
-        tipos_en_ruta = set(t.tipo_trazado for t in tramos)
-        
-        distancia_ruta_m = r.distancia_m or sum((t.distancia_m or 0 for t in tramos), 0)
-        if not distancia_ruta_m:
-            coords = list(r.coordenadas.all().order_by('orden'))
-            if len(coords) >= 2:
-                distancia_ruta_m = calculate_coordinate_distance(coords)
-                
-        distancia_ruta_km = round(distancia_ruta_m / 1000, 2)
-        
-        res_tramos_m = sum((t.reservas_m or 0 for t in tramos), 0)
-        res_nodos_m = sum(res.reserva_m or 0 for res in r.reservas.all())
-        total_res_ruta_m = round(res_tramos_m + res_nodos_m, 2)
+    """Inventario paginado de troncales y tramos."""
+    from ..models import InventarioTramo, Ruta
 
-        if 'HIBRIDO' in tipos_en_ruta or ('AEREO' in tipos_en_ruta and 'SOTERRADO' in tipos_en_ruta):
-            tipo_final = 'HIBRIDO'
-        elif 'AEREO' in tipos_en_ruta:
-            tipo_final = 'AEREO'
-        elif 'SOTERRADO' in tipos_en_ruta:
-            tipo_final = 'SOTERRADO'
-        else:
-            tipo_final = 'SIN CLASIFICAR'
-            
-        hub_origen, destino, marca_modelo, cap, tipo_fibra, serial, estado_tramo, odf_nombre = "N/A", "N/A", "N/A", "N/A", "", "", "", ""
-        mufas_total, splitters_total, hilos_ocupados_total, hilos_libres_total = 0, 0, 0, 0
-        
-        for t in tramos:
-            if t.hub_site and t.hub_site != "N/A" and hub_origen == "N/A": hub_origen = t.hub_site
-            if t.destino and t.destino != "N/A" and destino == "N/A": destino = t.destino
-            if t.marca_modelo and t.marca_modelo != "N/A" and marca_modelo == "N/A": marca_modelo = t.marca_modelo
-            if t.capacidad and t.capacidad != "N/A" and cap == "N/A": cap = t.capacidad
-            if t.tipo_fibra and not tipo_fibra: tipo_fibra = t.tipo_fibra
-            if t.serial and not serial: serial = t.serial
-            if t.estado and not estado_tramo: estado_tramo = t.estado
-            mufas_total += (t.mufas or 0)
-            splitters_total += (t.splitters or 0)
-            if t.odf_nombre and not odf_nombre: odf_nombre = t.odf_nombre
-            hilos_ocupados_total += (t.hilos_ocupados or 0)
-            hilos_libres_total += (t.hilos_libres or 0)
-        fibras_qs = r.fibras_inventario.all()
-        if fibras_qs.exists():
-            hilos_ocupados_total = 0
-            hilos_reservados_total = 0
-            hilos_libres_total = 0
-            for f in fibras_qs:
-                est = (f.estado or '').lower()
-                if est in ['ocupado', 'ocupada']:
-                    hilos_ocupados_total += 1
-                elif est in ['reservado', 'reservada']:
-                    hilos_reservados_total += 1
-                elif est == 'libre':
-                    hilos_libres_total += 1
-        else:
-            hilos_reservados_total = 0
-            
-        conteo_reservas_nodos = {}
-        for res in r.reservas.all():
-            tipo_res = res.tipo if res.tipo else "Otro"
-            conteo_reservas_nodos[tipo_res] = conteo_reservas_nodos.get(tipo_res, 0) + 1
-            
-        resumen_rutas.append({
-            'nombre': r.nombre, 'hub_origen': hub_origen, 'destino': destino, 'marca_modelo': marca_modelo,
-            'tipo': tipo_final, 'distancia_km': distancia_ruta_km, 'capacidad': cap,
-            'reservas_km': round(total_res_ruta_m / 1000, 3), 'conteo_reservas': conteo_reservas_nodos,
-            'tipo_fibra': tipo_fibra, 'serial': serial, 'estado': estado_tramo, 'mufas': mufas_total, 
-            'splitters': splitters_total, 'odf_nombre': odf_nombre, 'hilos_ocupados': hilos_ocupados_total, 
-            'hilos_reservados': hilos_reservados_total, 'hilos_libres': hilos_libres_total
-        })
+    tramos = InventarioTramo.objects.all()
 
-    from ..models import InventarioODF, HubSite
+    def opciones(campo):
+        return list(
+            tramos.exclude(**{f'{campo}__isnull': True})
+            .exclude(**{campo: ''})
+            .order_by(campo)
+            .values_list(campo, flat=True)
+            .distinct()
+        )
+
     context = {
-        'resumen_rutas': resumen_rutas,
-        'hub_sites': list(HubSite.objects.values_list('nombre', flat=True).order_by('nombre')) if hasattr(HubSite, 'objects') else [],
-        'odf_list': list(InventarioODF.objects.values('odf', 'hub_site').order_by('odf'))
+        'rutas_inventario': list(
+            Ruta.objects.filter(tramos_inventario__isnull=False)
+            .order_by('nombre').values('id', 'nombre').distinct()
+        ),
+        'tipos_trazado': opciones('tipo_trazado'),
+        'estados_tramo': opciones('estado'),
+        'sites_troncal': opciones('hub_site'),
     }
-
     return render(request, 'mapa_inventario/inventario_externo.html', context)
 
 @login_required
 @permission_required('mapas.view_inventarioodf', raise_exception=True)
 def inventario_interno(request):
-    """Vista para Inventario de ODFs / Racks (Inventario Interno)."""
-    from ..models import InventarioODF, HubSite, Ruta
+    """Inventario de ODF; los registros se solicitan por página."""
+    from ..models import InventarioODF
+
+    queryset = InventarioODF.objects.all()
+    def opciones(campo):
+        return list(
+            queryset.exclude(**{f'{campo}__isnull': True})
+            .exclude(**{campo: ''})
+            .order_by(campo)
+            .values_list(campo, flat=True)
+            .distinct()
+        )
+
     context = {
-        'odf_list': list(InventarioODF.objects.values('odf', 'hub_site').order_by('odf')),
-        'hub_sites': list(HubSite.objects.values_list('nombre', flat=True).order_by('nombre')) if hasattr(HubSite, 'objects') else [],
-        'resumen_rutas': list(Ruta.objects.values('nombre').order_by('nombre')),
+        'sites_odf': opciones('hub_site'),
+        'salas_odf': opciones('sala'),
+        'racks_odf': opciones('rack'),
+        'estados_odf': opciones('estado'),
     }
     return render(request, 'mapa_inventario/inventario_interno.html', context)
 @login_required
@@ -334,7 +495,14 @@ def get_datos_inventario(request):
     """
     Retorna JSON con la estructura de rutas segmentadas y su metadata.
     """
-    rutas_db = Ruta.objects.prefetch_related('coordenadas', 'tramos_inventario', 'reservas').filter(tramos_inventario__isnull=False).distinct()
+    rutas_db = Ruta.objects.select_related('otu').prefetch_related(
+        'coordenadas', 'tramos_inventario', 'reservas'
+    ).filter(tramos_inventario__isnull=False).distinct()
+    from ..models import HubSite
+    sites_por_nombre = {
+        site.nombre.casefold(): site
+        for site in HubSite.objects.filter(latitud__isnull=False, longitud__isnull=False)
+    }
     resultado = []
 
     for r in rutas_db:
@@ -366,10 +534,11 @@ def get_datos_inventario(request):
             hub_site_name = get_val('hub_site')
             hub_site_lat = None
             hub_site_lon = None
+            hub_site_id = None
             if hub_site_name:
-                from ..models import HubSite
-                hs = HubSite.objects.filter(nombre__iexact=hub_site_name).first()
+                hs = sites_por_nombre.get(hub_site_name.casefold())
                 if hs and hs.latitud and hs.longitud:
+                    hub_site_id = hs.pk
                     hub_site_lat = float(hs.latitud)
                     hub_site_lon = float(hs.longitud)
 
@@ -386,6 +555,7 @@ def get_datos_inventario(request):
                 "origen": get_val('origen'),
                 "destino": get_val('destino'),
                 "hub_site": hub_site_name,
+                "hub_site_id": hub_site_id,
                 "hub_site_lat": hub_site_lat,
                 "hub_site_lon": hub_site_lon,
                 "marca_modelo": get_val('marca_modelo'),
@@ -414,7 +584,16 @@ def get_datos_inventario(request):
             "reservas_nodos": reservas_list
         })
 
-    return JsonResponse({"status": "success", "data": resultado})
+    sites_data = [
+        {
+            "id": site.pk,
+            "nombre": site.nombre,
+            "lat": float(site.latitud),
+            "lon": float(site.longitud),
+        }
+        for site in sites_por_nombre.values()
+    ]
+    return JsonResponse({"status": "success", "data": resultado, "sites": sites_data})
 
 @login_required
 @permission_required('mapas.view_inventariofibra', raise_exception=True)
@@ -469,7 +648,9 @@ def create_detalle_fibra(request):
             if not ruta_nombre or not fibra_numero:
                 return JsonResponse({"status": "error", "message": "Faltan datos obligatorios"}, status=400)
                 
-            ruta = Ruta.objects.filter(nombre=ruta_nombre).first()
+            # Bloquea la troncal durante la validación y la inserción. Así dos
+            # operadores no consumen simultáneamente el último hilo disponible.
+            ruta = Ruta.objects.select_for_update().filter(nombre=ruta_nombre).first()
             if not ruta:
                 return JsonResponse({"status": "error", "message": "Ruta no encontrada"}, status=404)
                 
@@ -502,8 +683,19 @@ def create_detalle_fibra(request):
                 tipo_conector=str(data.get('tipo_conector', '')).strip()
             )
             return JsonResponse({"status": "success", "message": "Hilo creado correctamente"})
-        except Exception as e:
-            return JsonResponse({"status": "error", "message": str(e)}, status=500)
+        except ValidationError as exc:
+            return JsonResponse({"status": "error", "message": "; ".join(exc.messages)}, status=400)
+        except IntegrityError:
+            return JsonResponse(
+                {"status": "error", "message": "La fibra ya existe o entra en conflicto con otro registro."},
+                status=409,
+            )
+        except Exception:
+            logger.exception("Error inesperado al crear una fibra de inventario")
+            return JsonResponse(
+                {"status": "error", "message": "No se pudo crear la fibra. Revisa los datos e intenta nuevamente."},
+                status=500,
+            )
     return JsonResponse({"status": "error", "message": "Método no permitido"}, status=405)
 
 @login_required
@@ -523,8 +715,15 @@ def import_fibras_csv(request):
             
             if not csv_file or not ruta_nombre:
                 return JsonResponse({"status": "error", "message": "Archivo o ruta faltante."}, status=400)
+            if not _archivo_dentro_del_limite(csv_file):
+                return JsonResponse(
+                    {'status': 'error', 'message': _mensaje_limite_archivo()},
+                    status=413,
+                )
                 
-            ruta = Ruta.objects.filter(nombre=ruta_nombre).first()
+            # Serializa las importaciones por troncal sin modificar las
+            # columnas ni el formato del archivo recibido.
+            ruta = Ruta.objects.select_for_update().filter(nombre=ruta_nombre).first()
             if not ruta:
                 return JsonResponse({"status": "error", "message": "Ruta no encontrada."}, status=404)
                 
@@ -652,7 +851,7 @@ def get_odfs(request):
     from ..models import InventarioODF
     odfs = InventarioODF.objects.all().values(
         'id', 'hub_site', 'sala', 'rack', 'odf', 
-        'capacidad_puertos', 'puertos_ocupados', 'puertos_libres', 
+        'capacidad_puertos', 'puertos_ocupados', 'puertos_libres', 'puertos_reservados',
         'tipo_conector', 'estado', 'observaciones'
     )
     return JsonResponse({"status": "success", "data": list(odfs)})
@@ -713,7 +912,14 @@ def update_detalle_puerto(request):
                 return JsonResponse({"status": "error", "message": "ID de puerto no proporcionado"}, status=400)
             
             # Limpiar datos entrantes
-            nuevo_estado = str(data.get('estado_puerto', '')).strip()
+            nuevo_estado = normalizar_estado_puerto_odf(
+                data.get('estado_puerto'), default=None
+            )
+            if not nuevo_estado:
+                return JsonResponse(
+                    {"status": "error", "message": "Estado de puerto no válido"},
+                    status=400,
+                )
             nuevo_puerto = str(data.get('puerto_odf', '')).strip()
             
             puerto_actualizado = DetallePuertoODF.objects.select_for_update().filter(id=puerto_id).first()
@@ -928,28 +1134,38 @@ def create_puerto_manual(request):
         puerto_num = data.get('puerto_odf', '').strip()
         
         if not odf_nombre or not puerto_num:
-            return JsonResponse({'status': 'error', 'message': 'El ODF y el número de puerto son obligatorios'})
+            return JsonResponse(
+                {'status': 'error', 'message': 'El ODF y el número de puerto son obligatorios'},
+                status=400,
+            )
 
-        # Find the ODF
-        odf_obj = InventarioODF.objects.filter(odf__iexact=odf_nombre).first()
+        # La capacidad se valida y consume bajo el mismo bloqueo para evitar
+        # sobreasignaciones cuando varios usuarios crean puertos a la vez.
+        odf_obj = InventarioODF.objects.select_for_update().filter(odf__iexact=odf_nombre).first()
         if not odf_obj:
-            return JsonResponse({'status': 'error', 'message': 'ODF no encontrado'})
+            return JsonResponse({'status': 'error', 'message': 'ODF no encontrado'}, status=404)
 
         # Validar si el puerto ya existe
         exists = DetallePuertoODF.objects.filter(odf_obj=odf_obj, puerto_odf=puerto_num).exists()
         if exists:
-            return JsonResponse({'status': 'error', 'message': f'El puerto {puerto_num} ya existe en este ODF.'})
+            return JsonResponse(
+                {'status': 'error', 'message': f'El puerto {puerto_num} ya existe en este ODF.'},
+                status=409,
+            )
 
         # Validar capacidad
         capacidad_max = odf_obj.capacidad_puertos or 0
         if capacidad_max > 0:
             actual_ports = DetallePuertoODF.objects.filter(odf_obj=odf_obj).count()
             if actual_ports >= capacidad_max:
-                return JsonResponse({'status': 'error', 'message': f'Límite excedido. El ODF "{odf_nombre}" ya alcanzó su capacidad máxima de {capacidad_max} puertos.'})
+                return JsonResponse(
+                    {'status': 'error', 'message': f'Límite excedido. El ODF "{odf_nombre}" ya alcanzó su capacidad máxima de {capacidad_max} puertos.'},
+                    status=409,
+                )
 
-        estado_puerto = data.get('estado_puerto', 'Libre').capitalize()
-        if estado_puerto not in ['Libre', 'Ocupado']:
-            estado_puerto = 'Libre'
+        estado_puerto = normalizar_estado_puerto_odf(
+            data.get('estado_puerto', 'Libre')
+        )
 
         # Crear Puerto
         DetallePuertoODF.objects.create(
@@ -968,8 +1184,19 @@ def create_puerto_manual(request):
         odf_obj.actualizar_contadores()
         
         return JsonResponse({'status': 'success', 'message': 'Puerto creado correctamente'})
-    except Exception as e:
-        return JsonResponse({'status': 'error', 'message': str(e)})
+    except ValidationError as exc:
+        return JsonResponse({'status': 'error', 'message': '; '.join(exc.messages)}, status=400)
+    except IntegrityError:
+        return JsonResponse(
+            {'status': 'error', 'message': 'El puerto ya existe o entra en conflicto con otro registro.'},
+            status=409,
+        )
+    except Exception:
+        logger.exception('Error inesperado al crear un puerto ODF')
+        return JsonResponse(
+            {'status': 'error', 'message': 'No se pudo crear el puerto. Revisa los datos e intenta nuevamente.'},
+            status=500,
+        )
 
 @login_required
 @permission_required('mapas.delete_inventarioodf', raise_exception=True)
@@ -1191,9 +1418,11 @@ def update_odf_manual(request):
         odf.odf = odf_nombre
         # Solo actualizamos capacidad si no hay lógicas complejas de puertos ocupados, o se ajusta puertos libres
         nueva_capacidad = int(data.get('capacidad_puertos', 0) or 0)
-        diff = nueva_capacidad - odf.capacidad_puertos
         odf.capacidad_puertos = nueva_capacidad
-        odf.puertos_libres = max(0, odf.puertos_libres + diff)
+        odf.puertos_libres = max(
+            0,
+            nueva_capacidad - (odf.puertos_ocupados or 0) - (odf.puertos_reservados or 0),
+        )
         
         odf.tipo_conector = data.get('tipo_conector', '')
         odf.estado = data.get('estado', 'Activo')
@@ -1348,26 +1577,39 @@ def add_reserva_manual(request):
         from ..models import Ruta, Reserva
         data = json.loads(request.body)
         ruta_nombre = data.get('ruta')
+        nombre = str(data.get('nombre', '')).strip()
+        latitud = data.get('latitud')
+        longitud = data.get('longitud')
         
         if not ruta_nombre:
-            return JsonResponse({'status': 'error', 'message': 'Ruta no especificada.'})
+            return JsonResponse({'status': 'error', 'message': 'Ruta no especificada.'}, status=400)
+        if not nombre or latitud is None or longitud is None:
+            return JsonResponse(
+                {'status': 'error', 'message': 'El nombre, la latitud y la longitud son obligatorios.'},
+                status=400,
+            )
             
         ruta = Ruta.objects.filter(nombre=ruta_nombre).first()
         if not ruta:
-            return JsonResponse({'status': 'error', 'message': 'Ruta no encontrada.'})
+            return JsonResponse({'status': 'error', 'message': 'Ruta no encontrada.'}, status=404)
             
         nueva_reserva = Reserva.objects.create(
             ruta=ruta,
-            nombre=data.get('nombre', ''),
+            nombre=nombre,
             tipo=data.get('tipo', ''),
-            latitud=data.get('latitud', 0.0),
-            longitud=data.get('longitud', 0.0),
+            latitud=latitud,
+            longitud=longitud,
             reserva_m=data.get('reserva_m') or 0.0
         )
         return JsonResponse({'status': 'success', 'message': f'Reserva {nueva_reserva.nombre} agregada exitosamente.'})
         
-    except Exception as e:
-        return JsonResponse({'status': 'error', 'message': str(e)})
+    except ValidationError as exc:
+        return JsonResponse({'status': 'error', 'message': '; '.join(exc.messages)}, status=400)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return JsonResponse({'status': 'error', 'message': 'Los datos de la reserva no son válidos.'}, status=400)
+    except Exception:
+        logger.exception('Error inesperado al crear una reserva')
+        return JsonResponse({'status': 'error', 'message': 'No se pudo crear la reserva.'}, status=500)
 
 @login_required
 @permission_required('mapas.add_reserva', raise_exception=True)
@@ -1383,6 +1625,11 @@ def import_reservas_archivo(request):
         
         if not archivo or not ruta_nombre:
             return JsonResponse({'status': 'error', 'message': 'Archivo o ruta no proporcionados.'})
+        if not _archivo_dentro_del_limite(archivo):
+            return JsonResponse(
+                {'status': 'error', 'message': _mensaje_limite_archivo()},
+                status=413,
+            )
             
         ruta = Ruta.objects.filter(nombre=ruta_nombre).first()
         if not ruta:
@@ -1395,32 +1642,65 @@ def import_reservas_archivo(request):
         else:
             return JsonResponse({'status': 'error', 'message': 'Formato no soportado. Use .csv o .xlsx'})
 
-        nuevas_reservas = []
-        for index, row in df.iterrows():
-            nombre = str(row.get('Landmark name', row.get('Nombre', f'Reserva-{index}')))
-            tipo = str(row.get('Connection type', row.get('Tipo', '')))
-            reserva_m = row.get('Reserva (m)', row.get('Reserva_m', 0))
-            lat = row.get('Latitud', 0)
-            lon = row.get('Longitud', 0)
-            
-            # Limpiar NaNs
-            if pd.isna(reserva_m) or str(reserva_m).strip() == '-': reserva_m = 0
-            if pd.isna(lat) or str(lat).strip() == '-': lat = 0
-            if pd.isna(lon) or str(lon).strip() == '-': lon = 0
-            if pd.isna(tipo) or tipo == 'nan': tipo = ''
+        from decimal import Decimal, InvalidOperation
 
-            from decimal import Decimal
+        nuevas_reservas = []
+        rechazadas = 0
+        for index, row in df.iterrows():
+            nombre_valor = row.get('Landmark name', row.get('Nombre', f'Reserva-{index + 1}'))
+            nombre = '' if pd.isna(nombre_valor) else str(nombre_valor).strip()
+            tipo_valor = row.get('Connection type', row.get('Tipo', ''))
+            tipo = '' if pd.isna(tipo_valor) else str(tipo_valor).strip()
+            reserva_m = row.get('Reserva (m)', row.get('Reserva_m', 0))
+            lat = row.get('Latitud')
+            lon = row.get('Longitud')
+
+            try:
+                if not nombre or pd.isna(lat) or pd.isna(lon):
+                    raise ValueError
+                latitud = Decimal(str(lat).strip().replace(',', '.'))
+                longitud = Decimal(str(lon).strip().replace(',', '.'))
+                if not (Decimal('-90') <= latitud <= Decimal('90')):
+                    raise ValueError
+                if not (Decimal('-180') <= longitud <= Decimal('180')):
+                    raise ValueError
+                if pd.isna(reserva_m) or str(reserva_m).strip() == '-':
+                    reserva_m = 0
+                reserva_m = float(str(reserva_m).strip().replace(',', '.'))
+                if reserva_m < 0:
+                    raise ValueError
+            except (InvalidOperation, TypeError, ValueError):
+                rechazadas += 1
+                continue
+
             nuevas_reservas.append(Reserva(
                 ruta=ruta,
                 nombre=nombre,
                 tipo=tipo,
-                reserva_m=float(reserva_m),
-                latitud=Decimal(str(lat)),
-                longitud=Decimal(str(lon))
+                reserva_m=reserva_m,
+                latitud=latitud,
+                longitud=longitud,
             ))
 
-        Reserva.objects.bulk_create(nuevas_reservas)
-        return JsonResponse({'status': 'success', 'message': f'{len(nuevas_reservas)} reservas importadas exitosamente.'})
+        if not nuevas_reservas and rechazadas:
+            return JsonResponse(
+                {
+                    'status': 'error',
+                    'message': 'No se importaron reservas: todas las filas tienen nombre o coordenadas inválidas.',
+                },
+                status=400,
+            )
+
+        Reserva.objects.bulk_create(nuevas_reservas, batch_size=1000)
+        mensaje = f'{len(nuevas_reservas)} reservas importadas exitosamente.'
+        if rechazadas:
+            mensaje += f' {rechazadas} filas fueron omitidas por datos inválidos.'
+        return JsonResponse({
+            'status': 'success',
+            'warning': bool(rechazadas),
+            'message': mensaje,
+            'rechazadas': rechazadas,
+        })
 
     except Exception as e:
         transaction.set_rollback(True)
@@ -1440,8 +1720,15 @@ def import_puertos_archivo(request):
         
         if not archivo or not odf_nombre:
             return JsonResponse({'status': 'error', 'message': 'Archivo u ODF no proporcionados.'})
+        if not _archivo_dentro_del_limite(archivo):
+            return JsonResponse(
+                {'status': 'error', 'message': _mensaje_limite_archivo()},
+                status=413,
+            )
             
-        odf_obj = InventarioODF.objects.filter(odf__iexact=odf_nombre).first()
+        # Mantiene la validación de capacidad y toda la importación bajo un
+        # único bloqueo por ODF. El contrato del archivo permanece intacto.
+        odf_obj = InventarioODF.objects.select_for_update().filter(odf__iexact=odf_nombre).first()
         if not odf_obj:
             return JsonResponse({'status': 'error', 'message': 'ODF no encontrado.'})
 
@@ -1485,9 +1772,7 @@ def import_puertos_archivo(request):
             if not puerto_val or puerto_val == 'nan' or puerto_val == 'None':
                 continue
 
-            estado_val = str(df_estado.iloc[i]).strip().capitalize()
-            if estado_val not in ['Libre', 'Ocupado']:
-                estado_val = 'Libre'
+            estado_val = normalizar_estado_puerto_odf(df_estado.iloc[i])
 
             datos = {
                 'bandeja': str(df_bandeja.iloc[i]).strip() if str(df_bandeja.iloc[i]).strip() != 'nan' else '',
@@ -1512,9 +1797,7 @@ def import_puertos_archivo(request):
                 actualizados += 1
 
         # Actualizar contadores del ODF (pero no la capacidad máxima)
-        odf_obj.puertos_libres = DetallePuertoODF.objects.filter(odf_obj=odf_obj, estado_puerto='Libre').count()
-        odf_obj.puertos_ocupados = DetallePuertoODF.objects.filter(odf_obj=odf_obj, estado_puerto='Ocupado').count()
-        odf_obj.save()
+        odf_obj.actualizar_contadores()
 
         return JsonResponse({
             'status': 'success', 
@@ -1530,7 +1813,18 @@ def import_puertos_archivo(request):
 @permission_required('mapas.view_detallepuertoodf', raise_exception=True)
 def planta_interna_view(request):
     """Consulta global de puertos; los registros se solicitan por página."""
-    return render(request, 'mapa_inventario/planta_interna.html')
+    from ..models import InventarioODF
+
+    odfs = list(InventarioODF.objects.values(
+        'id', 'odf', 'hub_site', 'sala', 'rack'
+    ).order_by('hub_site', 'sala', 'rack', 'odf'))
+    context = {
+        'odfs_puertos': odfs,
+        'sites_puertos': sorted({odf['hub_site'] for odf in odfs if odf['hub_site']}),
+        'salas_puertos': sorted({odf['sala'] for odf in odfs if odf['sala']}),
+        'racks_puertos': sorted({odf['rack'] for odf in odfs if odf['rack']}),
+    }
+    return render(request, 'mapa_inventario/planta_interna.html', context)
 
 @login_required
 def planta_externa_view(request):
@@ -1540,4 +1834,16 @@ def planta_externa_view(request):
         or request.user.has_perm('mapas.view_reserva')
     ):
         raise PermissionDenied
-    return render(request, 'mapa_inventario/planta_externa.html')
+    from ..models import Reserva, Ruta
+
+    context = {
+        'rutas_planta_externa': list(
+            Ruta.objects.filter(tramos_inventario__isnull=False)
+            .order_by('nombre').values('id', 'nombre').distinct()
+        ),
+        'tipos_elemento': list(
+            Reserva.objects.exclude(tipo__isnull=True).exclude(tipo='')
+            .order_by('tipo').values_list('tipo', flat=True).distinct()
+        ),
+    }
+    return render(request, 'mapa_inventario/planta_externa.html', context)

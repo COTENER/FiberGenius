@@ -2,10 +2,12 @@
     const state = {
         map: null,
         layerGroups: {
-            tramos: L.layerGroup()
+            tramos: L.layerGroup(),
+            sites: L.layerGroup()
         },
         tileLayer: null,
         data: [],
+        sites: [],
         filters: {
             'AEREO': true,
             'SOTERRADO': true,
@@ -20,7 +22,15 @@
         mostrarTodasRutas: true,
         rutasPolylines: {}, // { 'Nombre Ruta': [polyline1, polyline2, ...] }
         rutasHalos: {},     // { 'Nombre Ruta': [halo1, halo2, ...] }
-        selectedRuta: null
+        selectedRuta: null,
+        siteMarkers: {},
+        navigation: {
+            sitePayload: null,
+            odf: null,
+            portPage: 1,
+            loadedOdfId: null,
+            portAbortController: null
+        }
     };
 
     function initMap() {
@@ -30,9 +40,10 @@
             attributionControl: false
         }).setView([-12.046374, -77.042793], 6); // Centro general de Perú como default
 
-        L.control.zoom({ position: 'topright' }).addTo(state.map);
+        L.control.zoom({ position: 'bottomright' }).addTo(state.map);
 
         state.layerGroups.tramos.addTo(state.map);
+        state.layerGroups.sites.addTo(state.map);
 
         const attribution = mapElement.dataset.tileAttribution || 'Cartografía configurable';
         const createLayer = (url) => url ? L.tileLayer(url, { maxZoom: 19, attribution }) : null;
@@ -74,12 +85,15 @@
         else showOfflineNotice();
 
         if (Object.keys(baseMaps).length) {
-            L.control.layers(baseMaps, null, { position: 'topright', collapsed: false }).addTo(state.map);
+            L.control.layers(baseMaps, null, { position: 'topright', collapsed: true }).addTo(state.map);
         }
 
         setupFullscreenControl();
+        setupLayerPanel();
+        setupMapState();
         setupFilters();
         setupSearch();
+        setupNetworkNavigation();
         cargarDatosInventario();
 
         // Cerrar popup draggable al hacer click en el mapa
@@ -88,8 +102,7 @@
             if (e.originalEvent && e.originalEvent.target && e.originalEvent.target.closest('#draggable-route-popup')) {
                 return;
             }
-            const panel = document.getElementById('draggable-route-popup');
-            if (panel) panel.style.display = 'none';
+            closeRoutePanel();
         });
 
         const panel = document.getElementById('draggable-route-popup');
@@ -168,6 +181,80 @@
         });
     }
 
+    function setupLayerPanel() {
+        const panel = document.getElementById('map-layers-panel');
+        const toggle = document.getElementById('map-layers-toggle');
+        const close = document.getElementById('map-layers-close');
+        if (!panel || !toggle || !close) return;
+
+        const setOpen = (isOpen) => {
+            panel.classList.toggle('is-open', isOpen);
+            panel.setAttribute('aria-hidden', String(!isOpen));
+            toggle.setAttribute('aria-expanded', String(isOpen));
+            toggle.title = isOpen ? 'Cerrar capas' : 'Abrir capas';
+        };
+
+        toggle.addEventListener('click', () => setOpen(!panel.classList.contains('is-open')));
+        close.addEventListener('click', () => setOpen(false));
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') {
+                setOpen(false);
+                closeRoutePanel();
+            }
+        });
+
+        L.DomEvent.disableClickPropagation(panel);
+        L.DomEvent.disableScrollPropagation(panel);
+    }
+
+    function setupMapState() {
+        const retry = document.getElementById('map-state-retry');
+        if (retry) retry.addEventListener('click', cargarDatosInventario);
+    }
+
+    function setMapState(kind, title, text, canRetry) {
+        const container = document.getElementById('map-state');
+        const titleNode = document.getElementById('map-state-title');
+        const textNode = document.getElementById('map-state-text');
+        const retry = document.getElementById('map-state-retry');
+        const mapElement = document.getElementById('map');
+        if (!container || !titleNode || !textNode) return;
+
+        container.classList.remove('map-state--loading', 'map-state--empty', 'map-state--error');
+        if (!kind) {
+            container.classList.remove('is-visible');
+            if (mapElement) mapElement.setAttribute('aria-busy', 'false');
+            return;
+        }
+
+        container.classList.add('is-visible', `map-state--${kind}`);
+        titleNode.textContent = title;
+        textNode.textContent = text;
+        if (retry) retry.hidden = !canRetry;
+        if (mapElement) mapElement.setAttribute('aria-busy', String(kind === 'loading'));
+    }
+
+    function closeRoutePanel() {
+        const panel = document.getElementById('draggable-route-popup');
+        if (!panel) return;
+        panel.classList.remove('is-open');
+        panel.setAttribute('aria-hidden', 'true');
+    }
+
+    function fitRouteBounds(nombreRuta) {
+        const polylines = state.rutasPolylines[nombreRuta] || [];
+        const bounds = L.latLngBounds([]);
+        polylines.forEach((polyline) => bounds.extend(polyline.getBounds()));
+        if (bounds.isValid()) {
+            const isSmallScreen = window.matchMedia('(max-width: 700px)').matches;
+            state.map.flyToBounds(bounds, {
+                paddingTopLeft: isSmallScreen ? [28, 150] : [70, 90],
+                paddingBottomRight: isSmallScreen ? [28, 230] : [430, 90],
+                maxZoom: 16
+            });
+        }
+    }
+
     function setupFilters() {
         const updateFilters = () => {
             state.filters['AEREO'] = document.getElementById('chk-aereo').checked;
@@ -186,7 +273,10 @@
 
         $('#chk-rutas-global').on('change', function() {
             state.mostrarTodasRutas = this.checked;
-            if (this.checked) state.selectedRuta = null; // Al activar "todas", limpiamos seleccion individual
+            if (this.checked) {
+                state.selectedRuta = null;
+                closeRoutePanel();
+            }
             renderTramos();
         });
     }
@@ -211,6 +301,10 @@
             input.value = '';
             clearBtn.style.display = 'none';
             state.selectedRuta = null;
+            state.mostrarTodasRutas = true;
+            const allRoutes = document.getElementById('chk-rutas-global');
+            if (allRoutes) allRoutes.checked = true;
+            closeRoutePanel();
             renderTramos();
             fitBoundsToData();
         });
@@ -220,42 +314,32 @@
         const query = document.getElementById('route-search-input').value.trim();
         
         if (!query) {
-            // Si el buscador está vacío, restauramos el estado de "mostrar todas" si el toggle está activo
             state.selectedRuta = null;
+            state.mostrarTodasRutas = true;
+            const allRoutes = document.getElementById('chk-rutas-global');
+            if (allRoutes) allRoutes.checked = true;
+            closeRoutePanel();
             renderTramos();
             return;
         }
 
-        // Primero verificamos si la ruta existe en los datos cargados
-        const rutaExiste = state.data.some(r => r.nombre === query);
+        const rutaEncontrada = state.data.find((ruta) =>
+            String(ruta.nombre || '').localeCompare(query, undefined, { sensitivity: 'base' }) === 0
+        );
         
-        if (rutaExiste) {
-            state.selectedRuta = query;
-            
-            // 1. Re-renderizar tramos para que SOLO se vea esta ruta en el mapa
+        if (rutaEncontrada) {
+            const nombreRuta = rutaEncontrada.nombre;
+            state.selectedRuta = nombreRuta;
+            document.getElementById('route-search-input').value = nombreRuta;
             renderTramos();
+            applyRouteFocusStyles();
+            fitRouteBounds(nombreRuta);
 
-            // 2. Obtener las NUEVAS referencias de polylines y halos después del render
-            const polylines = state.rutasPolylines[query];
-            const halos = state.rutasHalos[query];
-
-            if (polylines && polylines.length > 0) {
-                const bounds = L.latLngBounds([]);
-
-                // 3. Resaltar los segmentos
-                halos.forEach(h => h.setStyle({ opacity: 0.6 }));
-                polylines.forEach(p => {
-                    p.setStyle({ weight: 9, opacity: 1 });
-                    bounds.extend(p.getBounds());
-                });
-
-                // 4. Volar a la ruta
-                state.map.flyToBounds(bounds, { padding: [100, 100], maxZoom: 16 });
-
-                // 5. Abrir popup del primer tramo después de la animación de vuelo
-                setTimeout(() => {
-                    if (polylines[0]) polylines[0].openPopup();
-                }, 800);
+            const tramoPrincipal = (rutaEncontrada.tramos || []).find((tramo) =>
+                Array.isArray(tramo.coordenadas) && tramo.coordenadas.length > 0
+            ) || (rutaEncontrada.tramos || [])[0];
+            if (tramoPrincipal) {
+                openRoutePanel(rutaEncontrada, tramoPrincipal);
             }
         } else {
             if (window.FiberGenius && window.FiberGenius.notify) {
@@ -265,11 +349,8 @@
     }
 
     function limpiarResaltadoRuta() {
-        if (state.selectedRuta && state.rutasPolylines[state.selectedRuta]) {
-            state.rutasHalos[state.selectedRuta].forEach(h => h.setStyle({ opacity: 0 }));
-            state.rutasPolylines[state.selectedRuta].forEach(p => p.setStyle({ weight: 6, opacity: 0.9 }));
-        }
         state.selectedRuta = null;
+        applyRouteFocusStyles();
     }
 
     // Funcion expuesta globalmente para el checkbox dentro del popup de leaflet
@@ -302,16 +383,42 @@
         if (window.location.pathname.includes('/fg-6/')) {
             basePath = '/fg-6';
         }
+
+        setMapState('loading', 'Cargando red…', 'Preparando troncales y puntos geográficos.', false);
         
         $.ajax({
             url: basePath + '/api/inventario/datos/',
             method: 'GET',
             success: function(response) {
                 if(response.status === 'success') {
-                    state.data = response.data;
+                    state.data = Array.isArray(response.data) ? response.data : [];
+                    state.sites = Array.isArray(response.sites) ? response.sites : [];
                     renderTramos();
                     fitBoundsToData();
                     updateSummaryCards();
+
+                    const hasCoordinates = state.data.some((ruta) =>
+                        (ruta.tramos || []).some((tramo) =>
+                            Array.isArray(tramo.coordenadas) && tramo.coordenadas.length > 0
+                        )
+                    );
+                    if (!state.data.length && !state.sites.length) {
+                        setMapState(
+                            'empty',
+                            'Aún no hay troncales registradas',
+                            'Cuando cargues el inventario, las rutas y sus indicadores aparecerán aquí.',
+                            false
+                        );
+                    } else if (!hasCoordinates && !state.sites.length) {
+                        setMapState(
+                            'empty',
+                            'Las troncales no tienen coordenadas',
+                            'Completa la georreferenciación para dibujar la red sin cambiar la estructura de carga.',
+                            false
+                        );
+                    } else {
+                        setMapState(null);
+                    }
 
                     // Verificar si venimos redirigidos desde el Dashboard con una ruta específica
                     const urlParams = new URLSearchParams(window.location.search);
@@ -329,10 +436,23 @@
                             buscarYResaltarRuta();
                         }
                     }
+                } else {
+                    setMapState(
+                        'error',
+                        'No pudimos interpretar el inventario',
+                        response.message || 'El servidor devolvió una respuesta inesperada.',
+                        true
+                    );
                 }
             },
             error: function(err) {
                 console.error("Error cargando inventario:", err);
+                setMapState(
+                    'error',
+                    'No pudimos cargar la red',
+                    'Revisa la conexión con Fiber Genius y vuelve a intentarlo.',
+                    true
+                );
             }
         });
     }
@@ -346,15 +466,17 @@
         state.data.forEach(ruta => {
             let hasAereo = false;
             let hasSoterrado = false;
+            let hasHibrido = false;
             
             // Analizar todos los tramos de la ruta para clasificarla
-            ruta.tramos.forEach(tramo => {
+            (ruta.tramos || []).forEach(tramo => {
                 let tipo = (tramo.tipo_trazado || '').toUpperCase().trim();
                 if (tipo === 'AEREO') hasAereo = true;
                 if (tipo === 'SOTERRADO') hasSoterrado = true;
+                if (tipo === 'HIBRIDO') hasHibrido = true;
             });
 
-            if (hasAereo && hasSoterrado) hibridas++;
+            if (hasHibrido || (hasAereo && hasSoterrado)) hibridas++;
             else if (hasAereo) aereas++;
             else if (hasSoterrado) soterradas++;
         });
@@ -370,8 +492,8 @@
         if (!tipo) return '#94a3b8'; // SLATE 400 (Desconocido)
         tipo = tipo.toUpperCase().trim();
         if (tipo === 'AEREO') return '#3b82f6'; // BLUE 500
-        if (tipo === 'SOTERRADO') return '#ef4444'; // RED 500
-        if (tipo === 'HIBRIDO') return '#f59e0b'; // AMBER 500
+        if (tipo === 'SOTERRADO') return '#f59e0b'; // AMBER 500
+        if (tipo === 'HIBRIDO') return '#8b5cf6'; // VIOLET 500
         return '#94a3b8'; // Default Desconocido
     }
     
@@ -395,6 +517,20 @@
         return dist;
     }
 
+    function escapeHtml(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    function displayValue(value, fallback) {
+        const normalized = value == null ? '' : String(value).trim();
+        return escapeHtml(normalized || fallback || 'N/A');
+    }
+
     function buildPopupHtml(ruta, tramo) {
         let estadoBadge = 'badge--info';
         if (tramo.estado) {
@@ -404,13 +540,7 @@
             if (eMay.includes('CAIDO') || eMay.includes('CORTE')) estadoBadge = 'badge--danger';
         }
 
-        let trazadoBadge = 'badge--info'; // Default blue (Aéreo)
-        if (tramo.tipo_trazado) {
-            const tMay = tramo.tipo_trazado.toUpperCase();
-            if (tMay.includes('SOTERRADO')) trazadoBadge = 'badge--danger'; // Red
-            else if (tMay.includes('AEREO')) trazadoBadge = 'badge--info'; // Blue
-            else if (tMay.includes('HIBRIDO')) trazadoBadge = 'badge--warning'; // Yellow
-        }
+        const trazadoCategoria = getFilterCat(tramo.tipo_trazado).toLowerCase();
 
         const origenMostrar = tramo.origen ? tramo.origen : ruta.otu;
         const destinoMostrar = tramo.destino ? tramo.destino : ruta.olt;
@@ -432,7 +562,7 @@
         if (tiposReservas.length > 0) {
             reservasResumenHtml = '<div class="popup-section-title">Detalle de Reservas</div><div class="popup-grid-2col">';
             tiposReservas.forEach(tipo => {
-                reservasResumenHtml += `<div class="popup-item"><span class="label">${tipo}</span><span class="value">${conteoReservas[tipo]}</span></div>`;
+                reservasResumenHtml += `<div class="popup-item"><span class="label">${displayValue(tipo, 'Otro')}</span><span class="value">${conteoReservas[tipo]}</span></div>`;
             });
             reservasResumenHtml += '</div>';
         }
@@ -448,63 +578,111 @@
         const distanciaTexto = distanciaMetros > 0 ? (distanciaMetros / 1000).toFixed(2) + ' km' : 'N/A';
 
         return `
-            <div class="popup-inventario" style="position:relative;">
-                <button onclick="document.getElementById('draggable-route-popup').style.display='none'" style="position:absolute; top:12px; right:12px; background:none; border:none; cursor:pointer; color:var(--text-secondary); padding:4px; border-radius:4px;" onmouseover="this.style.background='var(--bg-surface-2)'" onmouseout="this.style.background='none'">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
-                </button>
-                <h3 style="padding-right: 30px;">${ruta.nombre}</h3>
-                
-                <div class="popup-section-title">Información General</div>
-                <div class="popup-grid-2col">
-                    <div class="popup-item"><span class="label">Site de origen</span><span class="value">${hubSiteOrigen}</span></div>
-                    <div class="popup-item"><span class="label">Destino</span><span class="value">${destinoMostrar}</span></div>
-                    <div class="popup-item"><span class="label">Trazado</span><span class="value"><span class="badge ${trazadoBadge}" style="font-weight: 700; text-transform: uppercase;">${tramo.tipo_trazado}</span></span></div>
-                    <div class="popup-item"><span class="label">Estado</span><span class="value"><span class="badge ${estadoBadge}">${tramo.estado}</span></span></div>
-                </div>
+            <div class="popup-inventario route-detail">
+                <header class="route-detail__header">
+                    <div class="route-detail__heading">
+                        <span class="route-detail__eyebrow">Troncal seleccionada</span>
+                        <h3>${displayValue(ruta.nombre, 'Ruta sin nombre')}</h3>
+                        <p class="route-detail__path">
+                            <span>${displayValue(hubSiteOrigen)}</span>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+                            <span>${displayValue(destinoMostrar)}</span>
+                        </p>
+                    </div>
+                    <button class="route-detail__close" type="button" data-route-close aria-label="Cerrar detalle de troncal">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                    </button>
+                </header>
+                <div class="route-detail__body">
+                    <div class="popup-section-title">Información general</div>
+                    <div class="popup-grid-2col">
+                        <div class="popup-item"><span class="label">Site de origen</span><span class="value">${displayValue(hubSiteOrigen)}</span></div>
+                        <div class="popup-item"><span class="label">Destino</span><span class="value">${displayValue(destinoMostrar)}</span></div>
+                        <div class="popup-item"><span class="label">Trazado</span><span class="value"><span class="route-type-pill route-type-pill--${trazadoCategoria}">${displayValue(tramo.tipo_trazado)}</span></span></div>
+                        <div class="popup-item"><span class="label">Estado</span><span class="value"><span class="badge ${estadoBadge}">${displayValue(tramo.estado)}</span></span></div>
+                    </div>
 
-                ${reservasResumenHtml}
+                    ${reservasResumenHtml}
 
-                <div class="popup-section-title">Composición Física</div>
-                <div class="popup-metrics-grid" style="grid-template-columns: 1fr 1fr;">
-                    <div class="popup-metric-card">
-                        <div class="metric-val">${distanciaTexto}</div>
-                        <div class="metric-lbl">Distancia</div>
+                    <div class="popup-section-title">Composición física</div>
+                    <div class="popup-metrics-grid">
+                        <div class="popup-metric-card">
+                            <div class="metric-val">${displayValue(distanciaTexto)}</div>
+                            <div class="metric-lbl">Distancia</div>
+                        </div>
+                        <div class="popup-metric-card">
+                            <div class="metric-val">${sumaReservasM.toFixed(1)} m</div>
+                            <div class="metric-lbl">Reservas</div>
+                        </div>
                     </div>
-                    <div class="popup-metric-card">
-                        <div class="metric-val">${sumaReservasM.toFixed(1)} m</div>
-                        <div class="metric-lbl">Reservas</div>
-                    </div>
-                </div>
 
-                <div class="popup-section-title">Conectividad</div>
-                <div class="popup-metrics-grid">
-                    <div class="popup-metric-card">
-                        <div class="metric-val">${tramo.capacidad || 'N/A'}</div>
-                        <div class="metric-lbl">Capacidad</div>
+                    <div class="popup-section-title">Conectividad</div>
+                    <div class="popup-metrics-grid">
+                        <div class="popup-metric-card"><div class="metric-val">${displayValue(tramo.capacidad)}</div><div class="metric-lbl">Capacidad</div></div>
+                        <div class="popup-metric-card"><div class="metric-val">${displayValue(tramo.tipo_fibra)}</div><div class="metric-lbl">Tipo fibra</div></div>
+                        <div class="popup-metric-card"><div class="metric-val">${displayValue(tramo.marca_modelo)}</div><div class="metric-lbl">Marca / modelo</div></div>
+                        <div class="popup-metric-card"><div class="metric-val">${displayValue(tramo.serial)}</div><div class="metric-lbl">Serial</div></div>
                     </div>
-                    <div class="popup-metric-card">
-                        <div class="metric-val">${tramo.tipo_fibra || 'N/A'}</div>
-                        <div class="metric-lbl">Tipo Fibra</div>
+
+                    <div class="popup-toggle-row">
+                        <span style="font-size:12px; font-weight:600; color:var(--text-primary);">Mostrar reservas de esta ruta</span>
+                        <label class="toggle-switch">
+                            <input class="js-route-reserves" type="checkbox" ${state.rutasMostrandoReservas.has(ruta.nombre) ? 'checked' : ''}>
+                            <span class="toggle-slider"></span>
+                        </label>
                     </div>
-                    <div class="popup-metric-card">
-                        <div class="metric-val" style="font-size:11px;">${tramo.marca_modelo || 'N/A'}</div>
-                        <div class="metric-lbl">Marca/Mod</div>
-                    </div>
-                    <div class="popup-metric-card">
-                        <div class="metric-val" style="font-size:11px;">${tramo.serial || 'N/A'}</div>
-                        <div class="metric-lbl">Serial</div>
-                    </div>
-                </div>
-                
-                <div class="popup-toggle-row">
-                    <span style="font-size:12px; font-weight:600; color:var(--text-primary);">Mostrar reservas de esta ruta</span>
-                    <label class="toggle-switch">
-                        <input type="checkbox" onchange="window.toggleReservasRuta('${ruta.nombre}', this.checked)" ${state.rutasMostrandoReservas.has(ruta.nombre) ? 'checked' : ''}>
-                        <span class="toggle-slider"></span>
-                    </label>
+                    <button class="route-detail__fit" type="button" data-route-fit>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="m4.93 4.93 2.83 2.83"/><path d="m16.24 16.24 2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><path d="m4.93 19.07 2.83-2.83"/><path d="m16.24 7.76 2.83-2.83"/></svg>
+                        Centrar troncal en el mapa
+                    </button>
                 </div>
             </div>
         `;
+    }
+
+    function openRoutePanel(ruta, tramo) {
+        const panel = document.getElementById('draggable-route-popup');
+        if (!panel) return;
+
+        panel.innerHTML = buildPopupHtml(ruta, tramo);
+        panel.classList.add('is-open');
+        panel.setAttribute('aria-hidden', 'false');
+
+        const close = panel.querySelector('[data-route-close]');
+        const fit = panel.querySelector('[data-route-fit]');
+        const reserves = panel.querySelector('.js-route-reserves');
+        if (close) close.addEventListener('click', closeRoutePanel);
+        if (fit) fit.addEventListener('click', () => fitRouteBounds(ruta.nombre));
+        if (reserves) {
+            reserves.addEventListener('change', () => {
+                window.toggleReservasRuta(ruta.nombre, reserves.checked);
+            });
+        }
+    }
+
+    function applyRouteFocusStyles() {
+        const hasSelection = Boolean(state.selectedRuta);
+        Object.keys(state.rutasPolylines).forEach((nombreRuta) => {
+            const isSelected = state.selectedRuta === nombreRuta;
+            const isDimmed = hasSelection && !isSelected;
+            const lineStyle = isSelected
+                ? { weight: 8, opacity: 1 }
+                : isDimmed
+                    ? { weight: 4, opacity: 0.28 }
+                    : { weight: 5.5, opacity: 0.9 };
+            const haloStyle = isSelected
+                ? { color: '#ffffff', weight: 12, opacity: 0.86 }
+                : { color: '#0ea5e9', weight: 11, opacity: 0 };
+
+            (state.rutasHalos[nombreRuta] || []).forEach((halo) => {
+                halo.setStyle(haloStyle);
+                if (isSelected && halo.bringToBack) halo.bringToBack();
+            });
+            (state.rutasPolylines[nombreRuta] || []).forEach((polyline) => {
+                polyline.setStyle(lineStyle);
+                if (isSelected && polyline.bringToFront) polyline.bringToFront();
+            });
+        });
     }
 
     function renderTramos() {
@@ -528,7 +706,7 @@
             // Mostramos la ruta si:
             // 1. Es la ruta seleccionada específicamente por el buscador.
             // 2. No hay ninguna ruta seleccionada y el toggle de "Mostrar Todas las Rutas" está activado.
-            const debeMostrarRuta = (state.selectedRuta === ruta.nombre) || (state.selectedRuta === null && state.mostrarTodasRutas);
+            const debeMostrarRuta = state.mostrarTodasRutas || state.selectedRuta === ruta.nombre;
 
             if (datalist) {
                 const option = document.createElement('option');
@@ -549,40 +727,32 @@
                     // Contorno/Perímetro (Halo) invisible inicialmente
                     const halo = L.polyline(tramo.coordenadas, {
                         color: '#0ea5e9', // Light blue halo
-                        weight: 12,
+                        weight: 11,
                         opacity: 0,
                         lineJoin: 'round'
                     });
                     
                     const polyline = L.polyline(tramo.coordenadas, {
                         color: getColorForTrazado(tramo.tipo_trazado),
-                        weight: 6, // Más ancha
+                        weight: 5.5,
                         opacity: 0.9,
                         lineJoin: 'round'
                     });
 
                     polyline.on('click', function(e) {
                         L.DomEvent.stopPropagation(e);
-                        const panel = document.getElementById('draggable-route-popup');
-                        if (panel) {
-                            panel.innerHTML = buildPopupHtml(ruta, tramo);
-                            panel.style.display = 'block';
-                            // Reset position to right-middle
-                            panel.style.top = '50%';
-                            panel.style.right = '20px';
-                            panel.style.left = 'auto';
-                            panel.style.transform = 'translateY(-50%)';
-                            makeDraggable(panel);
-                        }
+                        state.selectedRuta = ruta.nombre;
+                        applyRouteFocusStyles();
+                        openRoutePanel(ruta, tramo);
                     });
                     
-                    polyline.on('mouseover', function(e) {
-                        halo.setStyle({ opacity: 0.4 });
+                    polyline.on('mouseover', function() {
+                        const isDimmed = state.selectedRuta && state.selectedRuta !== ruta.nombre;
+                        halo.setStyle({ opacity: isDimmed ? 0.22 : 0.45 });
                         this.setStyle({ weight: 7, opacity: 1 });
                     });
-                    polyline.on('mouseout', function(e) {
-                        halo.setStyle({ opacity: 0 });
-                        this.setStyle({ weight: 6, opacity: 0.9 });
+                    polyline.on('mouseout', function() {
+                        applyRouteFocusStyles();
                     });
 
                     // SOLO añadimos al mapa si cumple la condición de visibilidad
@@ -594,42 +764,13 @@
                     state.rutasPolylines[ruta.nombre].push(polyline);
                     state.rutasHalos[ruta.nombre].push(halo);
                     
-                    // Colocar un icono en el Origen (Hub) en el primer tramo (secuencia 1) o primer punto
-                    if (tramo.tramo_secuencia === 1 && tramo.coordenadas.length > 0) {
-                        const hubText = tramo.hub_site || tramo.origen || ruta.otu || 'HUB';
-                        const hubIcon = L.divIcon({
-                            className: 'custom-hub-icon',
-                            html: `<div class="hub-pin"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></div>
-                                   <div class="hub-label">${hubText}</div>`,
-                            iconSize: [40, 60],
-                            iconAnchor: [20, 60]
-                        });
-                        
-                        let markerCoords = tramo.coordenadas[0];
-                        if (tramo.hub_site_lat && tramo.hub_site_lon) {
-                            markerCoords = [tramo.hub_site_lat, tramo.hub_site_lon];
-                        }
-
-                        const hubMarker = L.marker(markerCoords, { icon: hubIcon });
-                        
-                        if (debeMostrarRuta) {
-                            hubMarker.addTo(state.layerGroups.tramos);
-                        }
-                        
-                        const odfName = tramo.odf_nombre || ruta.otu || '';
-                        hubMarker.on('click', function() {
-                            if(odfName) {
-                                window.abrirPanelODF(hubText, odfName);
-                            }
-                        });
-                    }
                 }
             });
 
             // Preparar Reservas de esta ruta
             if (ruta.reservas_nodos && ruta.reservas_nodos.length > 0) {
                 ruta.reservas_nodos.forEach(res => {
-                    const tipo = (res.tipo || 'default').toLowerCase();
+                    const tipo = String(res.tipo || 'default').toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'default';
                     const iconUrl = `/static/img/iconos/${tipo}-icono.png`;
                     const customIcon = L.icon({ 
                         iconUrl: iconUrl, 
@@ -640,10 +781,10 @@
                     
                     const resPopup = `
                         <div style="font-family: var(--font-sans); padding: 5px;">
-                            <h4 style="margin:0 0 8px 0; color:var(--primary); font-size:14px; border-bottom:1px solid var(--border-color); padding-bottom:4px;">${res.nombre}</h4>
-                            <div style="font-size:12px; margin-bottom:4px;"><strong>Tipo:</strong> ${res.tipo}</div>
-                            <div style="font-size:12px; margin-bottom:4px;"><strong>Reserva Fija:</strong> ${res.reserva_m} m</div>
-                            <div style="font-size:12px; color:var(--text-secondary);">Pertenece a: ${ruta.nombre}</div>
+                            <h4 style="margin:0 0 8px 0; color:var(--primary); font-size:14px; border-bottom:1px solid var(--border-color); padding-bottom:4px;">${displayValue(res.nombre, 'Reserva')}</h4>
+                            <div style="font-size:12px; margin-bottom:4px;"><strong>Tipo:</strong> ${displayValue(res.tipo)}</div>
+                            <div style="font-size:12px; margin-bottom:4px;"><strong>Reserva fija:</strong> ${displayValue(res.reserva_m, '0')} m</div>
+                            <div style="font-size:12px; color:var(--text-secondary);">Pertenece a: ${displayValue(ruta.nombre)}</div>
                         </div>
                     `;
                     
@@ -656,8 +797,36 @@
             }
         });
         
+        renderSiteMarkers();
+        applyRouteFocusStyles();
+
         // Evaluar qué reservas mostrar luego de cargar todas
         renderReservasVisibilidad();
+    }
+
+    function renderSiteMarkers() {
+        state.layerGroups.sites.clearLayers();
+        state.siteMarkers = {};
+        state.sites.forEach((site) => {
+            if (!Number.isFinite(Number(site.lat)) || !Number.isFinite(Number(site.lon))) return;
+            const icon = L.divIcon({
+                className: 'custom-site-icon',
+                html: `<div class="site-marker"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21V8l8-4v17M12 10h8v11M8 10v.01M8 14v.01M8 18v.01M16 14v.01M16 18v.01"/></svg><span class="site-marker-label">${displayValue(site.nombre, 'Site')}</span></div>`,
+                iconSize: [38, 65],
+                iconAnchor: [19, 19]
+            });
+            const marker = L.marker([Number(site.lat), Number(site.lon)], {
+                icon,
+                title: String(site.nombre || 'Site')
+            });
+            marker.on('click', (event) => {
+                L.DomEvent.stopPropagation(event);
+                closeRoutePanel();
+                openSiteNavigation(site.id, site.nombre);
+            });
+            marker.addTo(state.layerGroups.sites);
+            state.siteMarkers[site.id] = marker;
+        });
     }
 
     function fitBoundsToData() {
@@ -672,6 +841,12 @@
                     });
                 }
             });
+        });
+        state.sites.forEach((site) => {
+            if (Number.isFinite(Number(site.lat)) && Number.isFinite(Number(site.lon))) {
+                bounds.extend([Number(site.lat), Number(site.lon)]);
+                hasPoints = true;
+            }
         });
         
         if (hasPoints && bounds.isValid()) {
@@ -737,17 +912,21 @@
                     
                     let ocupados = 0;
                     let libres = 0;
+                    let reservados = 0;
                     
                     res.puertos.forEach(p => {
                         const isOcupado = p.estado && p.estado.toLowerCase().includes('ocupado');
-                        if (isOcupado) ocupados++; else libres++;
+                        const isReservado = p.estado && p.estado.toLowerCase().includes('reservado');
+                        if (isOcupado) ocupados++;
+                        else if (isReservado) reservados++;
+                        else libres++;
                         
-                        const boxClass = isOcupado ? 'ocupado' : 'libre';
+                        const boxClass = isOcupado ? 'ocupado' : (isReservado ? 'reservado' : 'libre');
                         const box = document.createElement('div');
                         box.className = `port-box ${boxClass}`;
                         box.innerText = p.puerto;
                         
-                        box.addEventListener('mouseenter', (e) => showPortTooltip(e, p, isOcupado));
+                        box.addEventListener('mouseenter', (e) => showPortTooltip(e, p, isOcupado || isReservado));
                         box.addEventListener('mousemove', (e) => movePortTooltip(e));
                         box.addEventListener('mouseleave', () => hidePortTooltip());
                         
@@ -767,34 +946,48 @@
                     
                     document.getElementById('sp-count-ocupados').innerText = ocupados;
                     document.getElementById('sp-count-libres').innerText = libres;
+                    document.getElementById('sp-count-reservados').innerText = reservados;
                     
                 } else {
                     document.getElementById('sp-content').style.display = 'block';
-                    document.getElementById('sp-ports-grid').innerHTML = `<div style="grid-column: 1/-1; color: var(--text-secondary); text-align: center; padding: 20px;">${res.message || 'No se encontraron puertos'}</div>`;
+                    setPortsGridMessage(res.message || 'No se encontraron puertos', false);
                     document.getElementById('sp-count-ocupados').innerText = '0';
                     document.getElementById('sp-count-libres').innerText = '0';
+                    document.getElementById('sp-count-reservados').innerText = '0';
                     document.getElementById('sp-total-ports').innerText = 'Total: 0';
                 }
             },
             error: function() {
                 document.getElementById('sp-loading').style.display = 'none';
                 document.getElementById('sp-content').style.display = 'block';
-                document.getElementById('sp-ports-grid').innerHTML = `<div style="grid-column: 1/-1; color: var(--text-danger); text-align: center; padding: 20px;">Error al cargar datos del servidor</div>`;
+                setPortsGridMessage('Error al cargar datos del servidor', true);
             }
         });
     };
+
+    function setPortsGridMessage(message, isError) {
+        const grid = document.getElementById('sp-ports-grid');
+        if (!grid) return;
+        const notice = document.createElement('div');
+        notice.style.gridColumn = '1 / -1';
+        notice.style.color = isError ? 'var(--text-danger)' : 'var(--text-secondary)';
+        notice.style.textAlign = 'center';
+        notice.style.padding = '20px';
+        notice.textContent = message;
+        grid.replaceChildren(notice);
+    }
 
     function showPortTooltip(e, portData, isOcupado) {
         const tooltip = document.getElementById('port-tooltip');
         if (!tooltip) return;
         
-        let html = `<div style="font-weight: 700; margin-bottom: 4px;">Puerto ${portData.puerto}</div>`;
-        html += `<div><strong>Estado:</strong> ${portData.estado || 'Libre'}</div>`;
+        let html = `<div style="font-weight: 700; margin-bottom: 4px;">Puerto ${displayValue(portData.puerto)}</div>`;
+        html += `<div><strong>Estado:</strong> ${displayValue(portData.estado, 'Libre')}</div>`;
         if (isOcupado) {
-            html += `<div><strong>Destino:</strong> <span style="color:var(--primary); font-weight:600;">${portData.destino || 'N/A'}</span></div>`;
-            if (portData.fibra) html += `<div><strong>Fibra:</strong> ${portData.fibra}</div>`;
+            html += `<div><strong>Destino:</strong> <span style="color:var(--primary); font-weight:600;">${displayValue(portData.destino)}</span></div>`;
+            if (portData.fibra) html += `<div><strong>Fibra:</strong> ${displayValue(portData.fibra)}</div>`;
         }
-        if (portData.tipo_conector) html += `<div><strong>Conector:</strong> ${portData.tipo_conector}</div>`;
+        if (portData.tipo_conector) html += `<div><strong>Conector:</strong> ${displayValue(portData.tipo_conector)}</div>`;
         
         tooltip.innerHTML = html;
         tooltip.style.opacity = '1';
@@ -812,5 +1005,349 @@
         const tooltip = document.getElementById('port-tooltip');
         if (tooltip) tooltip.style.opacity = '0';
     }
+
+    // Navegación contextual Site -> ODF -> Puertos. Los niveles se consultan
+    // de forma progresiva para no cargar miles de puertos junto con el mapa.
+    const networkNumber = new Intl.NumberFormat('es-PE');
+
+    function networkElement(id) {
+        return document.getElementById(id);
+    }
+
+    function setupNetworkNavigation() {
+        const panel = networkElement('network-nav-panel');
+        if (!panel) return;
+
+        networkElement('network-nav-close').addEventListener('click', closeNetworkNavigation);
+        networkElement('network-tab-summary').addEventListener('click', () => setOdfTab('summary'));
+        networkElement('network-tab-ports').addEventListener('click', () => setOdfTab('ports'));
+        networkElement('network-port-prev').addEventListener('click', () => {
+            if (state.navigation.portPage > 1) {
+                loadOdfPorts(state.navigation.odf, state.navigation.portPage - 1);
+            }
+        });
+        networkElement('network-port-next').addEventListener('click', () => {
+            loadOdfPorts(state.navigation.odf, state.navigation.portPage + 1);
+        });
+
+        L.DomEvent.disableClickPropagation(panel);
+        L.DomEvent.disableScrollPropagation(panel);
+    }
+
+    function closeNetworkNavigation() {
+        const panel = networkElement('network-nav-panel');
+        if (!panel) return;
+        if (state.navigation.portAbortController) {
+            state.navigation.portAbortController.abort();
+            state.navigation.portAbortController = null;
+        }
+        panel.classList.remove('is-open');
+        panel.setAttribute('aria-hidden', 'true');
+        Object.values(state.siteMarkers).forEach((marker) => {
+            const element = marker.getElement();
+            if (element) element.querySelector('.site-marker')?.classList.remove('is-selected');
+        });
+    }
+
+    function showNetworkLoading(message) {
+        networkElement('network-nav-loading').hidden = false;
+        const label = networkElement('network-nav-loading').querySelector('strong');
+        if (label) label.textContent = message || 'Cargando inventario…';
+        networkElement('network-nav-error').hidden = true;
+        networkElement('network-site-view').hidden = true;
+        networkElement('network-odf-view').hidden = true;
+    }
+
+    function showNetworkError(message) {
+        networkElement('network-nav-loading').hidden = true;
+        networkElement('network-site-view').hidden = true;
+        networkElement('network-odf-view').hidden = true;
+        const error = networkElement('network-nav-error');
+        error.textContent = message || 'No fue posible consultar el inventario.';
+        error.hidden = false;
+    }
+
+    function setNetworkBreadcrumb(level) {
+        const breadcrumb = networkElement('network-nav-breadcrumb');
+        breadcrumb.replaceChildren();
+        const payload = state.navigation.sitePayload;
+        if (!payload) return;
+
+        const siteButton = document.createElement('button');
+        siteButton.type = 'button';
+        siteButton.textContent = payload.site.nombre;
+        siteButton.addEventListener('click', () => renderSiteView(payload));
+        breadcrumb.appendChild(siteButton);
+
+        if (level === 'odf' && state.navigation.odf) {
+            const separator = document.createElement('span');
+            separator.textContent = '›';
+            breadcrumb.appendChild(separator);
+            const current = document.createElement('strong');
+            current.textContent = state.navigation.odf.odf;
+            breadcrumb.appendChild(current);
+        }
+    }
+
+    async function openSiteNavigation(siteId, siteName) {
+        const panel = networkElement('network-nav-panel');
+        if (!panel) return;
+        panel.classList.add('is-open');
+        panel.setAttribute('aria-hidden', 'false');
+        showNetworkLoading('Cargando ' + (siteName || 'Site') + '…');
+
+        Object.values(state.siteMarkers).forEach((marker) => {
+            const element = marker.getElement();
+            if (element) element.querySelector('.site-marker')?.classList.remove('is-selected');
+        });
+        const selected = state.siteMarkers[siteId]?.getElement();
+        if (selected) selected.querySelector('.site-marker')?.classList.add('is-selected');
+
+        const template = panel.dataset.siteUrlTemplate;
+        const url = template.replace(/\/0\/?$/, '/' + encodeURIComponent(siteId) + '/');
+        try {
+            const response = await fetch(url, {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                credentials: 'same-origin'
+            });
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            const payload = await response.json();
+            if (payload.status !== 'success') throw new Error(payload.message || 'Respuesta no válida');
+            state.navigation.sitePayload = payload;
+            state.navigation.odf = null;
+            state.navigation.loadedOdfId = null;
+            renderSiteView(payload);
+        } catch (error) {
+            if (error.name !== 'AbortError') {
+                showNetworkError('No se pudo cargar el Site. Verifica tus permisos e inténtalo nuevamente.');
+            }
+        }
+    }
+
+    function renderSiteView(payload) {
+        state.navigation.sitePayload = payload;
+        state.navigation.odf = null;
+        networkElement('network-nav-loading').hidden = true;
+        networkElement('network-nav-error').hidden = true;
+        networkElement('network-odf-view').hidden = true;
+        networkElement('network-site-view').hidden = false;
+        setNetworkBreadcrumb('site');
+
+        const site = payload.site;
+        const summary = payload.summary;
+        networkElement('network-site-name').textContent = site.nombre;
+        const metaParts = [];
+        if (site.direccion && site.direccion !== '—') metaParts.push(site.direccion);
+        metaParts.push(networkNumber.format(site.salas) + ' salas');
+        metaParts.push(networkNumber.format(site.racks) + ' racks');
+        metaParts.push(networkNumber.format(site.troncales) + ' troncales');
+        networkElement('network-site-meta').textContent = metaParts.join(' · ');
+        networkElement('network-site-odfs').textContent = networkNumber.format(summary.total);
+        networkElement('network-site-capacity').textContent = networkNumber.format(summary.capacidad);
+        networkElement('network-site-free').textContent = networkNumber.format(summary.libres);
+        networkElement('network-site-reserved').textContent = networkNumber.format(summary.reservados);
+        networkElement('network-site-odf-count').textContent = networkNumber.format(summary.total);
+        networkElement('network-odf-truncated').hidden = !payload.truncated;
+        networkElement('network-site-360').href = site.detail_url;
+        networkElement('network-site-inventory').href = site.odfs_url;
+
+        const list = networkElement('network-odf-list');
+        list.replaceChildren();
+        if (!payload.odfs.length) {
+            const empty = document.createElement('div');
+            empty.className = 'network-nav__empty';
+            empty.textContent = 'Este Site todavía no tiene ODF asociados.';
+            list.appendChild(empty);
+            return;
+        }
+
+        payload.odfs.forEach((odf) => {
+            const card = document.createElement('button');
+            card.type = 'button';
+            card.className = 'network-odf-card';
+            card.setAttribute('aria-label', 'Abrir ODF ' + odf.odf);
+            card.innerHTML =
+                '<span class="network-odf-card__head"><strong>' + displayValue(odf.odf) + '</strong>' +
+                '<span>' + displayValue(odf.sala) + ' · ' + displayValue(odf.rack) + ' ›</span></span>' +
+                '<span class="network-odf-card__counts">' +
+                '<span><b>' + networkNumber.format(odf.ocupados) + '</b>Ocupados</span>' +
+                '<span><b>' + networkNumber.format(odf.libres) + '</b>Libres</span>' +
+                '<span><b>' + networkNumber.format(odf.reservados) + '</b>Reservados</span>' +
+                '</span>';
+            card.addEventListener('click', () => openOdfNavigation(odf));
+            list.appendChild(card);
+        });
+    }
+
+    function networkPercent(value, total) {
+        if (!total) return 0;
+        return Math.min(100, Math.max(0, (Number(value || 0) / Number(total)) * 100));
+    }
+
+    function openOdfNavigation(odf) {
+        state.navigation.odf = odf;
+        state.navigation.loadedOdfId = null;
+        state.navigation.portPage = 1;
+        networkElement('network-site-view').hidden = true;
+        networkElement('network-odf-view').hidden = false;
+        setNetworkBreadcrumb('odf');
+
+        const accounted = Number(odf.ocupados || 0) + Number(odf.libres || 0) + Number(odf.reservados || 0);
+        const capacity = Math.max(Number(odf.capacidad || 0), accounted);
+        const usedPercent = networkPercent(odf.ocupados, capacity);
+        networkElement('network-odf-name').textContent = odf.odf;
+        networkElement('network-odf-location').textContent =
+            odf.site + ' → ' + odf.sala + ' → ' + odf.rack;
+        networkElement('network-odf-status').textContent = odf.estado || 'Sin estado';
+        networkElement('network-odf-capacity').textContent = networkNumber.format(capacity) + ' puertos';
+        networkElement('network-odf-used-label').textContent = networkNumber.format(odf.ocupados);
+        networkElement('network-odf-free-label').textContent = networkNumber.format(odf.libres);
+        networkElement('network-odf-reserved-label').textContent = networkNumber.format(odf.reservados);
+        networkElement('network-odf-used-progress').value = usedPercent;
+        networkElement('network-odf-free-progress').value = networkPercent(odf.libres, capacity);
+        networkElement('network-odf-reserved-progress').value = networkPercent(odf.reservados, capacity);
+        networkElement('network-odf-connector').textContent = odf.conector || '—';
+        networkElement('network-odf-utilization').textContent = usedPercent.toFixed(1) + '%';
+        networkElement('network-odf-360').href = odf.detail_url;
+        networkElement('network-odf-full-ports').href = odf.ports_url;
+        networkElement('network-odf-fibers').href = odf.fibers_url;
+        networkElement('network-odf-fibers').hidden = !state.navigation.sitePayload.permissions.view_fibers;
+        networkElement('network-tab-ports').hidden = !state.navigation.sitePayload.permissions.view_ports;
+        networkElement('network-odf-full-ports').hidden = !state.navigation.sitePayload.permissions.view_ports;
+        setOdfTab('summary');
+    }
+
+    function setOdfTab(tab) {
+        if (tab === 'ports' && state.navigation.sitePayload &&
+                !state.navigation.sitePayload.permissions.view_ports) {
+            return;
+        }
+        const isPorts = tab === 'ports';
+        const summaryButton = networkElement('network-tab-summary');
+        const portsButton = networkElement('network-tab-ports');
+        summaryButton.classList.toggle('is-active', !isPorts);
+        portsButton.classList.toggle('is-active', isPorts);
+        summaryButton.setAttribute('aria-selected', String(!isPorts));
+        portsButton.setAttribute('aria-selected', String(isPorts));
+        networkElement('network-odf-summary').hidden = isPorts;
+        networkElement('network-odf-ports').hidden = !isPorts;
+        if (isPorts && state.navigation.odf &&
+                state.navigation.loadedOdfId !== state.navigation.odf.id) {
+            loadOdfPorts(state.navigation.odf, 1);
+        }
+    }
+
+    function setPortGridMessage(message, isError) {
+        const grid = networkElement('network-port-grid');
+        const empty = document.createElement('div');
+        empty.className = 'network-nav__empty';
+        if (isError) empty.classList.add('network-nav__empty--error');
+        empty.textContent = message;
+        grid.replaceChildren(empty);
+    }
+
+    async function loadOdfPorts(odf, page) {
+        if (!odf || page < 1) return;
+        if (state.navigation.portAbortController) {
+            state.navigation.portAbortController.abort();
+        }
+        const controller = new AbortController();
+        state.navigation.portAbortController = controller;
+        setPortGridMessage('Cargando puertos…', false);
+        networkElement('network-port-detail').hidden = true;
+
+        const endpoint = networkElement('network-nav-panel').dataset.portsUrl;
+        const url = new URL(endpoint, window.location.origin);
+        url.searchParams.set('odf_id', odf.id);
+        url.searchParams.set('page', page);
+        url.searchParams.set('page_size', 48);
+        try {
+            const response = await fetch(url.toString(), {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                credentials: 'same-origin',
+                signal: controller.signal
+            });
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            const payload = await response.json();
+            if (payload.status !== 'success') throw new Error(payload.message || 'Respuesta no válida');
+            state.navigation.portPage = payload.pagination.page;
+            state.navigation.loadedOdfId = odf.id;
+            renderOdfPorts(payload);
+        } catch (error) {
+            if (error.name !== 'AbortError') {
+                setPortGridMessage('No se pudieron cargar los puertos. Inténtalo nuevamente.', true);
+            }
+        } finally {
+            if (state.navigation.portAbortController === controller) {
+                state.navigation.portAbortController = null;
+            }
+        }
+    }
+
+    function renderOdfPorts(payload) {
+        const summary = payload.summary;
+        const pagination = payload.pagination;
+        networkElement('network-ports-used').textContent = networkNumber.format(summary.ocupados);
+        networkElement('network-ports-free').textContent = networkNumber.format(summary.libres);
+        networkElement('network-ports-reserved').textContent = networkNumber.format(summary.reservados);
+        networkElement('network-port-total').textContent = networkNumber.format(pagination.total);
+        networkElement('network-port-page').textContent =
+            'Página ' + networkNumber.format(pagination.page) + ' de ' + networkNumber.format(pagination.total_pages);
+        networkElement('network-port-prev').disabled = !pagination.has_previous;
+        networkElement('network-port-next').disabled = !pagination.has_next;
+
+        const start = pagination.total ? ((pagination.page - 1) * pagination.page_size) + 1 : 0;
+        const end = Math.min(pagination.total, pagination.page * pagination.page_size);
+        networkElement('network-port-range').textContent =
+            pagination.total ? 'Puertos ' + start + '–' + end : 'Puertos';
+
+        const grid = networkElement('network-port-grid');
+        grid.replaceChildren();
+        if (!payload.data.length) {
+            setPortGridMessage('Este ODF no tiene puertos cargados.', false);
+            return;
+        }
+
+        payload.data.forEach((port) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            const status = String(port.estado || '').toLowerCase();
+            const stateClass = status.includes('reserv') ? 'is-reserved'
+                : status.includes('ocup') ? 'is-used' : 'is-free';
+            button.className = 'network-port ' + stateClass;
+            button.textContent = port.puerto || String(port.id);
+            button.title = 'Puerto ' + (port.puerto || port.id) + ' · ' + (port.estado || 'Libre');
+            button.addEventListener('click', () => {
+                grid.querySelectorAll('.network-port').forEach((item) => item.classList.remove('is-selected'));
+                button.classList.add('is-selected');
+                renderPortDetail(port);
+            });
+            grid.appendChild(button);
+        });
+    }
+
+    function renderPortDetail(port) {
+        const detail = networkElement('network-port-detail');
+        detail.innerHTML =
+            '<h4>Puerto ' + displayValue(port.puerto, port.id) + '</h4>' +
+            '<dl>' +
+            '<dt>Estado</dt><dd>' + displayValue(port.estado, 'Libre') + '</dd>' +
+            '<dt>Fibra</dt><dd>' + displayValue(port.fibra) + '</dd>' +
+            '<dt>Destino</dt><dd>' + displayValue(port.destino) + '</dd>' +
+            '<dt>Conector</dt><dd>' + displayValue(port.conector) + '</dd>' +
+            '<dt>Patchcord</dt><dd>' + displayValue(port.patchcord) + '</dd>' +
+            '</dl><a href="' + displayValue(port.detail_url, '#') + '">Abrir ficha 360° →</a>';
+        detail.hidden = false;
+    }
+
+    // Compatibilidad con los accesos existentes desde los popups de troncales.
+    window.closeOdfPanel = closeNetworkNavigation;
+    window.abrirPanelODF = async function(hubSite, odfNombre) {
+        const site = state.sites.find((item) => item.nombre === hubSite);
+        if (!site) return;
+        await openSiteNavigation(site.id, site.nombre);
+        const odf = state.navigation.sitePayload?.odfs.find((item) => item.odf === odfNombre);
+        if (odf) openOdfNavigation(odf);
+    };
 
 })();

@@ -57,6 +57,23 @@ FIBERGENIUS_MAP_ATTRIBUTION = config(
     default='&copy; CARTO / Esri',
 )
 
+# Limites defensivos para cargas masivas. Los archivos que superen estos
+# valores deben dividirse antes de importarse.
+FIBERGENIUS_MAX_UPLOAD_BYTES = config(
+    'FIBERGENIUS_MAX_UPLOAD_BYTES', default=25 * 1024 * 1024, cast=int
+)
+FIBERGENIUS_MAX_ZIP_ENTRIES = config(
+    'FIBERGENIUS_MAX_ZIP_ENTRIES', default=500, cast=int
+)
+FIBERGENIUS_MAX_ZIP_UNCOMPRESSED_BYTES = config(
+    'FIBERGENIUS_MAX_ZIP_UNCOMPRESSED_BYTES', default=100 * 1024 * 1024, cast=int
+)
+FIBERGENIUS_ACTIVITY_UPDATE_SECONDS = config(
+    'FIBERGENIUS_ACTIVITY_UPDATE_SECONDS', default=180, cast=int
+)
+DATA_UPLOAD_MAX_MEMORY_SIZE = FIBERGENIUS_MAX_UPLOAD_BYTES + (1024 * 1024)
+FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
+
 
 # Application definition
 

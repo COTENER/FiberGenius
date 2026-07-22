@@ -45,3 +45,28 @@ python -m venv .venv
 .venv/Scripts/python manage.py test --settings=onmsi_mapas.settings_pruebas
 ```
 
+La suite actual contiene 101 pruebas y cubre el 73 % del codigo Python medido. El
+flujo de integracion continua rechaza cambios que reduzcan la cobertura por debajo
+de ese umbral. Las pruebas adicionales cubren seguridad, permisos, inventario,
+webhooks, VeEX, trazas SOR, auditoria, Sites, perfiles de umbral y los indicadores
+del centro de control de inventario. Troncales, tramos, fibras y reservas usan
+consultas paginadas en servidor, indicadores filtrables y exportacion Excel.
+
+## Auditoria de la carga inicial
+
+Despues de aplicar migraciones, el inventario existente puede registrarse como una
+linea base reconstruida. Este comando no la presenta como una importacion ejecutada
+desde la GUI: conserva el origen, la fecha declarada, el hash SHA-256 del manifiesto
+y los conteos actuales del inventario.
+
+```bash
+python manage.py migrate
+python manage.py registrar_baseline_inventario \
+  --manifest /ruta/al/manifiesto.csv \
+  --fecha-origen 2026-07-18T12:00:00-05:00 \
+  --descripcion "Carga V5 reconstruida para homologacion" \
+  --usuario admin
+```
+
+Use un manifiesto verificado y respaldado. El comando rechaza el mismo hash si ya
+fue registrado.

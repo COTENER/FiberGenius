@@ -6,7 +6,7 @@ import math
 import glob
 import pandas as pd
 import numpy as np
-import xml.etree.ElementTree as ET
+from defusedxml import ElementTree as ET
 import logging
 
 logger = logging.getLogger('mapas')

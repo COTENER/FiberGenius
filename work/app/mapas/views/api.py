@@ -267,13 +267,13 @@ def get_traza_data(request, alarm_id):
         return JsonResponse({'status': 'error', 'message': 'No se pudo obtener la traza SOR ni localmente ni desde VeEX.'}, status=404)
 
     # pyotdr parsea archivos, así que usamos un temporal
+    tmp_path = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix='.sor') as tmp:
             tmp.write(sor_content)
             tmp_path = tmp.name
         
         status, results, tracedata = pyotdr.read.sorparse(tmp_path)
-        os.remove(tmp_path) # Limpiamos
 
         if status != "ok":
             return JsonResponse({'status': 'error', 'message': f'Error parseando archivo SOR: {status}'}, status=500)
@@ -324,8 +324,17 @@ def get_traza_data(request, alarm_id):
             }
         })
 
-    except Exception as e:
-        import traceback
-        return JsonResponse({'status': 'error', 'message': str(e), 'trace': traceback.format_exc()}, status=500)
+    except Exception:
+        logger.exception('Error procesando la traza SOR de la alarma %s', alarm_id)
+        return JsonResponse(
+            {'status': 'error', 'message': 'No se pudo procesar la traza SOR.'},
+            status=500,
+        )
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                logger.warning('No se pudo eliminar el temporal SOR %s', tmp_path)
 
 

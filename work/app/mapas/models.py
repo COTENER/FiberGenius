@@ -3,7 +3,7 @@ import uuid
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
-from django.db.models import F, Q
+from django.db.models import Count, F, Q
 from django.db.models.functions import Lower
 
 
@@ -480,6 +480,24 @@ class InventarioFibra(models.Model):
         ]
 
 
+ESTADOS_PUERTO_ODF = ('Libre', 'Ocupado', 'Reservado')
+ESTADOS_PUERTO_ODF_CHOICES = tuple((estado, estado) for estado in ESTADOS_PUERTO_ODF)
+
+
+def normalizar_estado_puerto_odf(valor, default='Libre'):
+    """Normaliza los estados admitidos sin cambiar el formato del Archivo E."""
+    equivalencias = {
+        'libre': 'Libre',
+        'disponible': 'Libre',
+        'ocupado': 'Ocupado',
+        'ocupada': 'Ocupado',
+        'en uso': 'Ocupado',
+        'reservado': 'Reservado',
+        'reservada': 'Reservado',
+    }
+    return equivalencias.get(str(valor or '').strip().casefold(), default)
+
+
 class InventarioODF(models.Model):
     """
     Representa la información general de un ODF (Optical Distribution Frame) en un Hub o Site.
@@ -492,6 +510,7 @@ class InventarioODF(models.Model):
     capacidad_puertos = models.IntegerField(blank=True, null=True, default=0, verbose_name="Capacidad")
     puertos_ocupados = models.IntegerField(blank=True, null=True, default=0, verbose_name="Ocupados")
     puertos_libres = models.IntegerField(blank=True, null=True, default=0, verbose_name="Libres")
+    puertos_reservados = models.IntegerField(blank=True, null=True, default=0, verbose_name="Reservados")
     tipo_conector = models.CharField(max_length=100, blank=True, null=True, verbose_name="Tipo Conector")
     estado = models.CharField(max_length=50, blank=True, null=True, verbose_name="Estado")
     observaciones = models.TextField(blank=True, null=True, verbose_name="Observaciones")
@@ -529,12 +548,19 @@ class InventarioODF(models.Model):
             self.puertos_detalle.update(odf=self.odf)
 
     def actualizar_contadores(self):
-        ocupados = self.puertos_detalle.filter(estado_puerto='Ocupado').count()
-        capacidad = max(self.capacidad_puertos or 0, self.puertos_detalle.count())
+        resumen = self.puertos_detalle.aggregate(
+            total=Count('id'),
+            ocupados=Count('id', filter=Q(estado_puerto='Ocupado')),
+            reservados=Count('id', filter=Q(estado_puerto='Reservado')),
+        )
+        ocupados = resumen['ocupados']
+        reservados = resumen['reservados']
+        capacidad = max(self.capacidad_puertos or 0, resumen['total'])
         type(self).objects.filter(pk=self.pk).update(
             capacidad_puertos=capacidad,
             puertos_ocupados=ocupados,
-            puertos_libres=max(capacidad - ocupados, 0),
+            puertos_libres=max(capacidad - ocupados - reservados, 0),
+            puertos_reservados=reservados,
         )
 
     def clean(self):
@@ -571,6 +597,10 @@ class InventarioODF(models.Model):
                 condition=Q(puertos_libres__isnull=True) | Q(puertos_libres__gte=0),
                 name='ck_odf_libres_no_negativos',
             ),
+            models.CheckConstraint(
+                condition=Q(puertos_reservados__isnull=True) | Q(puertos_reservados__gte=0),
+                name='ck_odf_reservados_no_negativos',
+            ),
         ]
 
 
@@ -584,7 +614,7 @@ class DetallePuertoODF(models.Model):
     bandeja = models.CharField(max_length=50, blank=True, null=True, verbose_name="Bandeja")
     puerto_odf = models.CharField(max_length=50, verbose_name="Puerto ODF")
     fibra = models.CharField(max_length=100, blank=True, null=True, verbose_name="Fibra")
-    estado_puerto = models.CharField(max_length=50, choices=[('Libre', 'Libre'), ('Ocupado', 'Ocupado')], default='Libre', verbose_name="Estado")
+    estado_puerto = models.CharField(max_length=50, choices=ESTADOS_PUERTO_ODF_CHOICES, default='Libre', verbose_name="Estado")
     tipo_conector = models.CharField(max_length=100, blank=True, null=True, verbose_name="Tipo Conector")
     patchcord = models.CharField(max_length=10, blank=True, null=True, verbose_name="Patchcord (Sí/No)")
     destino = models.CharField(max_length=150, blank=True, null=True, verbose_name="Destino")
@@ -661,6 +691,11 @@ class HubSite(models.Model):
 class LoteImportacion(models.Model):
     """Audita el origen, resultado y reversibilidad de cada carga masiva."""
 
+    ORIGENES_REGISTRO = [
+        ('GUI', 'Importacion ejecutada desde la GUI'),
+        ('BASELINE_RECONSTRUIDO', 'Baseline reconstruido para homologacion'),
+    ]
+
     ESTADOS = [
         ('PENDIENTE', 'Pendiente'),
         ('PROCESANDO', 'Procesando'),
@@ -687,6 +722,14 @@ class LoteImportacion(models.Model):
     filas_actualizadas = models.PositiveIntegerField(default=0)
     filas_rechazadas = models.PositiveIntegerField(default=0)
     detalle_errores = models.JSONField(default=list, blank=True)
+    origen_registro = models.CharField(
+        max_length=30,
+        choices=ORIGENES_REGISTRO,
+        default='GUI',
+        db_index=True,
+    )
+    fecha_origen = models.DateTimeField(null=True, blank=True)
+    metadatos_origen = models.JSONField(default=dict, blank=True)
     creado_en = models.DateTimeField(auto_now_add=True)
     finalizado_en = models.DateTimeField(null=True, blank=True)
 
@@ -1116,6 +1159,10 @@ class AlarmaVeex(models.Model):
             models.Index(fields=['alarm_type', '-fecha_registro'], name='ix_alarma_tipo_fecha'),
             models.Index(fields=['device_serial', 'port'], name='ix_alarma_equipo_puerto'),
             models.Index(fields=['route_name'], name='ix_alarma_ruta_texto'),
+            models.Index(
+                fields=['route_name', 'port', 'status'],
+                name='ix_alarma_ruta_puerto_estado',
+            ),
         ]
         constraints = [
             models.UniqueConstraint(

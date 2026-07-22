@@ -229,10 +229,12 @@
     }
     .stat-box.ocupado { border-color: rgba(16, 185, 129, 0.3); background: rgba(16, 185, 129, 0.05); }
     .stat-box.libre { border-color: rgba(100, 116, 139, 0.3); background: rgba(100, 116, 139, 0.05); }
+    .stat-box.reservado { border-color: rgba(232, 138, 8, 0.35); background: rgba(232, 138, 8, 0.08); }
     .stat-val { font-size: 20px; font-weight: 700; margin-bottom: 2px; }
     .stat-lbl { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; color: var(--text-secondary); }
     .stat-box.ocupado .stat-val { color: #10b981; }
     .stat-box.libre .stat-val { color: #64748b; }
+    .stat-box.reservado .stat-val { color: #d77b00; }
     
     .ports-grid-container {
         display: grid;
@@ -261,8 +263,14 @@
         background: rgba(100, 116, 139, 0.05);
         color: #64748b;
     }
+    .port-box.reservado {
+        border-color: #e88a08;
+        background: rgba(232, 138, 8, 0.1);
+        color: #c87300;
+    }
     .port-box.ocupado:hover { background: rgba(16, 185, 129, 0.2); transform: translateY(-2px); box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.2); }
     .port-box.libre:hover { background: rgba(100, 116, 139, 0.15); transform: translateY(-2px); box-shadow: 0 4px 6px -1px rgba(100, 116, 139, 0.2); }
+    .port-box.reservado:hover { background: rgba(232, 138, 8, 0.2); transform: translateY(-2px); box-shadow: 0 4px 6px -1px rgba(232, 138, 8, 0.2); }
 
     .port-tooltip {
         position: absolute;
@@ -551,12 +559,14 @@
         filter: brightness(0.9) contrast(1.1);
     }
 </style>
+<link rel="stylesheet" href="{% static 'css/mapa-red-v2.css' %}?v=20260721-3">
 {% endblock %}
 
-{% block content_class %}no-padding{% endblock %}
+{% block content_class %}main-content--full{% endblock %}
 
 {% block content %}
 <div class="map-layout">
+    <h1 class="sr-only">Mapa de red del inventario</h1>
     <div class="map-layout__main">
         <!-- Search Container -->
         <div class="search-container">
@@ -621,15 +631,41 @@
             data-tile-satellite="{{ fg_map_tile_satellite }}"
             data-tile-attribution="{{ fg_map_attribution }}"
         ></div>
-        
-        <button id="fullscreen-map-btn" class="map-control map-control--top-right" title="Pantalla Completa">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
-            </svg>
-        </button>
 
-        <div class="inventario-leyenda">
-            <div class="leyenda-titulo">Tipo de Trazado</div>
+        <div id="map-state" class="map-state is-visible map-state--loading" role="status" aria-live="polite">
+            <div class="map-state__icon" aria-hidden="true">
+                <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+            </div>
+            <div class="map-state__content">
+                <strong id="map-state-title">Cargando red…</strong>
+                <span id="map-state-text">Preparando troncales y puntos geográficos.</span>
+            </div>
+            <button id="map-state-retry" type="button" class="map-state__action" hidden>Reintentar</button>
+        </div>
+
+        <div class="map-actions" aria-label="Controles del mapa">
+            <button id="map-layers-toggle" class="map-action" type="button" aria-expanded="false" aria-controls="map-layers-panel" title="Abrir capas">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg>
+                <span>Capas</span>
+            </button>
+            <button id="fullscreen-map-btn" class="map-action map-action--icon" type="button" title="Pantalla completa" aria-label="Ver mapa en pantalla completa">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
+                </svg>
+            </button>
+        </div>
+
+        <div id="map-layers-panel" class="inventario-leyenda" aria-hidden="true">
+            <div class="leyenda-header">
+                <div>
+                    <span class="leyenda-eyebrow">Visualización</span>
+                    <div class="leyenda-titulo">Capas de red</div>
+                </div>
+                <button id="map-layers-close" class="leyenda-close" type="button" aria-label="Cerrar capas">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                </button>
+            </div>
+            <div class="leyenda-seccion">Tipo de trazado</div>
             <label class="leyenda-item">
                 <input type="checkbox" id="chk-aereo" value="AEREO" checked style="margin-right: 8px;">
                 <div class="leyenda-color" style="background-color: #3b82f6;"></div>
@@ -637,12 +673,12 @@
             </label>
             <label class="leyenda-item">
                 <input type="checkbox" id="chk-soterrado" value="SOTERRADO" checked style="margin-right: 8px;">
-                <div class="leyenda-color" style="background-color: #ef4444;"></div>
+                <div class="leyenda-color" style="background-color: #f59e0b;"></div>
                 <span>Soterrado</span>
             </label>
             <label class="leyenda-item">
                 <input type="checkbox" id="chk-hibrido" value="HIBRIDO" checked style="margin-right: 8px;">
-                <div class="leyenda-color" style="background: linear-gradient(90deg, #3b82f6 50%, #ef4444 50%);"></div>
+                <div class="leyenda-color" style="background-color: #8b5cf6;"></div>
                 <span>Híbrido</span>
             </label>
             <label class="leyenda-item">
@@ -651,7 +687,7 @@
                 <span>Sin Clasificar</span>
             </label>
             <hr style="margin: 10px 0; border: 0; border-top: 1px solid var(--border);">
-            <div class="leyenda-titulo" style="margin-top: 10px;">Complementos</div>
+            <div class="leyenda-seccion" style="margin-top: 10px;">Complementos</div>
             <label class="leyenda-item" style="cursor: pointer;">
                 <div class="toggle-switch" style="margin-right: 10px;">
                     <input type="checkbox" id="chk-rutas-global" checked>
@@ -669,63 +705,86 @@
                 </div>
                 <div class="toggle-label-content">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" style="margin-right: 6px;"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                    <span>Mostrar Todas las Reservas</span>
+                    <span>Mostrar todas las reservas</span>
                 </div>
             </label>
             <hr style="margin: 10px 0; border: 0; border-top: 1px solid var(--border);">
             <div style="font-size: 11px; color: var(--text-tertiary); text-align: center;">
-                Haz clic en una ruta para ver su inventario.
+                Selecciona una ruta para revisar su detalle operativo.
             </div>
         </div>
         
-        <!-- ODF Side Panel -->
-        <div id="odf-side-panel" class="odf-side-panel">
-            <div class="odf-panel-header">
-                <div class="odf-header-info">
-                    <h2 id="sp-odf-name">ODF TR01</h2>
-                    <p id="sp-odf-hub"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg> <span id="sp-hub-name">Site</span></p>
-                    <p id="sp-odf-troncal" style="margin-top: 4px; font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 4px; font-weight: 500;">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-                        <span id="sp-troncal-name">Troncal: Cargando...</span>
-                    </p>
-                </div>
-                <button class="btn-close-panel" onclick="closeOdfPanel()" title="Cerrar Panel">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        <aside
+            id="network-nav-panel"
+            class="network-nav-panel"
+            aria-label="Navegación de Site, ODF y puertos"
+            aria-hidden="true"
+            data-site-url-template="{% url 'api_mapa_site_navigation' 0 %}"
+            data-ports-url="{% url 'api_puertos_paginados' %}"
+        >
+            <header class="network-nav__header">
+                <nav id="network-nav-breadcrumb" class="network-nav__breadcrumb" aria-label="Ruta del inventario"></nav>
+                <button id="network-nav-close" class="network-nav__close" type="button" aria-label="Cerrar navegación">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
                 </button>
-            </div>
-            <div class="odf-panel-body">
-                <div id="sp-loading" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 200px; color: var(--text-tertiary);">
-                    <svg style="animation: spin 1s linear infinite; margin-bottom: 12px; color: var(--primary);" xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-                    <span style="font-size: 12px; font-weight: 600;">Cargando puertos...</span>
+            </header>
+            <div class="network-nav__body">
+                <div id="network-nav-loading" class="network-nav__state" hidden>
+                    <span class="network-nav__spinner" aria-hidden="true"></span>
+                    <strong>Cargando inventario…</strong>
+                    <small>Consultando únicamente el nivel seleccionado.</small>
                 </div>
-                
-                <div id="sp-content" style="display: none;">
-                    <div class="odf-stats">
-                        <div class="stat-box ocupado">
-                            <div class="stat-val" id="sp-count-ocupados">0</div>
-                            <div class="stat-lbl">Puertos Ocupados</div>
-                        </div>
-                        <div class="stat-box libre">
-                            <div class="stat-val" id="sp-count-libres">0</div>
-                            <div class="stat-lbl">Puertos Libres</div>
-                        </div>
+                <div id="network-nav-error" class="network-nav__state network-nav__state--error" hidden></div>
+
+                <section id="network-site-view" hidden>
+                    <div class="network-nav__identity">
+                        <span class="network-nav__identity-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21V8l8-4v17M12 10h8v11M8 10v.01M8 14v.01M8 18v.01M16 14v.01M16 18v.01"/></svg></span>
+                        <div><span class="network-nav__eyebrow">Site seleccionado</span><h2 id="network-site-name">Site</h2><p id="network-site-meta">Ubicación de red</p></div>
                     </div>
-                    
-                    <h3 style="font-size:13px; font-weight:700; color:var(--text-primary); margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;">
-                        <span>Estado de Puertos</span>
-                        <span id="sp-total-ports" style="font-size: 11px; font-weight: 600; color: var(--text-secondary); background: var(--bg-surface-2); padding: 2px 8px; border-radius: 12px;">Total: 0</span>
-                    </h3>
-                    <div id="sp-ports-grid" class="ports-grid-container">
-                        <!-- Puertos inyectados por JS -->
+                    <div class="network-nav__metrics">
+                        <article><span>ODF</span><strong id="network-site-odfs">0</strong></article>
+                        <article><span>Capacidad</span><strong id="network-site-capacity">0</strong></article>
+                        <article class="is-free"><span>Libres</span><strong id="network-site-free">0</strong></article>
+                        <article class="is-reserved"><span>Reservados</span><strong id="network-site-reserved">0</strong></article>
                     </div>
-                </div>
+                    <div class="network-nav__section-heading"><div><span>Inventario interno</span><h3>ODF del Site</h3></div><span id="network-site-odf-count" class="network-nav__count">0</span></div>
+                    <div id="network-odf-list" class="network-odf-list"></div>
+                    <p id="network-odf-truncated" class="network-nav__notice" hidden>Se muestran los primeros 100 ODF. Abre el inventario completo para consultar el resto.</p>
+                    <footer class="network-nav__actions"><a id="network-site-360" href="#">Ficha 360°</a><a id="network-site-inventory" href="#">Ver todos los ODF</a></footer>
+                </section>
+
+                <section id="network-odf-view" hidden>
+                    <div class="network-nav__identity network-nav__identity--odf">
+                        <span class="network-nav__identity-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h10M7 16h10"/></svg></span>
+                        <div><span class="network-nav__eyebrow">Detalle de ODF</span><h2 id="network-odf-name">ODF</h2><p id="network-odf-location">Site → Sala → Rack</p></div>
+                        <span id="network-odf-status" class="network-nav__status">Sin estado</span>
+                    </div>
+                    <div class="network-nav__tabs" role="tablist" aria-label="Detalle del ODF">
+                        <button id="network-tab-summary" class="is-active" type="button" role="tab" aria-selected="true">Resumen</button>
+                        <button id="network-tab-ports" type="button" role="tab" aria-selected="false">Puertos</button>
+                    </div>
+                    <div id="network-odf-summary" role="tabpanel">
+                        <div class="network-nav__capacity"><div><strong>Ocupación de puertos</strong><span id="network-odf-capacity">0 puertos</span></div>
+                            <label><span>Ocupados <b id="network-odf-used-label">0</b></span><progress id="network-odf-used-progress" max="100" value="0"></progress></label>
+                            <label><span>Libres <b id="network-odf-free-label">0</b></span><progress id="network-odf-free-progress" class="is-free" max="100" value="0"></progress></label>
+                            <label><span>Reservados <b id="network-odf-reserved-label">0</b></span><progress id="network-odf-reserved-progress" class="is-reserved" max="100" value="0"></progress></label>
+                        </div>
+                        <div class="network-nav__odf-meta"><div><span>Conector</span><strong id="network-odf-connector">—</strong></div><div><span>Utilización</span><strong id="network-odf-utilization">0%</strong></div></div>
+                    </div>
+                    <div id="network-odf-ports" role="tabpanel" hidden>
+                        <div class="network-port-stats"><article><span>Ocupados</span><strong id="network-ports-used">0</strong></article><article class="is-free"><span>Libres</span><strong id="network-ports-free">0</strong></article><article class="is-reserved"><span>Reservados</span><strong id="network-ports-reserved">0</strong></article></div>
+                        <div class="network-port-grid-heading"><h3 id="network-port-range">Puertos</h3><span id="network-port-total">0</span></div>
+                        <div id="network-port-grid" class="network-port-grid"></div>
+                        <div id="network-port-pager" class="network-port-pager"><button id="network-port-prev" type="button" aria-label="Página anterior">←</button><span id="network-port-page">Página 1</span><button id="network-port-next" type="button" aria-label="Página siguiente">→</button></div>
+                        <article id="network-port-detail" class="network-port-detail" hidden></article>
+                    </div>
+                    <footer class="network-nav__actions"><a id="network-odf-360" href="#">Ficha 360°</a><a id="network-odf-full-ports" href="#">Ver Puertos ODF</a><a id="network-odf-fibers" href="#">Ver fibras</a></footer>
+                </section>
             </div>
-        </div>
-        <!-- Draggable Route Popup -->
-        <div id="draggable-route-popup" class="draggable-popup"></div>
+        </aside>
+        <!-- Panel contextual de la troncal seleccionada -->
+        <aside id="draggable-route-popup" class="draggable-popup" aria-label="Detalle de troncal" aria-live="polite" aria-hidden="true"></aside>
         
-        <!-- Tooltip para hover de puertos -->
-        <div id="port-tooltip" class="port-tooltip"></div>
     </div>
 </div>
 <style>
@@ -736,5 +795,5 @@
 {% block extra_js %}
 <script src="{% static 'vendor/jquery/jquery-3.6.0.min.js' %}"></script>
 <script src="{% static 'vendor/leaflet/leaflet-1.9.4.js' %}" crossorigin=""></script>
-<script src="{% static 'js/mapa_inventario.js' %}"></script>
+<script src="{% static 'js/mapa_inventario.js' %}?v=20260721-3"></script>
 {% endblock %}

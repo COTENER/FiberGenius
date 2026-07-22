@@ -1,5 +1,6 @@
 from django.utils.timezone import now
-from django.contrib.auth.models import User
+from django.conf import settings
+from django.core.cache import cache
 from .models import UserActivity
 
 class ActiveUserMiddleware:
@@ -13,11 +14,16 @@ class ActiveUserMiddleware:
 
     def __call__(self, request):
         if request.user.is_authenticated:
-            # Usar update_or_create para manejar usuarios que no tienen actividad previa.
-            UserActivity.objects.update_or_create(
-                user=request.user,
-                defaults={'last_activity': now()}
+            intervalo = max(
+                30,
+                int(getattr(settings, 'FIBERGENIUS_ACTIVITY_UPDATE_SECONDS', 180)),
             )
+            cache_key = f'fibergenius:user-activity:{request.user.pk}'
+            if cache.add(cache_key, True, timeout=intervalo):
+                UserActivity.objects.update_or_create(
+                    user=request.user,
+                    defaults={'last_activity': now()},
+                )
 
         response = self.get_response(request)
         return response

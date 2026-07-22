@@ -1,0 +1,130 @@
+<section class="inv-dashboard" aria-labelledby="inventory-dashboard-title">
+    <header class="inv-dashboard__heading">
+        <div>
+            <span class="inv-dashboard__eyebrow">Visión consolidada de la red</span>
+            <h1 id="inventory-dashboard-title">Dashboard de Inventario</h1>
+        </div>
+        <span class="inv-dashboard__quality {% if inventario_con_datos %}is-ready{% endif %}">
+            <span aria-hidden="true"></span>
+            {% if inventario_con_datos %}Calidad {{ calidad_inventario }}%{% else %}Sin datos cargados{% endif %}
+        </span>
+    </header>
+
+    <form class="inv-filterbar" method="get" aria-label="Filtros del dashboard">
+        <label class="inv-filter">
+            <span class="inv-filter__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M6 21V7l6-4 6 4v14M9 10h.01M9 14h.01M9 18h.01M15 10h.01M15 14h.01M15 18h.01"/></svg>
+            </span>
+            <span class="inv-filter__copy"><small>Site</small>
+                <select name="site" onchange="this.form.submit()">
+                    <option value="">Todos los sites</option>
+                    {% for site in sites_disponibles %}<option value="{{ site.nombre }}" {% if site_seleccionado == site.nombre %}selected{% endif %}>{{ site.nombre }}</option>{% endfor %}
+                </select>
+            </span>
+        </label>
+        <label class="inv-filter">
+            <span class="inv-filter__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17V7m0 5h16M20 7v10"/><circle cx="4" cy="7" r="2"/><circle cx="20" cy="17" r="2"/></svg>
+            </span>
+            <span class="inv-filter__copy"><small>Tipo de trazado</small>
+                <select name="trazado" onchange="this.form.submit()">
+                    <option value="">Todos los tipos</option>
+                    <option value="AEREO" {% if trazado_seleccionado == 'AEREO' %}selected{% endif %}>Aéreo</option>
+                    <option value="SOTERRADO" {% if trazado_seleccionado == 'SOTERRADO' %}selected{% endif %}>Soterrado</option>
+                    <option value="HIBRIDO" {% if trazado_seleccionado == 'HIBRIDO' %}selected{% endif %}>Híbrido</option>
+                </select>
+            </span>
+        </label>
+        <div class="inv-filter inv-filter--status">
+            <span class="inv-filter__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></svg>
+            </span>
+            <span class="inv-filter__copy"><small>Estado del inventario</small><strong>{% if not inventario_con_datos %}Sin datos · No evaluable{% elif alertas_inventario %}Requiere revisión{% else %}Sin alertas{% endif %}</strong></span>
+        </div>
+        {% if site_seleccionado or trazado_seleccionado %}
+        <a class="inv-filterbar__clear" href="{% url 'dashboard_inventario' %}">Limpiar filtros</a>
+        {% endif %}
+        <details class="inv-export">
+            <summary><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>Exportar</summary>
+            <div class="inv-export__menu">
+                <a href="{% url 'exportar_inventario' 'fibras' 'xlsx' %}">Fibras · Excel</a>
+                <a href="{% url 'exportar_inventario' 'puertos' 'xlsx' %}">Puertos · Excel</a>
+                <a href="{% url 'exportar_inventario' 'odfs' 'xlsx' %}">ODF · Excel</a>
+            </div>
+        </details>
+    </form>
+
+    <div class="inv-kpi-grid" aria-label="Totales de inventario">
+        <article class="inv-kpi inv-kpi--blue">
+            <span class="inv-kpi__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M6 21V7l6-4 6 4v14M9 10h.01M9 14h.01M15 10h.01M15 14h.01"/></svg></span>
+            <div><span>Sites / Hubs</span><strong>{{ total_sites }}</strong><small>{{ sites_georreferenciados }} georreferenciados</small></div>
+        </article>
+        <article class="inv-kpi inv-kpi--teal">
+            <span class="inv-kpi__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8h10M7 12h10M7 16h10"/></svg></span>
+            <div><span>ODF</span><strong>{{ total_odfs }}</strong><small>{{ total_salas }} salas · {{ total_racks }} racks</small></div>
+        </article>
+        <article class="inv-kpi inv-kpi--purple">
+            <span class="inv-kpi__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 3v18M16 3v18M3 9h18M3 15h18"/></svg></span>
+            <div><span>Puertos ODF</span><strong>{{ total_puertos }}</strong><small>{{ puertos_libres }} disponibles · {{ puertos_reservados }} reservados</small></div>
+        </article>
+        <article class="inv-kpi inv-kpi--orange">
+            <span class="inv-kpi__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="5" r="2"/><circle cx="19" cy="12" r="2"/><path d="m7 11 3.5-4.5M13.5 6.5 17 11M7 13h10"/></svg></span>
+            <div><span>Rutas / Tramos</span><strong>{{ total_rutas }} / {{ total_tramos }}</strong><small>{{ total_km }} km desplegados</small></div>
+        </article>
+        <article class="inv-kpi inv-kpi--sky">
+            <span class="inv-kpi__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17c4-8 12-8 16 0M6 20c3-5 9-5 12 0M8 14c2-4 6-4 8 0"/></svg></span>
+            <div><span>Fibras</span><strong>{{ total_fibras }}</strong><small>{{ fibras_libres }} disponibles</small></div>
+        </article>
+        <article class="inv-kpi inv-kpi--green">
+            <span class="inv-kpi__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12v18l-6-4-6 4Z"/></svg></span>
+            <div><span>Reservas</span><strong>{{ total_reservas }}</strong><small>{{ total_reservas_km }} km técnicos</small></div>
+        </article>
+    </div>
+
+    <div class="inv-chart-grid">
+        <article class="inv-panel">
+            <header class="inv-panel__header"><div><h2>Inventario por tipo</h2><p>Comparación de activos registrados.</p></div><span class="inv-info" title="Totales según los filtros activos">i</span></header>
+            {% if inventario_con_datos %}<div class="inv-chart"><canvas id="inventoryTypeChartV3"></canvas></div>{% else %}{% include "mapa_inventario/partials/dashboard_empty.html" with empty_title="Sin activos registrados" empty_text="Importa el inventario para habilitar esta comparación." %}{% endif %}
+        </article>
+        <article class="inv-panel">
+            <header class="inv-panel__header"><div><h2>Estado de puertos</h2><p>Disponibilidad actual en ODF.</p></div><span class="inv-info" title="Puertos libres y ocupados">i</span></header>
+            {% if total_puertos %}<div class="inv-chart inv-chart--donut"><canvas id="portStatusChartV3" data-free="{{ puertos_libres }}" data-used="{{ puertos_ocupados }}" data-reserved="{{ puertos_reservados }}"></canvas><div class="inv-donut-total"><strong>{{ total_puertos }}</strong><span>Total</span></div></div>{% else %}{% include "mapa_inventario/partials/dashboard_empty.html" with empty_title="Sin puertos registrados" empty_text="Los estados aparecerán al cargar el detalle de ODF." %}{% endif %}
+        </article>
+        <article class="inv-panel">
+            <header class="inv-panel__header"><div><h2>Actividad de cargas</h2><p>Registros creados o actualizados por lote.</p></div><span class="inv-info" title="Últimos cinco lotes auditados">i</span></header>
+            {% if lotes_recientes %}<div class="inv-chart"><canvas id="loadActivityChartV3"></canvas></div>{% else %}{% include "mapa_inventario/partials/dashboard_empty.html" with empty_title="Sin historial de cargas" empty_text="Los lotes procesados desde la GUI aparecerán aquí." %}{% endif %}
+        </article>
+    </div>
+
+    <div class="inv-bottom-grid">
+        <article class="inv-panel inv-panel--map">
+            <header class="inv-panel__header"><div><h2>Vista geográfica de la red</h2><p>{{ sites_georreferenciados }} sites disponibles en el mapa.</p></div><a href="{% url 'mapa_inventario' %}">Abrir mapa completo</a></header>
+            {% if sites_georreferenciados %}<div id="inventoryOverviewMapV3" class="inv-map" data-tile-light="{{ MAP_TILE_URL_LIGHT }}" data-tile-dark="{{ MAP_TILE_URL_DARK }}" data-attribution="{{ MAP_TILE_ATTRIBUTION }}"></div>{% else %}{% include "mapa_inventario/partials/dashboard_empty.html" with empty_title="Sin sites georreferenciados" empty_text="Agrega coordenadas para construir la vista de cobertura." %}{% endif %}
+        </article>
+        <article class="inv-panel inv-panel--loads">
+            <header class="inv-panel__header"><div><h2>Últimas cargas</h2><p>Trazabilidad de los lotes más recientes.</p></div><a href="{% url 'configuracion' %}">Ver historial</a></header>
+            <div class="inv-table-wrap">
+                <table class="inv-table">
+                    <caption class="sr-only">Últimos lotes de importación</caption>
+                    <thead><tr><th scope="col">Archivo</th><th scope="col">Tipo</th><th scope="col">Registros</th><th scope="col">Fecha</th><th scope="col">Estado</th><th scope="col">Usuario</th></tr></thead>
+                    <tbody>
+                    {% for lote in lotes_recientes %}
+                        <tr>
+                            <td><span class="inv-file-icon">↗</span><span title="{{ lote.archivo }}">{{ lote.archivo|truncatechars:28 }}</span></td>
+                            <td>{{ lote.tipo }}</td><td>{{ lote.registros }}</td><td>{{ lote.fecha|date:"d/m/Y H:i" }}</td>
+                            <td><span class="inv-status {% if lote.estado == 'COMPLETADO' %}is-ok{% elif lote.estado == 'FALLIDO' or lote.estado == 'COMPLETADO_CON_ERRORES' %}is-error{% elif lote.estado == 'PROCESANDO' or lote.estado == 'PENDIENTE' %}is-pending{% else %}is-neutral{% endif %}">{{ lote.estado_label }}</span></td>
+                            <td>{{ lote.usuario }}</td>
+                        </tr>
+                    {% empty %}<tr><td colspan="6" class="inv-table__empty">Todavía no existen lotes de importación auditados.</td></tr>{% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </article>
+    </div>
+
+    {{ inventario_tipo_labels|json_script:"inventory-type-labels-v3" }}
+    {{ inventario_tipo_values|json_script:"inventory-type-values-v3" }}
+    {{ actividad_cargas_labels|json_script:"load-activity-labels-v3" }}
+    {{ actividad_cargas_values|json_script:"load-activity-values-v3" }}
+    {{ sites_map_data|json_script:"sites-map-data-v3" }}
+</section>

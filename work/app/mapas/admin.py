@@ -79,7 +79,10 @@ class RackFisicoAdmin(admin.ModelAdmin):
 
 @admin.register(InventarioODF)
 class InventarioODFAdmin(admin.ModelAdmin):
-    list_display = ('odf', 'rack_obj', 'capacidad_puertos', 'puertos_ocupados', 'puertos_libres')
+    list_display = (
+        'odf', 'rack_obj', 'capacidad_puertos', 'puertos_ocupados',
+        'puertos_libres', 'puertos_reservados',
+    )
     search_fields = ('odf', 'rack_obj__nombre', 'rack_obj__sala__hub_site__nombre')
 
 

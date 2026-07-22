@@ -9,6 +9,7 @@ import zipfile
 from decimal import Decimal, InvalidOperation
 
 import pandas as pd
+from django.conf import settings
 from django.shortcuts import render, redirect
 from django.contrib.auth.decorators import login_required, permission_required
 from django.contrib import messages
@@ -26,6 +27,41 @@ from ..models import (
 logger = logging.getLogger('mapas')
 
 VALORES_VACIOS = {'', '-', 'nan', 'none', 'null', 'sin_dato', 'no_aplica', 'n/a'}
+
+
+def _validar_archivo_subido(archivo, *, es_zip=False):
+    limite = int(getattr(settings, 'FIBERGENIUS_MAX_UPLOAD_BYTES', 25 * 1024 * 1024))
+    tamano = getattr(archivo, 'size', None)
+    if tamano is not None and tamano > limite:
+        raise ValueError(f'El archivo supera el limite permitido de {limite // (1024 * 1024)} MB.')
+
+    if not es_zip:
+        return
+
+    posicion = archivo.tell()
+    try:
+        archivo.seek(0)
+        with zipfile.ZipFile(archivo, 'r') as paquete:
+            entradas = [info for info in paquete.infolist() if not info.is_dir()]
+            max_entradas = int(getattr(settings, 'FIBERGENIUS_MAX_ZIP_ENTRIES', 500))
+            if len(entradas) > max_entradas:
+                raise ValueError(f'El ZIP contiene mas de {max_entradas} archivos.')
+            total = sum(info.file_size for info in entradas)
+            max_total = int(
+                getattr(
+                    settings,
+                    'FIBERGENIUS_MAX_ZIP_UNCOMPRESSED_BYTES',
+                    100 * 1024 * 1024,
+                )
+            )
+            if total > max_total:
+                raise ValueError(
+                    f'El contenido descomprimido supera {max_total // (1024 * 1024)} MB.'
+                )
+    except zipfile.BadZipFile as exc:
+        raise ValueError('El archivo ZIP no es valido.') from exc
+    finally:
+        archivo.seek(posicion)
 
 
 def _texto(valor, default=''):
@@ -733,7 +769,9 @@ def _procesar_puertos_odf_inventario(file, lote=None):
     """Carga el detalle granular de puertos de ODF desde un CSV (Archivo E)"""
     decoded_file = file.read().decode('utf-8')
     df = pd.read_csv(io.StringIO(decoded_file))
-    from ..models import DetallePuertoODF, InventarioODF
+    from ..models import (
+        DetallePuertoODF, InventarioODF, normalizar_estado_puerto_odf,
+    )
 
     requeridas = {'hub_site', 'odf', 'puerto_odf'}
     faltantes = requeridas - set(df.columns)
@@ -769,9 +807,10 @@ def _procesar_puertos_odf_inventario(file, lote=None):
             raise ValueError(f'Fila {numero_fila}: puerto duplicado {odf_nombre} / {puerto_num}.')
         claves_archivo.add(clave)
         odf_ids.add(odf_obj.pk)
-        estado = limpio(row.get('estado_puerto'), 'Libre').capitalize()
-        if estado not in {'Libre', 'Ocupado'}:
-            raise ValueError(f'Fila {numero_fila}: estado de puerto inválido: {estado}.')
+        estado_original = limpio(row.get('estado_puerto'), 'Libre')
+        estado = normalizar_estado_puerto_odf(estado_original, default=None)
+        if not estado:
+            raise ValueError(f'Fila {numero_fila}: estado de puerto inválido: {estado_original}.')
         filas.append((odf_obj, puerto_num, {
             'odf': odf_nombre,
             'bandeja': limpio(row.get('bandeja')),
@@ -833,11 +872,20 @@ def _procesar_puertos_odf_inventario(file, lote=None):
     }
     odfs_actualizar = list(InventarioODF.objects.filter(pk__in=odf_ids))
     for odf_obj in odfs_actualizar:
-        odf_obj.puertos_ocupados = conteos.get((odf_obj.pk, 'Ocupado'), 0)
-        odf_obj.puertos_libres = conteos.get((odf_obj.pk, 'Libre'), 0)
+        ocupados = conteos.get((odf_obj.pk, 'Ocupado'), 0)
+        reservados = conteos.get((odf_obj.pk, 'Reservado'), 0)
+        total_detalle = sum(
+            conteos.get((odf_obj.pk, estado), 0)
+            for estado in ('Libre', 'Ocupado', 'Reservado')
+        )
+        capacidad = max(odf_obj.capacidad_puertos or 0, total_detalle)
+        odf_obj.capacidad_puertos = capacidad
+        odf_obj.puertos_ocupados = ocupados
+        odf_obj.puertos_reservados = reservados
+        odf_obj.puertos_libres = max(capacidad - ocupados - reservados, 0)
     InventarioODF.objects.bulk_update(
         odfs_actualizar,
-        ['puertos_ocupados', 'puertos_libres'],
+        ['capacidad_puertos', 'puertos_ocupados', 'puertos_libres', 'puertos_reservados'],
         batch_size=200,
     )
 
@@ -1069,8 +1117,17 @@ def cargar_csv(request, tipo_csv):
             archivo_subido = request.FILES['csv_file']
 
             extension_valida = '.zip' if tipo_csv in ['coordenadas_rutas', 'coordenadas_inventario'] else '.csv'
-            if not archivo_subido.name.endswith(extension_valida):
+            if not archivo_subido.name.casefold().endswith(extension_valida):
                 messages.error(request, f"El archivo debe ser de formato {extension_valida}.")
+                return redirect('configuracion')
+
+            try:
+                _validar_archivo_subido(
+                    archivo_subido,
+                    es_zip=extension_valida == '.zip',
+                )
+            except ValueError as exc:
+                messages.error(request, str(exc))
                 return redirect('configuracion')
 
             digest = hashlib.sha256()
@@ -1090,32 +1147,37 @@ def cargar_csv(request, tipo_csv):
                 resultado = procesador_func(archivo_subido, **kwargs_procesador)
                 if not isinstance(resultado, dict):
                     resultado = _resultado()
+                filas_rechazadas = int(resultado.get('rechazadas', 0) or 0)
+                notificar = messages.warning if filas_rechazadas else messages.success
 
                 if tipo_csv == 'asociar_puertos':
-                    messages.success(
+                    notificar(
                         request,
                         f"Proceso completado. Se asociaron {resultado['actualizadas']} puertos a sus rutas."
                     )
                 elif tipo_csv == 'coordenadas_csv':
-                    messages.success(
+                    notificar(
                         request,
                         'Carga unificada exitosa. Se actualizaron las coordenadas de '
                         f"{resultado.get('rutas_actualizadas', 0)} rutas."
                     )
                 elif tipo_csv == 'coordenadas_rutas_csv':
-                    messages.success(
+                    notificar(
                         request,
                         'Carga de trazado unificado exitosa. Se actualizaron las coordenadas de '
                         f"{resultado.get('rutas_actualizadas', 0)} rutas."
                     )
                 else:
-                    messages.success(request, f"Los datos de '{nombre_amigable}' han sido actualizados correctamente.")
+                    mensaje = f"Los datos de '{nombre_amigable}' han sido actualizados correctamente."
+                    if filas_rechazadas:
+                        mensaje += f' {filas_rechazadas} filas fueron rechazadas y requieren revisión.'
+                    notificar(request, mensaje)
 
-                lote.estado = 'COMPLETADO'
+                lote.estado = 'COMPLETADO_CON_ERRORES' if filas_rechazadas else 'COMPLETADO'
                 lote.total_filas = resultado['total']
                 lote.filas_creadas = resultado['creadas']
                 lote.filas_actualizadas = resultado['actualizadas']
-                lote.filas_rechazadas = resultado['rechazadas']
+                lote.filas_rechazadas = filas_rechazadas
                 lote.finalizado_en = now()
                 lote.save(update_fields=[
                     'estado', 'total_filas', 'filas_creadas', 'filas_actualizadas',

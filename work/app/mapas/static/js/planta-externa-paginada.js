@@ -4,6 +4,25 @@
     const root = document.getElementById('outside-plant-workbench');
     if (!root) return;
 
+    function bindExportFeedback(link) {
+        if (!link) return;
+        const original = link.textContent;
+        link.addEventListener('click', (event) => {
+            if (link.dataset.busy === 'true') {
+                event.preventDefault();
+                return;
+            }
+            link.dataset.busy = 'true';
+            link.setAttribute('aria-disabled', 'true');
+            link.textContent = 'Generando archivo...';
+            window.setTimeout(() => {
+                link.dataset.busy = 'false';
+                link.removeAttribute('aria-disabled');
+                link.textContent = original;
+            }, 5000);
+        });
+    }
+
     function td(text) {
         const cell = document.createElement('td');
         cell.textContent = text ?? '—';
@@ -55,6 +74,8 @@
             this.timer = null;
             this.loaded = false;
             this.bind();
+            bindExportFeedback(this.csv);
+            bindExportFeedback(this.xlsx);
         }
 
         params(withPage = true) {

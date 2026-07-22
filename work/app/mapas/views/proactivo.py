@@ -1,3 +1,5 @@
+import logging
+
 from django.shortcuts import render, get_object_or_404
 from django.contrib.auth.decorators import login_required, permission_required
 from django.db import transaction
@@ -8,6 +10,8 @@ import json
 from ..models import Ruta, TrazaReferencia, DiagnosticoProactivo, PerfilUmbral, CoordenadaRuta
 from ..veex_api import create_on_demand_task # Reutilizaremos esta API
 from ..management.commands.georeferenciar_eventos import interpolate_on_route, haversine
+
+logger = logging.getLogger('mapas')
 
 @login_required
 @permission_required('mapas.view_diagnosticoproactivo', raise_exception=True)
@@ -29,7 +33,7 @@ def visor_proactivo(request):
                 default_perfil = PerfilUmbral.objects.first()
                 if default_perfil:
                     margen_corte = default_perfil.margen_corte_fibra_db
-        
+
     context = {
         'ruta': ruta,
         'referencia_actual': referencia_actual,
@@ -58,7 +62,7 @@ def visor_establecer_referencia(request):
                 default_perfil = PerfilUmbral.objects.first()
                 if default_perfil:
                     margen_corte = default_perfil.margen_corte_fibra_db
-        
+
     context = {
         'ruta': ruta,
         'referencia_actual': referencia_actual,
@@ -78,18 +82,18 @@ def api_asignar_perfil_ruta(request):
             data = json.loads(request.body)
             route_name = data.get('route_name')
             perfil_id = data.get('perfil_id')
-            
+
             ruta = Ruta.objects.filter(nombre=route_name).first()
             if not ruta:
                 return JsonResponse({'status': 'error', 'message': 'Ruta no encontrada'})
-                
+
             perfil = PerfilUmbral.objects.filter(id=perfil_id).first()
             if not perfil:
                 return JsonResponse({'status': 'error', 'message': 'Perfil no encontrado'})
-                
+
             ruta.perfil_umbral = perfil
             ruta.save()
-            
+
             return JsonResponse({'status': 'success', 'message': 'Perfil asignado correctamente a la ruta'})
         except Exception as e:
             return JsonResponse({'status': 'error', 'message': str(e)})
@@ -99,7 +103,7 @@ def api_asignar_perfil_ruta(request):
 @permission_required('mapas.add_trazareferencia', raise_exception=True)
 def api_establecer_referencia(request):
     """
-    Inicia una prueba On-Demand, pero la marcará para ser guardada como TrazaReferencia 
+    Inicia una prueba On-Demand, pero la marcará para ser guardada como TrazaReferencia
     una vez finalizada. (Obsoleto, se manejará vía frontend con on-demand + promover)
     """
     return JsonResponse({'status': 'error', 'message': 'Usar flujo OnDemand + Promover'}, status=400)
@@ -119,16 +123,16 @@ def promover_referencia(request):
             nombre_referencia = str(data.get('nombre_referencia', '')).strip()
             if not nombre_referencia:
                 return JsonResponse({'status': 'error', 'message': 'El nombre es obligatorio.'}, status=400)
-            
+
             from ..models import TrazaOnDemand
             from django.core.files.base import ContentFile
-            
+
             traza_on_demand = get_object_or_404(TrazaOnDemand, id=traza_id)
             if traza_on_demand.status != 'Completed' or not traza_on_demand.archivo_sor:
                 return JsonResponse({'status': 'error', 'message': 'La traza base no ha finalizado correctamente.'}, status=400)
-                
+
             ruta = get_object_or_404(Ruta, nombre=traza_on_demand.route_name)
-            
+
             with transaction.atomic():
                 Ruta.objects.select_for_update().get(pk=ruta.pk)
                 TrazaReferencia.objects.filter(ruta=ruta).update(activa=False)
@@ -145,15 +149,15 @@ def promover_referencia(request):
                     save=False,
                 )
                 nueva_ref.save()
-            
+
             return JsonResponse({
-                'status': 'success', 
+                'status': 'success',
                 'message': 'Traza guardada exitosamente como Referencia Oficial.'
             })
-            
+
         except Exception as e:
             return JsonResponse({'status': 'error', 'message': str(e)}, status=400)
-            
+
     return JsonResponse({'status': 'error', 'message': 'Método no permitido'}, status=405)
 
 
@@ -167,25 +171,25 @@ def get_referencia_data(request, ref_id):
     import tempfile
     import pyotdr.read
     import os
-    
+
     referencia = get_object_or_404(TrazaReferencia, id=ref_id)
-    
+
     if not referencia.archivo_sor:
         return JsonResponse({'status': 'error', 'message': 'La referencia no tiene un archivo SOR asociado.'}, status=404)
-        
+
     try:
         sor_content = referencia.archivo_sor.read()
-        
+
         with tempfile.NamedTemporaryFile(delete=False, suffix='.sor') as tmp:
             tmp.write(sor_content)
             tmp_path = tmp.name
-        
+
         status, results, tracedata = pyotdr.read.sorparse(tmp_path)
         os.remove(tmp_path)
-        
+
         if status != "ok":
             return JsonResponse({'status': 'error', 'message': f'Error parseando archivo SOR: {status}'}, status=500)
-            
+
         x_data = []
         y_data = []
         for line in tracedata:
@@ -193,7 +197,7 @@ def get_referencia_data(request, ref_id):
             if len(parts) == 2:
                 x_data.append(round(float(parts[0]) * 1000, 2))
                 y_data.append(round(float(parts[1]), 3))
-                
+
         events_list = []
         if 'KeyEvents' in results:
             key_events = results['KeyEvents']
@@ -208,7 +212,7 @@ def get_referencia_data(request, ref_id):
                         'reflectance': ev.get('refl loss'),
                         'slope': ev.get('slope')
                     })
-                    
+
         return JsonResponse({
             'status': 'success',
             'data': {
@@ -217,10 +221,13 @@ def get_referencia_data(request, ref_id):
                 'events': events_list
             }
         })
-        
-    except Exception as e:
-        import traceback
-        return JsonResponse({'status': 'error', 'message': str(e), 'trace': traceback.format_exc()}, status=500)
+
+    except Exception:
+        logger.exception('Error obteniendo la traza de referencia')
+        return JsonResponse(
+            {'status': 'error', 'message': 'No se pudo procesar la traza de referencia.'},
+            status=500,
+        )
 
 @login_required
 @permission_required('mapas.view_coordenadaruta', raise_exception=True)
@@ -232,7 +239,7 @@ def api_calcular_coordenadas(request, ruta_id):
     """
     if request.method != 'GET':
         return JsonResponse({'error': 'Método no permitido'}, status=405)
-    
+
     try:
         ruta = Ruta.objects.get(id=ruta_id)
         distancias_str = request.GET.getlist('d')
@@ -245,17 +252,17 @@ def api_calcular_coordenadas(request, ruta_id):
                 distancias.append(float(d))
             except ValueError:
                 continue
-        
+
         # Obtener los puntos de la ruta desde la DB
         coords_db = CoordenadaRuta.objects.filter(ruta=ruta).order_by('orden')
         if not coords_db.exists():
             return JsonResponse({'error': 'La ruta no tiene coordenadas geográficas registradas'}, status=404)
-        
+
         # Extraer puntos (lat, lon) como espera la función
         points = []
         for c in coords_db:
             points.append((float(c.latitud), float(c.longitud)))
-        
+
         # Calcular distancias geográficas acumuladas
         geo_cum = [0.0]
         seg_len = []
@@ -263,12 +270,12 @@ def api_calcular_coordenadas(request, ruta_id):
             d_geo = haversine(points[i-1][1], points[i-1][0], points[i][1], points[i][0])
             seg_len.append(d_geo)
             geo_cum.append(geo_cum[-1] + d_geo)
-        
+
         route_geo_len = geo_cum[-1]
-        
+
         # Obtener la longitud óptica total de la fibra para escalar
         route_optical_len = ruta.distancia_m if ruta.distancia_m else route_geo_len
-        
+
         ref_activa = ruta.trazas_referencia.filter(activa=True).order_by('-fecha_creacion').first()
         if ref_activa and ref_activa.distancia_km:
             route_optical_len = ref_activa.distancia_km * 1000.0
@@ -284,9 +291,9 @@ def api_calcular_coordenadas(request, ruta_id):
                 'lat': round(lat, 6),
                 'lng': round(lon, 6)
             })
-            
+
         return JsonResponse({'coordenadas': resultados})
-        
+
     except Ruta.DoesNotExist:
         return JsonResponse({'error': 'Ruta no encontrada'}, status=404)
     except Exception as e:
@@ -298,25 +305,25 @@ def api_get_ondemand_data(request, traza_id):
     import pyotdr.read
     import os
     from ..models import TrazaOnDemand
-    
+
     traza = get_object_or_404(TrazaOnDemand, id=traza_id)
-    
+
     if not traza.archivo_sor:
         return JsonResponse({'status': 'error', 'message': 'La traza no tiene un archivo SOR asociado.'}, status=404)
-        
+
     try:
         sor_content = traza.archivo_sor.read()
-        
+
         with tempfile.NamedTemporaryFile(delete=False, suffix='.sor') as tmp:
             tmp.write(sor_content)
             tmp_path = tmp.name
-        
+
         try:
             status, results, tracedata = pyotdr.read.sorparse(tmp_path)
-            
+
             if status != "ok":
                 return JsonResponse({'status': 'error', 'message': f'Error parseando archivo SOR: {status}'}, status=500)
-                
+
             x_data = []
             y_data = []
             for line in tracedata:
@@ -324,7 +331,7 @@ def api_get_ondemand_data(request, traza_id):
                 if len(parts) == 2:
                     x_data.append(round(float(parts[0]) * 1000, 2))
                     y_data.append(round(float(parts[1]), 3))
-                    
+
             events_list = []
             if 'KeyEvents' in results:
                 key_events = results['KeyEvents']
@@ -339,13 +346,13 @@ def api_get_ondemand_data(request, traza_id):
                             'reflectance': ev.get('refl loss'),
                             'slope': ev.get('slope')
                         })
-                        
+
             # Extraer Link Loss
             link_loss = 0.0
             if 'KeyEvents' in results:
                 summary = results['KeyEvents'].get('Summary', {})
                 link_loss += float(summary.get('total loss', 0.0))
-                
+
                 num_events = int(results['KeyEvents'].get('num events', 0))
                 for i in range(1, num_events): # Excluye el último evento (EOF)
                     ev = results['KeyEvents'].get(f'event {i}')
@@ -354,7 +361,7 @@ def api_get_ondemand_data(request, traza_id):
                             link_loss += float(ev.get('splice loss', 0.0))
                         except (ValueError, TypeError):
                             pass
-                            
+
             link_loss = round(link_loss, 2) if link_loss > 0 else None
 
             return JsonResponse({
@@ -366,12 +373,15 @@ def api_get_ondemand_data(request, traza_id):
                     'link_loss': link_loss
                 }
             })
-            
+
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
-                
-    except Exception as e:
-        import traceback
-        return JsonResponse({'status': 'error', 'message': str(e), 'trace': traceback.format_exc()}, status=500)
-
+
+    except Exception:
+        logger.exception('Error obteniendo la traza bajo demanda')
+        return JsonResponse(
+            {'status': 'error', 'message': 'No se pudo procesar la traza bajo demanda.'},
+            status=500,
+        )
+

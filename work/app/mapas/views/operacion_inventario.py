@@ -8,13 +8,15 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 from collections.abc import Iterable
 from urllib.parse import urlencode
 
 from django.contrib.auth.decorators import login_required, permission_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
-from django.db.models import Q
+from django.db import IntegrityError, transaction
+from django.db.models import Count, Q, Sum
 from django.http import Http404, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
@@ -31,7 +33,7 @@ from ..models import (
 )
 
 
-PAGE_SIZES = {25, 50, 100, 200}
+PAGE_SIZES = {10, 25, 48, 50, 100, 200}
 PERMISO_POR_TIPO = {
     "troncal": "mapas.view_ruta",
     "odf": "mapas.view_inventarioodf",
@@ -80,7 +82,11 @@ def _filtro_puertos(request):
         "odf_obj__rack_obj__sala__hub_site"
     )
     termino = request.GET.get("q", "").strip()[:150]
+    odf_id = request.GET.get("odf_id", "").strip()
     estado = request.GET.get("estado", "").strip()
+    site = request.GET.get("site", "").strip()[:150]
+    sala = request.GET.get("sala", "").strip()[:100]
+    rack = request.GET.get("rack", "").strip()[:100]
     if termino:
         queryset = queryset.filter(
             Q(odf__icontains=termino)
@@ -91,9 +97,34 @@ def _filtro_puertos(request):
             | Q(odf_obj__sala__icontains=termino)
             | Q(odf_obj__rack__icontains=termino)
         )
-    if estado in {"Libre", "Ocupado"}:
+    if odf_id.isdigit():
+        queryset = queryset.filter(odf_obj_id=int(odf_id))
+    if estado in {"Libre", "Ocupado", "Reservado"}:
         queryset = queryset.filter(estado_puerto=estado)
+    if site:
+        queryset = queryset.filter(odf_obj__hub_site=site)
+    if sala:
+        queryset = queryset.filter(odf_obj__sala=sala)
+    if rack:
+        queryset = queryset.filter(odf_obj__rack=rack)
     return queryset.order_by("odf_obj__hub_site", "odf", "puerto_odf", "id")
+
+
+def _resumen_puertos(queryset):
+    sin_destino = Q(destino__isnull=True) | Q(destino__exact="")
+    con_patchcord = (
+        ~Q(patchcord__isnull=True)
+        & ~Q(patchcord__exact="")
+        & ~Q(patchcord__iexact="No")
+    )
+    return queryset.aggregate(
+        total=Count("id"),
+        ocupados=Count("id", filter=Q(estado_puerto="Ocupado")),
+        libres=Count("id", filter=Q(estado_puerto="Libre")),
+        reservados=Count("id", filter=Q(estado_puerto="Reservado")),
+        con_patchcord=Count("id", filter=con_patchcord),
+        sin_destino=Count("id", filter=sin_destino),
+    )
 
 
 def _serializar_puertos(puertos):
@@ -111,16 +142,243 @@ def _serializar_puertos(puertos):
             "conector": _texto(puerto.tipo_conector),
             "patchcord": _texto(puerto.patchcord, "No"),
             "destino": _texto(puerto.destino),
+            "observaciones": _texto(puerto.observaciones, ""),
             "detail_url": reverse("asset_360", args=["puerto", puerto.pk]),
         }
         for puerto in puertos
     ]
 
 
+def _filtro_odfs(request):
+    queryset = InventarioODF.objects.all()
+    termino = request.GET.get("q", "").strip()[:150]
+    site = request.GET.get("site", "").strip()[:150]
+    sala = request.GET.get("sala", "").strip()[:100]
+    rack = request.GET.get("rack", "").strip()[:100]
+    estado = request.GET.get("estado", "").strip()[:50]
+    if termino:
+        queryset = queryset.filter(
+            Q(odf__icontains=termino)
+            | Q(hub_site__icontains=termino)
+            | Q(sala__icontains=termino)
+            | Q(rack__icontains=termino)
+            | Q(tipo_conector__icontains=termino)
+        )
+    if site:
+        queryset = queryset.filter(hub_site=site)
+    if sala:
+        queryset = queryset.filter(sala=sala)
+    if rack:
+        queryset = queryset.filter(rack=rack)
+    if estado:
+        queryset = queryset.filter(estado=estado)
+    return queryset.order_by("hub_site", "sala", "rack", "odf", "id")
+
+
+def _resumen_odfs(queryset):
+    resumen = queryset.aggregate(
+        total=Count("id"),
+        capacidad=Sum("capacidad_puertos"),
+        ocupados=Sum("puertos_ocupados"),
+        libres=Sum("puertos_libres"),
+        reservados=Sum("puertos_reservados"),
+        sites=Count("hub_site", distinct=True),
+    )
+    return {clave: valor or 0 for clave, valor in resumen.items()}
+
+
+def _serializar_odfs(odfs):
+    return [
+        {
+            "id": odf.pk,
+            "site": _texto(odf.hub_site),
+            "sala": _texto(odf.sala),
+            "rack": _texto(odf.rack),
+            "odf": _texto(odf.odf),
+            "capacidad": odf.capacidad_puertos or 0,
+            "ocupados": odf.puertos_ocupados or 0,
+            "libres": odf.puertos_libres or 0,
+            "reservados": odf.puertos_reservados or 0,
+            "conector": _texto(odf.tipo_conector),
+            "estado": _texto(odf.estado, "Sin estado"),
+            "detail_url": reverse("asset_360", args=["odf", odf.pk]),
+            "ports_url": f'{reverse("planta_interna")}?{urlencode({"q": odf.odf})}',
+            "fibers_url": f'{reverse("planta_externa")}?{urlencode({"tab": "fibras", "q": odf.odf})}',
+        }
+        for odf in odfs
+    ]
+
+
+def _filtro_troncales(request):
+    queryset = Ruta.objects.filter(tramos_inventario__isnull=False)
+    termino = request.GET.get("q", "").strip()[:150]
+    tipo = request.GET.get("tipo", "").strip()[:50]
+    estado = request.GET.get("estado", "").strip()[:50]
+    site = request.GET.get("site", "").strip()[:150]
+    if termino:
+        queryset = queryset.filter(
+            Q(nombre__icontains=termino)
+            | Q(olt__icontains=termino)
+            | Q(tramos_inventario__hub_site__icontains=termino)
+            | Q(tramos_inventario__destino__icontains=termino)
+            | Q(tramos_inventario__odf_nombre__icontains=termino)
+            | Q(tramos_inventario__serial__icontains=termino)
+        )
+    if tipo:
+        queryset = queryset.filter(tramos_inventario__tipo_trazado__iexact=tipo)
+    if estado:
+        queryset = queryset.filter(tramos_inventario__estado__iexact=estado)
+    if site:
+        queryset = queryset.filter(
+            Q(tramos_inventario__hub_site__iexact=site)
+            | Q(tramos_inventario__origen__iexact=site)
+        )
+    return (
+        queryset.distinct()
+        .prefetch_related("tramos_inventario")
+        .annotate(
+            tramos_total=Count("tramos_inventario", distinct=True),
+            fibras_total=Count("fibras_inventario", distinct=True),
+            reservas_total=Count("reservas", distinct=True),
+        )
+        .order_by("nombre", "id")
+    )
+
+
+def _tipo_troncal(tramos):
+    tipos = {
+        (tramo.tipo_trazado or "").strip().upper()
+        for tramo in tramos
+        if (tramo.tipo_trazado or "").strip()
+    }
+    if "HIBRIDO" in tipos or ({"AEREO", "SOTERRADO"} <= tipos):
+        return "HÍBRIDO"
+    if "AEREO" in tipos:
+        return "AÉREO"
+    if "SOTERRADO" in tipos:
+        return "SOTERRADO"
+    return next(iter(tipos), "SIN CLASIFICAR")
+
+
+def _serializar_troncales(troncales):
+    resultado = []
+    for troncal in troncales:
+        tramos = list(troncal.tramos_inventario.all())
+        primero = tramos[0] if tramos else None
+        ultimo = tramos[-1] if tramos else None
+        distancia_m = troncal.distancia_m
+        if distancia_m is None:
+            distancia_m = sum(tramo.distancia_m or 0 for tramo in tramos)
+        resultado.append(
+            {
+                "id": troncal.pk,
+                "nombre": troncal.nombre,
+                "origen": _texto(
+                    (primero.hub_site or primero.origen) if primero else troncal.olt
+                ),
+                "destino": _texto(ultimo.destino if ultimo else None),
+                "tipo": _tipo_troncal(tramos),
+                "distancia_km": round((distancia_m or 0) / 1000, 2),
+                "tramos": troncal.tramos_total,
+                "capacidad": _texto(primero.capacidad if primero else None),
+                "estado": _texto(primero.estado if primero else None, "Sin estado"),
+                "fibras": troncal.fibras_total,
+                "reservas": troncal.reservas_total,
+                "odf": _texto(primero.odf_nombre if primero else None),
+                "tipo_fibra": _texto(primero.tipo_fibra if primero else None),
+                "marca_modelo": _texto(primero.marca_modelo if primero else None),
+                "serial": _texto(primero.serial if primero else None),
+                "mufas": (primero.mufas or 0) if primero else 0,
+                "splitters": (primero.splitters or 0) if primero else 0,
+                "hilos_ocupados": (primero.hilos_ocupados or 0) if primero else 0,
+                "hilos_libres": (primero.hilos_libres or 0) if primero else 0,
+                "reserva_km": round((primero.reservas_m or 0) / 1000, 3) if primero else 0,
+                "detail_url": reverse("asset_360", args=["troncal", troncal.pk]),
+            }
+        )
+    return resultado
+
+
+def _resumen_troncales(queryset):
+    base = Ruta.objects.filter(pk__in=queryset.values("pk"))
+    distancia = base.aggregate(total=Sum("distancia_m"))["total"] or 0
+    return {
+        "total": base.count(),
+        "distancia_km": round(distancia / 1000, 2),
+        "tramos": InventarioTramo.objects.filter(ruta__in=base).count(),
+        "fibras": InventarioFibra.objects.filter(ruta__in=base).count(),
+        "reservas": Reserva.objects.filter(ruta__in=base).count(),
+    }
+
+
+def _filtro_tramos(request):
+    queryset = InventarioTramo.objects.select_related("ruta")
+    termino = request.GET.get("q", "").strip()[:150]
+    tipo = request.GET.get("tipo", "").strip()[:50]
+    estado = request.GET.get("estado", "").strip()[:50]
+    ruta = request.GET.get("ruta", "").strip()[:150]
+    if termino:
+        queryset = queryset.filter(
+            Q(ruta__nombre__icontains=termino)
+            | Q(origen__icontains=termino)
+            | Q(destino__icontains=termino)
+            | Q(hub_site__icontains=termino)
+            | Q(odf_nombre__icontains=termino)
+            | Q(serial__icontains=termino)
+        )
+    if tipo:
+        queryset = queryset.filter(tipo_trazado__iexact=tipo)
+    if estado:
+        queryset = queryset.filter(estado__iexact=estado)
+    if ruta:
+        queryset = queryset.filter(ruta__nombre=ruta)
+    return queryset.order_by("ruta__nombre", "tramo_secuencia", "id")
+
+
+def _serializar_tramos(tramos):
+    return [
+        {
+            "id": tramo.pk,
+            "ruta_id": tramo.ruta_id,
+            "troncal": tramo.ruta.nombre,
+            "secuencia": tramo.tramo_secuencia,
+            "origen": _texto(tramo.origen or tramo.hub_site),
+            "destino": _texto(tramo.destino),
+            "tipo": _texto(tramo.tipo_trazado, "Sin clasificar"),
+            "distancia_km": round((tramo.distancia_m or 0) / 1000, 2),
+            "capacidad": _texto(tramo.capacidad),
+            "ocupados": tramo.hilos_ocupados or 0,
+            "libres": tramo.hilos_libres or 0,
+            "reservas_m": tramo.reservas_m or 0,
+            "estado": _texto(tramo.estado, "Sin estado"),
+            "detail_url": reverse("asset_360", args=["troncal", tramo.ruta_id]),
+        }
+        for tramo in tramos
+    ]
+
+
+def _resumen_tramos(queryset):
+    resumen = queryset.aggregate(
+        total=Count("id"),
+        distancia_m=Sum("distancia_m"),
+        aereos=Count("id", filter=Q(tipo_trazado__iexact="AEREO")),
+        soterrados=Count("id", filter=Q(tipo_trazado__iexact="SOTERRADO")),
+        reservas_m=Sum("reservas_m"),
+    )
+    return {
+        "total": resumen["total"] or 0,
+        "distancia_km": round((resumen["distancia_m"] or 0) / 1000, 2),
+        "aereos": resumen["aereos"] or 0,
+        "soterrados": resumen["soterrados"] or 0,
+        "reservas_m": round(resumen["reservas_m"] or 0, 2),
+    }
+
+
 def _filtro_fibras(request):
     queryset = InventarioFibra.objects.select_related("ruta")
     termino = request.GET.get("q", "").strip()[:150]
     estado = request.GET.get("estado", "").strip()
+    ruta = request.GET.get("ruta", "").strip()[:150]
     if termino:
         queryset = queryset.filter(
             Q(ruta__nombre__icontains=termino)
@@ -131,6 +389,8 @@ def _filtro_fibras(request):
         )
     if estado in {"Libre", "Ocupado", "Reservado"}:
         queryset = queryset.filter(estado=estado)
+    if ruta:
+        queryset = queryset.filter(ruta__nombre=ruta)
     return queryset.order_by("ruta__nombre", "fibra_numero", "id")
 
 
@@ -173,10 +433,22 @@ def _serializar_fibras(fibras):
     ]
 
 
+def _resumen_fibras(queryset):
+    resumen = queryset.aggregate(
+        total=Count("id"),
+        libres=Count("id", filter=Q(estado__iexact="Libre")),
+        ocupadas=Count("id", filter=Q(estado__in=["Ocupado", "Ocupada"])),
+        reservadas=Count("id", filter=Q(estado__in=["Reservado", "Reservada"])),
+        troncales=Count("ruta_id", distinct=True),
+    )
+    return {clave: valor or 0 for clave, valor in resumen.items()}
+
+
 def _filtro_elementos(request):
     queryset = Reserva.objects.select_related("ruta", "tramo")
     termino = request.GET.get("q", "").strip()[:150]
     tipo = request.GET.get("tipo", "").strip()[:50]
+    ruta = request.GET.get("ruta", "").strip()[:150]
     if termino:
         queryset = queryset.filter(
             Q(ruta__nombre__icontains=termino)
@@ -186,6 +458,8 @@ def _filtro_elementos(request):
         )
     if tipo:
         queryset = queryset.filter(tipo__iexact=tipo)
+    if ruta:
+        queryset = queryset.filter(ruta__nombre=ruta)
     return queryset.order_by("ruta__nombre", "orden_en_ruta", "nombre", "id")
 
 
@@ -207,22 +481,164 @@ def _serializar_elementos(elementos):
     ]
 
 
+def _resumen_elementos(queryset):
+    resumen = queryset.aggregate(
+        total=Count("id"),
+        reserva_m=Sum("reserva_m"),
+        tipos=Count("tipo", distinct=True),
+        troncales=Count("ruta_id", distinct=True),
+        por_confirmar=Count("id", filter=Q(estado__iexact="POR_CONFIRMAR")),
+    )
+    resumen["reserva_m"] = round(resumen["reserva_m"] or 0, 2)
+    return {clave: valor or 0 for clave, valor in resumen.items()}
+
+
 @login_required
 @permission_required("mapas.view_detallepuertoodf", raise_exception=True)
 def api_puertos_paginados(request):
-    return _pagina(request, _filtro_puertos(request), _serializar_puertos)
+    queryset = _filtro_puertos(request)
+    response = _pagina(request, queryset, _serializar_puertos)
+    payload = json.loads(response.content)
+    payload["summary"] = _resumen_puertos(queryset)
+    return JsonResponse(payload)
+
+
+@login_required
+@permission_required("mapas.view_inventarioodf", raise_exception=True)
+def api_odfs_paginados(request):
+    queryset = _filtro_odfs(request)
+    response = _pagina(request, queryset, _serializar_odfs)
+    payload = json.loads(response.content)
+    payload["summary"] = _resumen_odfs(queryset)
+    return JsonResponse(payload)
+
+
+@login_required
+@permission_required("mapas.view_inventarioodf", raise_exception=True)
+def api_mapa_site_navigation(request, pk):
+    """Entrega el resumen y los ODF de un Site para la navegación del mapa."""
+    site = get_object_or_404(HubSite, pk=pk)
+    odfs = InventarioODF.objects.filter(
+        rack_obj__sala__hub_site=site
+    ).order_by("sala", "rack", "odf", "id")
+    resumen = _resumen_odfs(odfs)
+    limite = 100
+    troncales = Ruta.objects.filter(
+        Q(tramos_inventario__hub_site__iexact=site.nombre)
+        | Q(tramos_inventario__origen__iexact=site.nombre)
+        | Q(tramos_inventario__destino__iexact=site.nombre)
+    ).order_by("nombre").distinct()
+
+    return JsonResponse({
+        "status": "success",
+        "site": {
+            "id": site.pk,
+            "nombre": site.nombre,
+            "direccion": _texto(site.direccion),
+            "latitud": float(site.latitud) if site.latitud is not None else None,
+            "longitud": float(site.longitud) if site.longitud is not None else None,
+            "salas": site.salas.count(),
+            "racks": RackFisico.objects.filter(sala__hub_site=site).count(),
+            "troncales": troncales.count(),
+            "detail_url": reverse("asset_360", args=["site", site.pk]),
+            "odfs_url": f'{reverse("inventario_interno")}?{urlencode({"site": site.nombre})}',
+            "ports_url": f'{reverse("planta_interna")}?{urlencode({"site": site.nombre})}',
+        },
+        "summary": resumen,
+        "odfs": _serializar_odfs(list(odfs[:limite])),
+        "truncated": resumen["total"] > limite,
+        "permissions": {
+            "view_ports": request.user.has_perm("mapas.view_detallepuertoodf"),
+            "view_fibers": request.user.has_perm("mapas.view_inventariofibra"),
+        },
+    })
+
+
+@login_required
+@permission_required("mapas.view_ruta", raise_exception=True)
+def api_troncales_paginadas(request):
+    queryset = _filtro_troncales(request)
+    response = _pagina(request, queryset, _serializar_troncales)
+    payload = json.loads(response.content)
+    payload["summary"] = _resumen_troncales(queryset)
+    return JsonResponse(payload)
+
+
+@login_required
+@permission_required("mapas.view_ruta", raise_exception=True)
+def api_tramos_paginados(request):
+    queryset = _filtro_tramos(request)
+    response = _pagina(request, queryset, _serializar_tramos)
+    payload = json.loads(response.content)
+    payload["summary"] = _resumen_tramos(queryset)
+    return JsonResponse(payload)
 
 
 @login_required
 @permission_required("mapas.view_inventariofibra", raise_exception=True)
 def api_fibras_paginadas(request):
-    return _pagina(request, _filtro_fibras(request), _serializar_fibras)
+    queryset = _filtro_fibras(request)
+    response = _pagina(request, queryset, _serializar_fibras)
+    payload = json.loads(response.content)
+    payload["summary"] = _resumen_fibras(queryset)
+    return JsonResponse(payload)
 
 
 @login_required
 @permission_required("mapas.view_reserva", raise_exception=True)
 def api_elementos_paginados(request):
-    return _pagina(request, _filtro_elementos(request), _serializar_elementos)
+    queryset = _filtro_elementos(request)
+    response = _pagina(request, queryset, _serializar_elementos)
+    payload = json.loads(response.content)
+    payload["summary"] = _resumen_elementos(queryset)
+    return JsonResponse(payload)
+
+
+def _numero_no_negativo(data, clave, entero=False):
+    valor = data.get(clave)
+    if valor in (None, ""):
+        return 0 if entero else 0.0
+    numero = int(valor) if entero else float(valor)
+    if numero < 0:
+        raise ValueError(f"{clave} no puede ser negativo")
+    return numero
+
+
+@login_required
+@permission_required("mapas.add_inventariotramo", raise_exception=True)
+def create_tramo_manual(request):
+    if request.method != "POST":
+        return JsonResponse({"status": "error", "message": "Método no permitido"}, status=405)
+    try:
+        data = json.loads(request.body)
+        ruta = Ruta.objects.filter(pk=data.get("ruta_id")).first()
+        if not ruta:
+            return JsonResponse({"status": "error", "message": "Troncal no encontrada"}, status=404)
+        secuencia = _numero_no_negativo(data, "tramo_secuencia", entero=True)
+        if secuencia < 1:
+            raise ValueError("La secuencia debe ser mayor que cero")
+        with transaction.atomic():
+            tramo = InventarioTramo.objects.create(
+                ruta=ruta,
+                tramo_secuencia=secuencia,
+                tipo_trazado=str(data.get("tipo_trazado", "")).strip(),
+                estado=str(data.get("estado", "")).strip(),
+                distancia_m=_numero_no_negativo(data, "distancia_km") * 1000,
+                reservas_m=_numero_no_negativo(data, "reservas_m"),
+                mufas=_numero_no_negativo(data, "mufas", entero=True),
+                splitters=_numero_no_negativo(data, "splitters", entero=True),
+                capacidad=str(data.get("capacidad", "")).strip(),
+                tipo_fibra=str(data.get("tipo_fibra", "")).strip(),
+                origen=str(data.get("origen", "")).strip(),
+                destino=str(data.get("destino", "")).strip(),
+                hub_site=str(data.get("hub_site", "")).strip(),
+                odf_nombre=str(data.get("odf_nombre", "")).strip(),
+            )
+        return JsonResponse(
+            {"status": "success", "message": f"Tramo {tramo.tramo_secuencia} registrado correctamente"}
+        )
+    except (IntegrityError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return JsonResponse({"status": "error", "message": str(exc)}, status=400)
 
 
 class _CsvBuffer:
@@ -289,6 +705,49 @@ def _filas_puertos(queryset):
         )
 
 
+def _filas_odfs(queryset):
+    for odf in queryset.iterator(chunk_size=1000):
+        yield (
+            odf.hub_site,
+            odf.sala,
+            odf.rack,
+            odf.odf,
+            odf.capacidad_puertos,
+            odf.puertos_ocupados,
+            odf.puertos_libres,
+            odf.puertos_reservados,
+            odf.tipo_conector,
+            odf.estado,
+            odf.observaciones,
+        )
+
+
+def _filas_troncales(queryset):
+    for item in _serializar_troncales(queryset.iterator(chunk_size=500)):
+        yield (
+            item["nombre"], item["origen"], item["destino"], item["tipo"],
+            item["distancia_km"], item["tramos"], item["capacidad"],
+            item["fibras"], item["reservas"], item["estado"],
+        )
+
+
+def _filas_tramos(queryset):
+    for tramo in queryset.iterator(chunk_size=1000):
+        yield (
+            tramo.ruta.nombre,
+            tramo.tramo_secuencia,
+            tramo.origen or tramo.hub_site,
+            tramo.destino,
+            tramo.tipo_trazado,
+            round((tramo.distancia_m or 0) / 1000, 2),
+            tramo.capacidad,
+            tramo.hilos_ocupados,
+            tramo.hilos_libres,
+            tramo.reservas_m,
+            tramo.estado,
+        )
+
+
 def _filas_fibras(queryset):
     ids_ruta = set(queryset.values_list("ruta_id", flat=True).distinct())
     origenes = _origenes_troncales(ids_ruta)
@@ -324,7 +783,32 @@ def exportar_inventario(request, recurso, formato):
     if formato not in formatos:
         raise Http404("Formato no disponible")
 
-    if recurso == "puertos":
+    if recurso == "troncales":
+        permiso = "mapas.view_ruta"
+        titulo = "Troncales"
+        encabezados = (
+            "Troncal", "Origen", "Destino", "Tipo", "Distancia (km)",
+            "Tramos", "Capacidad", "Fibras", "Reservas", "Estado",
+        )
+        filas = _filas_troncales(_filtro_troncales(request))
+    elif recurso == "tramos":
+        permiso = "mapas.view_ruta"
+        titulo = "Tramos"
+        encabezados = (
+            "Troncal", "Secuencia", "Origen", "Destino", "Trazado",
+            "Distancia (km)", "Capacidad", "Ocupados", "Libres",
+            "Reserva (m)", "Estado",
+        )
+        filas = _filas_tramos(_filtro_tramos(request))
+    elif recurso == "odfs":
+        permiso = "mapas.view_inventarioodf"
+        titulo = "Inventario ODF"
+        encabezados = (
+            "Site", "Sala", "Rack", "ODF", "Capacidad", "Ocupados",
+            "Libres", "Reservados", "Conector", "Estado", "Observaciones",
+        )
+        filas = _filas_odfs(_filtro_odfs(request))
+    elif recurso == "puertos":
         permiso = "mapas.view_detallepuertoodf"
         titulo = "Puertos ODF"
         encabezados = (
@@ -524,6 +1008,7 @@ def _ficha_odf(pk):
             _item("Capacidad", odf.capacidad_puertos),
             _item("Puertos ocupados", odf.puertos_ocupados),
             _item("Puertos libres", odf.puertos_libres),
+            _item("Puertos reservados", odf.puertos_reservados),
             _item("Troncales relacionadas", troncales.count()),
         ],
         "sections": [
