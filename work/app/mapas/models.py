@@ -498,6 +498,14 @@ def normalizar_estado_puerto_odf(valor, default='Libre'):
     return equivalencias.get(str(valor or '').strip().casefold(), default)
 
 
+def normalizar_estado_puerto_odf_con_destino(valor, destino, default='Libre'):
+    """Reconoce reservas descritas en el destino aunque el estado legado diga ocupado."""
+    destino_normalizado = str(destino or '').strip().casefold()
+    if 'reservad' in destino_normalizado:
+        return 'Reservado'
+    return normalizar_estado_puerto_odf(valor, default=default)
+
+
 class InventarioODF(models.Model):
     """
     Representa la información general de un ODF (Optical Distribution Frame) en un Hub o Site.

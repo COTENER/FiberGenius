@@ -39,6 +39,105 @@
     let debounceTimer = null;
     let currentRows = [];
     let exportObjectUrl = null;
+    const inspector = document.getElementById('network-inspector');
+    const inspectorToggle = document.getElementById('network-inspector-toggle');
+    const inspectorSummary = document.getElementById('ports-inspector-summary');
+    const inspectorEmpty = document.getElementById('ports-inspector-empty');
+    const inspectorDetail = document.getElementById('ports-inspector-detail');
+
+    function setInspectorCollapsed(collapsed) {
+        if (!inspector || !inspectorToggle) return;
+        inspector.classList.toggle('is-collapsed', collapsed);
+        inspectorToggle.setAttribute('aria-expanded', String(!collapsed));
+        inspectorToggle.setAttribute('aria-label', collapsed ? 'Expandir panel' : 'Contraer panel');
+    }
+
+    function stateSummary(summary) {
+        if (!inspectorSummary) return;
+        const total = Number(summary?.total || 0);
+        const free = Number(summary?.libres || 0);
+        const used = Number(summary?.ocupados || 0);
+        const reserved = Number(summary?.reservados || 0);
+        const freePercent = total ? Math.min(100, (free / total) * 100) : 0;
+        const usedPercent = total ? Math.min(100 - freePercent, (used / total) * 100) : 0;
+        const donut = document.createElement('div');
+        donut.className = 'network-donut';
+        donut.style.background = `conic-gradient(#18b777 0 ${freePercent}%, #2f74ee ${freePercent}% ${freePercent + usedPercent}%, #f59e0b ${freePercent + usedPercent}% 100%)`;
+        const percent = document.createElement('span');
+        percent.textContent = numberFormat.format(total);
+        const caption = document.createElement('small');
+        caption.textContent = 'puertos';
+        donut.append(percent, caption);
+        const list = document.createElement('ul');
+        [['is-free', 'Libres', free], ['is-used', 'Ocupados', used], ['is-reserved', 'Reservados', reserved]]
+            .forEach(([className, label, value]) => {
+                const item = document.createElement('li');
+                const dot = document.createElement('i');
+                dot.className = className;
+                const text = document.createElement('span');
+                text.textContent = label;
+                const amount = document.createElement('b');
+                amount.textContent = numberFormat.format(value);
+                item.append(dot, text, amount);
+                list.appendChild(item);
+            });
+        inspectorSummary.replaceChildren(donut, list);
+    }
+
+    function detailField(label, value) {
+        const wrapper = document.createElement('div');
+        const name = document.createElement('span');
+        name.textContent = label;
+        const content = document.createElement('b');
+        content.textContent = value || '—';
+        wrapper.append(name, content);
+        return wrapper;
+    }
+
+    function selectPort(port, row) {
+        if (!inspectorDetail || !inspectorEmpty) return;
+        elements.body.querySelectorAll('tr.is-selected').forEach(item => item.classList.remove('is-selected'));
+        row?.classList.add('is-selected');
+        inspectorEmpty.hidden = true;
+        inspectorDetail.hidden = false;
+        const title = document.createElement('h3');
+        title.textContent = `${port.odf} · Puerto ${port.puerto}`;
+        const status = document.createElement('span');
+        status.className = `network-asset-status ${port.estado === 'Reservado' ? 'is-reserved' : (port.estado === 'Ocupado' ? 'is-used' : '')}`;
+        status.textContent = port.estado || 'Sin estado';
+        const grid = document.createElement('div');
+        grid.className = 'network-asset-grid';
+        grid.append(
+            detailField('Site', port.site),
+            detailField('Sala / Rack', `${port.sala} · ${port.rack}`),
+            detailField('Bandeja', port.bandeja),
+            detailField('Fibra', port.fibra),
+            detailField('Conector', port.conector),
+            detailField('Patchcord', port.patchcord),
+            detailField('Destino', port.destino),
+            detailField('Observación', port.observaciones),
+        );
+        const actions = document.createElement('div');
+        actions.className = 'network-asset-actions';
+        const asset = document.createElement('button');
+        asset.type = 'button';
+        asset.textContent = 'Ficha 360°';
+        asset.addEventListener('click', () => window.FiberGenius.openAsset360(port.detail_url));
+        const edit = document.createElement('button');
+        edit.type = 'button';
+        edit.textContent = root.dataset.canEdit === 'true' ? 'Editar puerto' : 'Cerrar detalle';
+        edit.addEventListener('click', () => {
+            if (root.dataset.canEdit === 'true') openEditor(port);
+            else {
+                inspectorDetail.hidden = true;
+                inspectorEmpty.hidden = false;
+                row?.classList.remove('is-selected');
+            }
+        });
+        actions.append(asset, edit);
+        inspectorDetail.replaceChildren(title, status, grid, actions);
+        if (window.innerWidth <= 1700) setInspectorCollapsed(false);
+    }
 
     function exportFilename(response) {
         const disposition = response.headers.get('Content-Disposition') || '';
@@ -117,7 +216,10 @@
         button.setAttribute('aria-label', label);
         button.title = label;
         button.innerHTML = `<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${path}</svg>`;
-        button.addEventListener('click', handler);
+        button.addEventListener('click', event => {
+            event.stopPropagation();
+            handler(event);
+        });
         return button;
     }
 
@@ -168,6 +270,7 @@
         Object.entries(values).forEach(([key, value]) => {
             if (stats[key]) stats[key].textContent = numberFormat.format(value);
         });
+        stateSummary(summary);
     }
 
     function renderRows(rows) {
@@ -183,6 +286,16 @@
         }
         rows.forEach(port => {
             const row = document.createElement('tr');
+            row.dataset.portId = String(port.id);
+            row.tabIndex = 0;
+            row.setAttribute('aria-label', `Ver detalle de ${port.odf}, puerto ${port.puerto}`);
+            row.addEventListener('click', () => selectPort(port, row));
+            row.addEventListener('keydown', event => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    selectPort(port, row);
+                }
+            });
             [port.site, port.sala, port.rack, port.odf, port.bandeja, port.puerto, port.fibra]
                 .forEach(value => row.appendChild(td(value)));
             const stateCell = document.createElement('td');
@@ -382,5 +495,7 @@
     elements.room.value = incoming.get('sala') || '';
     elements.rack.value = incoming.get('rack') || '';
     if (['10', '25', '50', '100', '200'].includes(incoming.get('page_size'))) elements.pageSize.value = incoming.get('page_size');
+    inspectorToggle?.addEventListener('click', () => setInspectorCollapsed(!inspector.classList.contains('is-collapsed')));
+    if (window.innerWidth <= 1700) setInspectorCollapsed(true);
     load();
 })();

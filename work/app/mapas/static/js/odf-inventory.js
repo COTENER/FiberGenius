@@ -34,10 +34,168 @@
         sites: document.getElementById('odf-stat-sites'),
     };
     const numberFormat = new Intl.NumberFormat('es-PE');
+    const percentFormat = new Intl.NumberFormat('es-PE', { maximumFractionDigits: 1 });
     let page = 1;
     let abortController = null;
     let debounceTimer = null;
     let exportObjectUrl = null;
+    let pendingOdfId = null;
+    const inspectorSummary = document.getElementById('odf-inspector-summary');
+    const inspectorEmpty = document.getElementById('odf-inspector-empty');
+    const inspectorDetail = document.getElementById('odf-inspector-detail');
+    const analysisToggle = document.getElementById('odf-analysis-toggle');
+    const analysisReopen = document.getElementById('odf-analysis-reopen');
+
+    function setAnalysisCollapsed(collapsed) {
+        root.classList.toggle('is-analysis-collapsed', collapsed);
+        analysisToggle?.setAttribute('aria-expanded', String(!collapsed));
+        analysisToggle?.setAttribute('aria-label', collapsed ? 'Mostrar análisis lateral' : 'Ocultar análisis lateral');
+        if (analysisReopen) analysisReopen.hidden = !collapsed;
+    }
+
+    function putText(id, value) {
+        const node = document.getElementById(id);
+        if (node) node.textContent = value;
+    }
+
+    function renderRanking(items) {
+        const target = document.getElementById('odf-occupancy-ranking');
+        if (!target) return;
+        target.replaceChildren();
+        if (!Array.isArray(items) || !items.length) {
+            const empty = document.createElement('p');
+            empty.className = 'network-inspector-empty';
+            empty.textContent = 'No hay ODF con capacidad registrada.';
+            target.appendChild(empty);
+            return;
+        }
+        items.forEach((item, index) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = `odf-ranking-item ${item.porcentaje >= 90 ? 'is-critical' : (item.porcentaje >= 75 ? 'is-warning' : '')}`.trim();
+            button.title = `Filtrar ${item.odf}`;
+            const position = document.createElement('b');
+            position.textContent = String(index + 1);
+            const description = document.createElement('span');
+            const name = document.createElement('em');
+            name.textContent = item.odf;
+            const bar = document.createElement('span');
+            bar.className = 'odf-ranking-bar';
+            const fill = document.createElement('i');
+            fill.style.width = `${Math.max(0, Math.min(100, Number(item.porcentaje || 0)))}%`;
+            bar.appendChild(fill);
+            description.append(name, bar);
+            const percent = document.createElement('strong');
+            percent.textContent = `${percentFormat.format(item.porcentaje || 0)}%`;
+            button.append(position, description, percent);
+            button.addEventListener('click', () => {
+                pendingOdfId = Number(item.id);
+                elements.query.value = item.odf;
+                page = 1;
+                load();
+            });
+            target.appendChild(button);
+        });
+    }
+
+    function stateSummary(summary) {
+        if (!inspectorSummary) return;
+        const capacity = Number(summary?.capacidad || 0);
+        const used = Number(summary?.ocupados || 0);
+        const free = Number(summary?.libres || 0);
+        const reserved = Number(summary?.reservados || 0);
+        const usedPercent = capacity ? Math.min(100, (used / capacity) * 100) : 0;
+        const reservedPercent = capacity ? Math.min(100 - usedPercent, (reserved / capacity) * 100) : 0;
+        putText('odf-utilization-percent', `${percentFormat.format(usedPercent)}%`);
+        putText('odf-utilization-used-label', `${numberFormat.format(used)} · ${percentFormat.format(usedPercent)}%`);
+        putText('odf-utilization-reserved-label', `${numberFormat.format(reserved)} · ${percentFormat.format(reservedPercent)}%`);
+        putText('odf-utilization-free-label', `${numberFormat.format(free)} · ${percentFormat.format(capacity ? (free / capacity) * 100 : 0)}%`);
+        const usedBar = document.getElementById('odf-utilization-used');
+        const reservedBar = document.getElementById('odf-utilization-reserved');
+        if (usedBar) usedBar.style.width = `${usedPercent}%`;
+        if (reservedBar) reservedBar.style.width = `${reservedPercent}%`;
+        renderRanking(summary?.top_ocupacion || []);
+        const donut = document.createElement('div');
+        donut.className = 'network-donut';
+        donut.style.background = `conic-gradient(#16a85f 0 ${usedPercent}%, #e88a08 ${usedPercent}% ${usedPercent + reservedPercent}%, #09a6b4 ${usedPercent + reservedPercent}% 100%)`;
+        const percent = document.createElement('span');
+        percent.textContent = `${percentFormat.format(usedPercent)}%`;
+        const caption = document.createElement('small');
+        caption.textContent = 'ocupados';
+        donut.append(percent, caption);
+        const list = document.createElement('ul');
+        [['is-used', 'Ocupados', used], ['is-free', 'Libres', free], ['is-reserved', 'Reservados', reserved]]
+            .forEach(([className, label, value]) => {
+                const item = document.createElement('li');
+                const dot = document.createElement('i');
+                dot.className = className;
+                const text = document.createElement('span');
+                text.textContent = label;
+                const amount = document.createElement('b');
+                amount.textContent = numberFormat.format(value);
+                item.append(dot, text, amount);
+                list.appendChild(item);
+            });
+        inspectorSummary.replaceChildren(donut, list);
+    }
+
+    function detailField(label, value) {
+        const wrapper = document.createElement('div');
+        const name = document.createElement('span');
+        name.textContent = label;
+        const content = document.createElement('b');
+        content.textContent = value ?? '—';
+        wrapper.append(name, content);
+        return wrapper;
+    }
+
+    function selectOdf(odf, row) {
+        if (!inspectorDetail || !inspectorEmpty) return;
+        elements.body.querySelectorAll('tr.is-selected').forEach(item => item.classList.remove('is-selected'));
+        row?.classList.add('is-selected');
+        inspectorEmpty.hidden = true;
+        inspectorDetail.hidden = false;
+        const title = document.createElement('h3');
+        title.textContent = odf.odf;
+        const status = document.createElement('span');
+        status.className = 'network-asset-status';
+        status.textContent = odf.estado || 'Sin estado';
+        const grid = document.createElement('div');
+        grid.className = 'network-asset-grid';
+        grid.append(
+            detailField('Site', odf.site),
+            detailField('Sala / Rack', `${odf.sala} · ${odf.rack}`),
+            detailField('Conector', odf.conector),
+            detailField('Capacidad', numberFormat.format(odf.capacidad || 0)),
+            detailField('Ocupados', numberFormat.format(odf.ocupados || 0)),
+            detailField('Libres / Reservados', `${numberFormat.format(odf.libres || 0)} / ${numberFormat.format(odf.reservados || 0)}`),
+        );
+        const capacity = Number(odf.capacidad || 0);
+        const usedPercent = capacity ? Math.min(100, (Number(odf.ocupados || 0) / capacity) * 100) : 0;
+        const capacityBox = document.createElement('div');
+        capacityBox.className = 'network-capacity';
+        const capacityLabel = document.createElement('div');
+        capacityLabel.className = 'network-capacity__label';
+        capacityLabel.innerHTML = `<span>Ocupación</span><b>${percentFormat.format(usedPercent)}%</b>`;
+        const track = document.createElement('div');
+        track.className = 'network-capacity__track';
+        const fill = document.createElement('i');
+        fill.style.width = `${usedPercent}%`;
+        fill.style.background = usedPercent >= 90 ? '#ef4e52' : (usedPercent >= 75 ? '#e88a08' : '#0f67df');
+        track.appendChild(fill);
+        capacityBox.append(capacityLabel, track);
+        const actions = document.createElement('div');
+        actions.className = 'network-asset-actions';
+        const ports = document.createElement('a');
+        ports.href = odf.ports_url;
+        ports.textContent = 'Ver puertos';
+        const asset = document.createElement('button');
+        asset.type = 'button';
+        asset.textContent = 'Ficha 360°';
+        asset.addEventListener('click', () => openAsset(odf.detail_url));
+        actions.append(ports, asset);
+        inspectorDetail.replaceChildren(title, status, grid, capacityBox, actions);
+    }
 
     function currentParams(includePage = true) {
         const params = new URLSearchParams();
@@ -73,7 +231,10 @@
         button.setAttribute('aria-label', label);
         button.title = label;
         button.innerHTML = `<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${path}</svg>`;
-        button.addEventListener('click', handler);
+        button.addEventListener('click', event => {
+            event.stopPropagation();
+            handler(event);
+        });
         return button;
     }
 
@@ -104,8 +265,18 @@
             elements.body.appendChild(row);
             return;
         }
-        rows.forEach(odf => {
+        rows.forEach((odf, index) => {
             const row = document.createElement('tr');
+            row.dataset.odfId = String(odf.id);
+            row.tabIndex = 0;
+            row.setAttribute('aria-label', `Ver detalle de ${odf.odf}`);
+            row.addEventListener('click', () => selectOdf(odf, row));
+            row.addEventListener('keydown', event => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    selectOdf(odf, row);
+                }
+            });
             [odf.site, odf.sala, odf.rack, odf.odf].forEach(value => row.appendChild(td(value)));
             [odf.capacidad, odf.ocupados, odf.libres, odf.reservados].forEach(value => row.appendChild(td(numberFormat.format(value || 0), 'odf-number')));
             row.appendChild(td(odf.conector));
@@ -139,6 +310,10 @@
             actionsCell.appendChild(actions);
             row.appendChild(actionsCell);
             elements.body.appendChild(row);
+            if ((pendingOdfId && Number(odf.id) === pendingOdfId) || (!pendingOdfId && index === 0)) {
+                selectOdf(odf, row);
+                pendingOdfId = null;
+            }
         });
     }
 
@@ -154,6 +329,7 @@
         Object.entries(values).forEach(([key, value]) => {
             stats[key].textContent = numberFormat.format(value);
         });
+        stateSummary(summary);
     }
 
     function paginationSequence(current, total) {
@@ -366,7 +542,7 @@
         .forEach(field => field.addEventListener('change', () => { page = 1; load(); }));
     elements.clear.addEventListener('click', () => {
         elements.form.reset();
-        elements.pageSize.value = '10';
+        elements.pageSize.value = '25';
         page = 1;
         elements.query.focus();
         load();
@@ -377,6 +553,8 @@
     elements.editorForm?.addEventListener('submit', saveEditor);
     document.getElementById('odf-editor-close')?.addEventListener('click', closeEditor);
     document.getElementById('odf-editor-cancel')?.addEventListener('click', closeEditor);
+    analysisToggle?.addEventListener('click', () => setAnalysisCollapsed(true));
+    analysisReopen?.addEventListener('click', () => setAnalysisCollapsed(false));
 
     const incoming = new URLSearchParams(window.location.search);
     elements.query.value = incoming.get('q') || '';
@@ -385,5 +563,6 @@
     elements.rack.value = incoming.get('rack') || '';
     elements.status.value = incoming.get('estado') || '';
     if (['10', '25', '50', '100', '200'].includes(incoming.get('page_size'))) elements.pageSize.value = incoming.get('page_size');
+    setAnalysisCollapsed(window.innerWidth <= 1700);
     load();
 })();

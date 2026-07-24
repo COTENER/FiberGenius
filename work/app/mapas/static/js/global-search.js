@@ -108,11 +108,11 @@
         return 'status-badge--neutral';
     }
 
-    function renderItems(items, container, itemClass) {
+    function renderItems(items, container, groupClass) {
         (items || []).forEach((item) => {
-            const wrapper = element('div', itemClass);
-            wrapper.appendChild(element('span', `${itemClass}__label`, item.label));
-            wrapper.appendChild(element('span', `${itemClass}__value`, item.value));
+            const wrapper = element('div', `${groupClass}__item`);
+            wrapper.appendChild(element('span', `${groupClass}__label`, item.label));
+            wrapper.appendChild(element('span', `${groupClass}__value`, item.value));
             container.appendChild(wrapper);
         });
     }
@@ -128,21 +128,27 @@
         if (asset.chain && asset.chain.length) {
             const chain = element('div', 'asset-chain');
             chain.setAttribute('aria-label', 'Recorrido físico del activo');
-            renderItems(asset.chain, chain, 'asset-chain__item');
+            renderItems(asset.chain, chain, 'asset-chain');
             content.appendChild(chain);
         }
 
         if (asset.summary && asset.summary.length) {
             const summary = element('div', 'asset-summary');
-            renderItems(asset.summary, summary, 'asset-summary__item');
+            renderItems(asset.summary, summary, 'asset-summary');
             content.appendChild(summary);
         }
 
         (asset.sections || []).forEach((section) => {
+            const visibleItems = (section.items || []).filter((item) => {
+                const value = item.value == null ? '' : String(item.value).trim();
+                return value && value !== '—';
+            });
+            if (!visibleItems.length) return;
+
             const sectionNode = element('section', 'asset-section');
             sectionNode.appendChild(element('h3', '', section.title));
             const list = element('dl');
-            (section.items || []).forEach((item) => {
+            visibleItems.forEach((item) => {
                 const row = element('div', 'asset-section__row');
                 row.appendChild(element('dt', '', item.label));
                 row.appendChild(element('dd', '', item.value));

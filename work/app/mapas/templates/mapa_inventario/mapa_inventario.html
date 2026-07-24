@@ -559,7 +559,7 @@
         filter: brightness(0.9) contrast(1.1);
     }
 </style>
-<link rel="stylesheet" href="{% static 'css/mapa-red-v2.css' %}?v=20260721-3">
+<link rel="stylesheet" href="{% static 'css/mapa-red-v2.css' %}?v=20260723-route-endpoints-4">
 {% endblock %}
 
 {% block content_class %}main-content--full{% endblock %}
@@ -569,18 +569,30 @@
     <h1 class="sr-only">Mapa de red del inventario</h1>
     <div class="map-layout__main">
         <!-- Search Container -->
-        <div class="search-container">
+        <div id="route-search" class="search-container">
             <div class="search-box">
                 <label class="sr-only" for="route-search-input">Buscar troncal</label>
-                <input type="text" id="route-search-input" placeholder="Buscar troncal..." list="routes-datalist">
-                <datalist id="routes-datalist"></datalist>
+                <svg class="route-search-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                <input
+                    type="search"
+                    id="route-search-input"
+                    placeholder="Ruta, origen, destino, Site u ODF..."
+                    autocomplete="off"
+                    role="combobox"
+                    aria-autocomplete="list"
+                    aria-expanded="false"
+                    aria-controls="route-search-results"
+                    aria-describedby="route-search-status"
+                >
                 <button id="clear-search-btn" type="button" title="Limpiar búsqueda" aria-label="Limpiar búsqueda de troncal">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
                 </button>
                 <button id="search-btn" type="button" aria-label="Buscar troncal en el mapa">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
                 </button>
             </div>
+            <div id="route-search-results" class="route-search-results" role="listbox" aria-label="Troncales encontradas" hidden></div>
+            <p id="route-search-status" class="sr-only" role="status" aria-live="polite"></p>
         </div>
 
         <!-- Summary Cards Overlay -->
@@ -704,8 +716,8 @@
                     <span class="toggle-slider"></span>
                 </div>
                 <div class="toggle-label-content">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" style="margin-right: 6px;"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                    <span>Mostrar todas las reservas</span>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2" style="margin-right: 6px;"><circle cx="11.5" cy="12" r="7.5"/><circle cx="11.5" cy="12" r="4.5"/><path d="M18.5 14.5h3"/></svg>
+                    <span>Mostrar elementos externos</span>
                 </div>
             </label>
             <hr style="margin: 10px 0; border: 0; border-top: 1px solid var(--border);">
@@ -738,7 +750,7 @@
 
                 <section id="network-site-view" hidden>
                     <div class="network-nav__identity">
-                        <span class="network-nav__identity-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21V8l8-4v17M12 10h8v11M8 10v.01M8 14v.01M8 18v.01M16 14v.01M16 18v.01"/></svg></span>
+                        <span class="network-nav__identity-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 21V9.5L12 5v16M12 11h8.5v10M7.5 12h.01M7.5 16h.01M16 15h.01M16 18h.01M9 5V2.8M7.6 3.5 9 2l1.4 1.5"/></svg></span>
                         <div><span class="network-nav__eyebrow">Site seleccionado</span><h2 id="network-site-name">Site</h2><p id="network-site-meta">Ubicación de red</p></div>
                     </div>
                     <div class="network-nav__metrics">
@@ -750,12 +762,12 @@
                     <div class="network-nav__section-heading"><div><span>Inventario interno</span><h3>ODF del Site</h3></div><span id="network-site-odf-count" class="network-nav__count">0</span></div>
                     <div id="network-odf-list" class="network-odf-list"></div>
                     <p id="network-odf-truncated" class="network-nav__notice" hidden>Se muestran los primeros 100 ODF. Abre el inventario completo para consultar el resto.</p>
-                    <footer class="network-nav__actions"><a id="network-site-360" href="#">Ficha 360°</a><a id="network-site-inventory" href="#">Ver todos los ODF</a></footer>
+                    <footer class="network-nav__actions"><a id="network-site-360" data-open-asset-360 href="#">Ficha 360°</a><a id="network-site-inventory" href="#">Ver todos los ODF</a></footer>
                 </section>
 
                 <section id="network-odf-view" hidden>
                     <div class="network-nav__identity network-nav__identity--odf">
-                        <span class="network-nav__identity-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h10M7 16h10"/></svg></span>
+                        <span class="network-nav__identity-icon network-nav__identity-icon--odf" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2.5" width="14" height="19" rx="2"/><path d="M8 6.5h8M8 17.5h8M9 21.5v1M15 21.5v1"/><circle cx="9" cy="10.5" r=".9"/><circle cx="15" cy="10.5" r=".9"/><circle cx="9" cy="14" r=".9"/><circle cx="15" cy="14" r=".9"/></svg></span>
                         <div><span class="network-nav__eyebrow">Detalle de ODF</span><h2 id="network-odf-name">ODF</h2><p id="network-odf-location">Site → Sala → Rack</p></div>
                         <span id="network-odf-status" class="network-nav__status">Sin estado</span>
                     </div>
@@ -778,7 +790,7 @@
                         <div id="network-port-pager" class="network-port-pager"><button id="network-port-prev" type="button" aria-label="Página anterior">←</button><span id="network-port-page">Página 1</span><button id="network-port-next" type="button" aria-label="Página siguiente">→</button></div>
                         <article id="network-port-detail" class="network-port-detail" hidden></article>
                     </div>
-                    <footer class="network-nav__actions"><a id="network-odf-360" href="#">Ficha 360°</a><a id="network-odf-full-ports" href="#">Ver Puertos ODF</a><a id="network-odf-fibers" href="#">Ver fibras</a></footer>
+                    <footer class="network-nav__actions"><a id="network-odf-360" data-open-asset-360 href="#">Ficha 360°</a><a id="network-odf-full-ports" href="#">Ver Puertos ODF</a><a id="network-odf-fibers" href="#">Ver fibras</a></footer>
                 </section>
             </div>
         </aside>
@@ -795,5 +807,5 @@
 {% block extra_js %}
 <script src="{% static 'vendor/jquery/jquery-3.6.0.min.js' %}"></script>
 <script src="{% static 'vendor/leaflet/leaflet-1.9.4.js' %}" crossorigin=""></script>
-<script src="{% static 'js/mapa_inventario.js' %}?v=20260721-3"></script>
+<script src="{% static 'js/mapa_inventario.js' %}?v=20260723-route-endpoints-4"></script>
 {% endblock %}

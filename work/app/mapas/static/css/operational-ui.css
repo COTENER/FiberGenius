@@ -203,8 +203,8 @@
 .icon-button svg { width: 18px; height: 18px; }
 .asset-status { display: inline-flex; margin-bottom: var(--space-5); }
 .asset-chain {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    display: flex;
+    flex-wrap: wrap;
     gap: 1px;
     margin-bottom: var(--space-5);
     overflow: hidden;
@@ -212,7 +212,7 @@
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
 }
-.asset-chain__item { min-width: 0; padding: 12px; background: var(--bg-surface-2); }
+.asset-chain__item { min-width: 0; flex: 1 1 130px; padding: 12px; background: var(--bg-surface-2); }
 .asset-chain__label,
 .asset-summary__label { display: block; color: var(--text-secondary); font-size: 12px; font-weight: 600; }
 .asset-chain__value { display: block; margin-top: 3px; overflow-wrap: anywhere; font-size: 13px; font-weight: 650; }

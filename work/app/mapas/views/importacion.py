@@ -770,7 +770,8 @@ def _procesar_puertos_odf_inventario(file, lote=None):
     decoded_file = file.read().decode('utf-8')
     df = pd.read_csv(io.StringIO(decoded_file))
     from ..models import (
-        DetallePuertoODF, InventarioODF, normalizar_estado_puerto_odf,
+        DetallePuertoODF, InventarioODF,
+        normalizar_estado_puerto_odf_con_destino,
     )
 
     requeridas = {'hub_site', 'odf', 'puerto_odf'}
@@ -808,7 +809,12 @@ def _procesar_puertos_odf_inventario(file, lote=None):
         claves_archivo.add(clave)
         odf_ids.add(odf_obj.pk)
         estado_original = limpio(row.get('estado_puerto'), 'Libre')
-        estado = normalizar_estado_puerto_odf(estado_original, default=None)
+        destino = limpio(row.get('destino'))
+        estado = normalizar_estado_puerto_odf_con_destino(
+            estado_original,
+            destino,
+            default=None,
+        )
         if not estado:
             raise ValueError(f'Fila {numero_fila}: estado de puerto inválido: {estado_original}.')
         filas.append((odf_obj, puerto_num, {
@@ -818,7 +824,7 @@ def _procesar_puertos_odf_inventario(file, lote=None):
             'estado_puerto': estado,
             'tipo_conector': limpio(row.get('tipo_conector')),
             'patchcord': limpio(row.get('patchcord')),
-            'destino': limpio(row.get('destino')),
+            'destino': destino,
             'observaciones': limpio(row.get('observaciones')),
             'lote_importacion': lote,
         }))

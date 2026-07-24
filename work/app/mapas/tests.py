@@ -142,6 +142,26 @@ class IntegridadODFTests(TransactionTestCase):
         self.assertEqual(odf.puertos_ocupados, 0)
         self.assertEqual(odf.puertos_libres, 3)
 
+    def test_importacion_infiere_reserva_desde_el_destino_legado(self):
+        hub, _, _, odf = crear_jerarquia_odf(nombre='ODF-RESERVA-LEGADA', capacidad=4)
+        archivo = SimpleUploadedFile(
+            'puertos.csv',
+            (
+                'hub_site,odf,puerto_odf,estado_puerto,destino\n'
+                f'{hub.nombre},{odf.odf},1,Ocupado,SW-01 | Reservado proyecto CCTV\n'
+            ).encode(),
+            content_type='text/csv',
+        )
+
+        _procesar_puertos_odf_inventario(archivo)
+
+        puerto = DetallePuertoODF.objects.get(odf_obj=odf, puerto_odf='1')
+        odf.refresh_from_db()
+        self.assertEqual(puerto.estado_puerto, 'Reservado')
+        self.assertEqual(odf.puertos_reservados, 1)
+        self.assertEqual(odf.puertos_ocupados, 0)
+        self.assertEqual(odf.puertos_libres, 3)
+
 
 class IntegridadRutaTests(TestCase):
     def test_impide_otu_contradictorio_entre_ruta_y_puerto(self):
@@ -760,6 +780,8 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(payload['summary']['capacidad'], 3)
         self.assertEqual(payload['summary']['reservados'], 1)
         self.assertEqual(payload['summary']['sites'], 1)
+        self.assertEqual(payload['summary']['top_ocupacion'][0]['odf'], 'ODF-GUI')
+        self.assertEqual(payload['summary']['top_ocupacion'][0]['porcentaje'], 33.3)
         self.assertIn('/api/inventario/360/odf/', payload['data'][0]['detail_url'])
 
     def test_mapa_entrega_navegacion_site_odf_con_datos_reales(self):
@@ -786,6 +808,8 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(payload['sites'][0]['id'], self.site.pk)
         self.assertEqual(payload['sites'][0]['nombre'], self.site.nombre)
         self.assertEqual(payload['data'][0]['tramos'][0]['hub_site_id'], self.site.pk)
+        self.assertEqual(payload['data'][0]['reservas_nodos'][0]['tipo'], 'MUFA')
+        self.assertEqual(payload['data'][0]['reservas_nodos'][0]['nombre'], 'MUFA-GUI')
 
     def test_troncales_y_tramos_se_entregan_paginados_con_indicadores(self):
         troncales = self.client.get(reverse('api_troncales_paginadas'), {
@@ -816,16 +840,44 @@ class GuiOperativaTests(TestCase):
             'estado': 'Ocupado',
         })
         self.assertEqual(fibras.status_code, 200)
-        self.assertEqual(fibras.json()['summary']['ocupadas'], 1)
-        self.assertEqual(fibras.json()['summary']['troncales'], 1)
+        payload_fibras = fibras.json()
+        self.assertEqual(payload_fibras['summary']['ocupadas'], 1)
+        self.assertEqual(payload_fibras['summary']['troncales'], 1)
+        self.assertEqual(payload_fibras['data'][0]['ruta_id'], self.troncal.pk)
+        self.assertEqual(
+            payload_fibras['summary']['top_troncales'][0]['nombre'],
+            'TRONCAL-GUI',
+        )
 
         reservas = self.client.get(reverse('api_elementos_paginados'), {
             'ruta': 'TRONCAL-GUI',
             'tipo': 'MUFA',
         })
         self.assertEqual(reservas.status_code, 200)
-        self.assertEqual(reservas.json()['summary']['total'], 1)
-        self.assertEqual(reservas.json()['summary']['tipos'], 1)
+        payload_reservas = reservas.json()
+        self.assertEqual(payload_reservas['summary']['total'], 1)
+        self.assertEqual(payload_reservas['summary']['tipos'], 1)
+        self.assertEqual(payload_reservas['data'][0]['ruta_id'], self.troncal.pk)
+        self.assertEqual(
+            payload_reservas['summary']['tipos_detalle'][0]['tipo'],
+            'MUFA',
+        )
+
+    def test_panel_contextual_de_troncal_entrega_capacidad_y_geometria(self):
+        response = self.client.get(
+            reverse('api_panel_troncal'),
+            {'ruta_id': self.troncal.pk},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload['ruta']['nombre'], 'TRONCAL-GUI')
+        self.assertEqual(payload['fibras']['total'], 1)
+        self.assertEqual(payload['fibras']['ocupadas'], 1)
+        self.assertEqual(payload['reservas']['elementos'], 1)
+        self.assertEqual(len(payload['coordenadas']), 1)
+        self.assertEqual(payload['puntos'][0]['tipo'], 'MUFA')
+        self.assertIn('ruta=TRONCAL-GUI', payload['ruta']['mapa_url'])
 
     def test_paginas_de_planta_externa_usan_la_plantilla_operativa(self):
         rutas = self.client.get(reverse('inventario_externo'))
@@ -835,6 +887,19 @@ class GuiOperativaTests(TestCase):
         self.assertContains(rutas, 'Total troncales')
         self.assertContains(fibras, 'Total fibras')
         self.assertContains(fibras, 'Reservas')
+        self.assertContains(rutas, 'network-inventory.css')
+        self.assertContains(fibras, 'network-inventory.css')
+        self.assertContains(fibras, reverse('api_panel_troncal'))
+        self.assertContains(fibras, 'id="network-inspector"')
+        self.assertContains(fibras, 'id="network-route-map"')
+
+        estilos = (
+            Path(__file__).resolve().parent / 'static' / 'css' / 'network-inventory.css'
+        ).read_text(encoding='utf-8')
+        self.assertIn(
+            '.network-panel .odf-kpis { grid-template-columns: repeat(5, minmax(0, 1fr)); }',
+            estilos,
+        )
 
         exportacion = self.client.get(
             reverse('exportar_inventario', args=['troncales', 'xlsx']),
@@ -870,6 +935,10 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, reverse('api_odfs_paginados'))
         self.assertContains(response, reverse('exportar_inventario', args=['odfs', 'xlsx']))
+        self.assertContains(response, 'odf-analysis-layout')
+        self.assertContains(response, 'odf-occupancy-ranking')
+        self.assertContains(response, 'odf-analysis-toggle')
+        self.assertNotContains(response, 'odf-utilization-card')
         self.assertNotContains(response, 'odf_list')
 
         exportacion = self.client.get(
@@ -900,6 +969,27 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(ficha['title'], 'TRONCAL-GUI')
         self.assertTrue(any(item['label'] == 'ODF extremo A' for item in ficha['chain']))
 
+    def test_ficha_360_separa_etiquetas_y_normaliza_valores_sin_dato(self):
+        puerto = self.puertos[0]
+        puerto.bandeja = 'SIN_DATO'
+        puerto.tipo_conector = 'Sin dato'
+        puerto.observaciones = ''
+        puerto.save(update_fields=['bandeja', 'tipo_conector', 'observaciones'])
+
+        response = self.client.get(reverse('asset_360', args=['puerto', puerto.pk]))
+        self.assertEqual(response.status_code, 200)
+        ficha = response.json()['data']
+        resumen = {item['label']: item['value'] for item in ficha['summary']}
+        self.assertEqual(resumen['Bandeja'], '—')
+        self.assertEqual(resumen['Conector'], '—')
+
+        script = (
+            Path(__file__).resolve().parent / 'static' / 'js' / 'global-search.js'
+        ).read_text(encoding='utf-8')
+        self.assertIn("renderItems(asset.chain, chain, 'asset-chain')", script)
+        self.assertIn("`${groupClass}__label`", script)
+        self.assertNotIn("`${itemClass}__label`", script)
+
     def test_exportacion_csv_se_genera_en_el_servidor(self):
         response = self.client.get(
             reverse('exportar_inventario', args=['puertos', 'csv']),
@@ -915,7 +1005,7 @@ class GuiOperativaTests(TestCase):
         self.assertNotContains(response, 'Mapa de alarmas')
         self.assertNotContains(response, 'Umbrales OTDR')
 
-    def test_dashboard_inventario_muestra_capacidad_calidad_y_alertas(self):
+    def test_dashboard_inventario_muestra_ocupacion_y_capacidad(self):
         response = self.client.get(reverse('dashboard_inventario'))
 
         self.assertEqual(response.status_code, 200)
@@ -924,9 +1014,31 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(response.context['total_racks'], 1)
         self.assertEqual(response.context['total_fibras'], 1)
         self.assertEqual(response.context['ocupacion_fibras_pct'], 100)
+        self.assertEqual(response.context['utilizacion_fibras_pct'], 100)
         self.assertTrue(response.context['alertas_inventario'])
         self.assertEqual(response.context['top_rutas_capacidad'][0]['nombre'], 'TRONCAL-GUI')
+        self.assertEqual(response.context['top_odfs_capacidad'][0]['odf'], 'ODF-GUI')
         self.assertContains(response, 'Dashboard de Inventario')
+        self.assertContains(response, 'Uso de puertos ODF')
+        self.assertContains(response, 'Uso de fibras')
+        self.assertContains(response, 'Mapa del inventario')
+        self.assertContains(response, 'Reservas de cable')
+        self.assertContains(response, 'Personalizar')
+        self.assertContains(response, 'data-dashboard-widget="ports"')
+        self.assertContains(response, 'data-dashboard-widget="fibers"')
+        self.assertContains(
+            response,
+            f'href="{reverse("planta_externa")}?tab=fibras"',
+            count=2,
+        )
+        self.assertContains(
+            response,
+            f'href="{reverse("planta_externa")}?tab=reservas"',
+        )
+        self.assertContains(response, 'Guardar dise')
+        self.assertNotContains(response, 'Actividad de cargas')
+        self.assertNotContains(response, 'Últimas cargas')
+        self.assertNotContains(response, 'Calidad ')
 
     def test_dashboard_inventario_filtra_por_site(self):
         response = self.client.get(
@@ -939,6 +1051,24 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(response.context['total_sites'], 1)
         self.assertEqual(response.context['total_odfs'], 1)
         self.assertEqual(response.context['total_rutas'], 1)
+
+    def test_filtros_de_inventario_comparten_patron_visual(self):
+        casos = (
+            (reverse('inventario_interno'), 'inventory-filter-grid--six'),
+            (reverse('planta_interna'), 'inventory-filter-grid--six'),
+            (reverse('inventario_externo'), 'inventory-filter-grid--five'),
+            (reverse('planta_externa'), 'inventory-filter-grid--four'),
+        )
+
+        for url, clase in casos:
+            with self.subTest(url=url):
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, 'inventory-filters.css')
+                self.assertContains(response, clase)
+
+        respuesta_odf = self.client.get(reverse('inventario_interno'))
+        self.assertContains(respuesta_odf, '<option value="25" selected>25</option>', html=True)
 
 
 class SeguridadYRendimientoTests(TestCase):
@@ -956,10 +1086,18 @@ class SeguridadYRendimientoTests(TestCase):
         self.assertFalse(response.context['inventario_con_datos'])
         self.assertEqual(response.context['calidad_inventario'], 0)
         self.assertContains(response, 'Sin datos cargados')
-        self.assertContains(response, 'Sin datos · No evaluable')
-        self.assertNotContains(response, 'Requiere revisión')
-        self.assertContains(response, 'Sin activos registrados')
-        self.assertContains(response, 'Sin sites georreferenciados')
+        self.assertContains(response, 'Sin puertos registrados')
+        self.assertContains(response, 'Sin fibras registradas')
+        self.assertContains(response, 'Sin capacidad por ruta')
+        self.assertContains(response, 'Sin capacidad por ODF')
+        self.assertNotContains(response, 'Actividad de cargas')
+
+    def test_tarjeta_de_sites_abre_la_gestion_en_lugar_del_endpoint_post(self):
+        response = self.client.get(reverse('configuracion'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f'href="{reverse("gestion_sites")}"')
+        self.assertNotContains(response, f'href="{reverse("importar_sites_csv")}"')
 
     def test_capacidad_odf_no_se_sobreasigna_desde_la_gui(self):
         _, _, _, odf = crear_jerarquia_odf(nombre='ODF-CAPACIDAD', capacidad=1)
@@ -1033,10 +1171,46 @@ class SeguridadYRendimientoTests(TestCase):
         self.assertContains(mapa, 'id="map-layers-toggle"')
         self.assertContains(mapa, 'id="map-state"')
         self.assertContains(mapa, 'css/mapa-red-v2.css')
+        self.assertContains(mapa, 'role="combobox"')
+        self.assertContains(mapa, 'id="route-search-results"')
+        self.assertNotContains(mapa, 'routes-datalist')
         self.assertContains(mapa, 'aria-label="Detalle de troncal"')
         self.assertContains(mapa, 'id="network-nav-panel"')
+        self.assertContains(mapa, 'data-open-asset-360', count=2)
         self.assertContains(mapa, reverse('api_mapa_site_navigation', args=[0]))
         self.assertContains(mapa, reverse('api_puertos_paginados'))
+        self.assertContains(mapa, 'Mostrar elementos externos')
+
+        script = (
+            Path(__file__).resolve().parent / 'static' / 'js' / 'mapa_inventario.js'
+        ).read_text(encoding='utf-8')
+        self.assertIn('openAsset360(link.href)', script)
+        self.assertGreaterEqual(script.count('data-open-asset-360'), 2)
+        self.assertIn('NETWORK_MARKER_ICONS', script)
+        self.assertIn('findRouteMatches', script)
+        self.assertIn('.slice(0, 8)', script)
+        self.assertIn('aria-activedescendant', script)
+        self.assertIn('selectRoute(item.ruta)', script)
+        self.assertIn('updateRouteSelectionOverlay', script)
+        self.assertIn("const selectionHaloColor", script)
+        self.assertIn("color: polyline._routeBaseColor", script)
+        self.assertIn('route-selection-label', script)
+        self.assertIn("nearestDistance <= 35", script)
+        self.assertIn("classList.add('is-route-endpoint')", script)
+        self.assertIn("state.map.on('baselayerchange'", script)
+        self.assertIn('custom-network-marker-icon', script)
+        self.assertNotIn('/static/img/iconos/${tipo}-icono.png', script)
+
+        styles = (
+            Path(__file__).resolve().parent / 'static' / 'css' / 'mapa-red-v2.css'
+        ).read_text(encoding='utf-8')
+        self.assertIn('#map[data-basemap-theme="dark"] .network-marker--asset', styles)
+        self.assertIn('.network-marker.is-selected', styles)
+        self.assertIn('.route-search-results', styles)
+        self.assertIn('[data-theme="dark"] .route-search-results', styles)
+        self.assertIn('.route-selection-endpoint', styles)
+        self.assertIn('.network-marker--site.is-route-endpoint', styles)
+        self.assertIn('#map[data-basemap-theme="dark"] .route-selection-label', styles)
 
     def test_navegacion_del_site_no_genera_consultas_por_cada_odf(self):
         site, _, rack, _ = crear_jerarquia_odf(nombre='ODF-MAPA-0', capacidad=24)

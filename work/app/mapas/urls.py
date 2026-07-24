@@ -17,6 +17,7 @@ urlpatterns = [
     path('api/inventario/consulta/tramos/', views.api_tramos_paginados, name='api_tramos_paginados'),
     path('api/inventario/consulta/fibras/', views.api_fibras_paginadas, name='api_fibras_paginadas'),
     path('api/inventario/consulta/elementos/', views.api_elementos_paginados, name='api_elementos_paginados'),
+    path('api/inventario/consulta/panel-troncal/', views.api_panel_troncal, name='api_panel_troncal'),
     path('api/inventario/exportar/<str:recurso>/<str:formato>/', views.exportar_inventario, name='exportar_inventario'),
     path('api/inventario/buscar/', views.busqueda_global, name='busqueda_global'),
     path('api/inventario/360/<str:tipo>/<int:pk>/', views.asset_360, name='asset_360'),

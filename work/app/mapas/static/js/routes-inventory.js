@@ -4,6 +4,155 @@
     if (!root) return;
     const number = new Intl.NumberFormat('es-PE', { maximumFractionDigits: 2 });
     const csrf = () => (document.cookie.match(/(?:^|; )csrftoken=([^;]+)/) || [])[1] || '';
+    const inspector = document.getElementById('network-inspector');
+    const inspectorToggle = document.getElementById('network-inspector-toggle');
+    let routeMap = null;
+    let routeRequest = null;
+
+    function setInspectorCollapsed(collapsed) {
+        if (!inspector || !inspectorToggle) return;
+        inspector.classList.toggle('is-collapsed', collapsed);
+        inspectorToggle.setAttribute('aria-expanded', String(!collapsed));
+        inspectorToggle.setAttribute('aria-label', collapsed ? 'Expandir panel' : 'Contraer panel');
+        if (!collapsed && routeMap) setTimeout(() => routeMap.invalidateSize(), 240);
+    }
+
+    function renderContextSummary(kind, summary) {
+        const target = document.getElementById('routes-context-summary');
+        if (!target) return;
+        const total = Number(summary?.total || 0);
+        const primary = kind === 'troncales' ? Number(summary?.fibras || 0) : Number(summary?.aereos || 0);
+        const secondary = kind === 'troncales' ? Number(summary?.reservas || 0) : Number(summary?.soterrados || 0);
+        const base = Math.max(1, kind === 'troncales' ? primary + secondary : total);
+        const primaryPercent = Math.min(100, (primary / base) * 100);
+        const secondaryPercent = Math.min(100 - primaryPercent, (secondary / base) * 100);
+        const donut = document.createElement('div');
+        donut.className = 'network-donut';
+        donut.style.background = `conic-gradient(#2f74ee 0 ${primaryPercent}%, #f59e0b ${primaryPercent}% ${primaryPercent + secondaryPercent}%, #18b777 ${primaryPercent + secondaryPercent}% 100%)`;
+        const value = document.createElement('span');
+        value.textContent = number.format(total);
+        const caption = document.createElement('small');
+        caption.textContent = kind === 'troncales' ? 'troncales' : 'tramos';
+        donut.append(value, caption);
+        const list = document.createElement('ul');
+        const items = kind === 'troncales'
+            ? [['is-used', 'Fibras', summary?.fibras], ['is-free', 'Tramos', summary?.tramos], ['is-reserved', 'Reservas físicas', summary?.reservas]]
+            : [['is-used', 'Aéreos', summary?.aereos], ['is-free', 'Soterrados', summary?.soterrados], ['is-reserved', 'Reserva (m)', summary?.reservas_m]];
+        items.forEach(([className, label, amount]) => {
+            const item = document.createElement('li');
+            const dot = document.createElement('i');
+            dot.className = className;
+            const text = document.createElement('span');
+            text.textContent = label;
+            const totalNode = document.createElement('b');
+            totalNode.textContent = number.format(amount || 0);
+            item.append(dot, text, totalNode);
+            list.appendChild(item);
+        });
+        target.replaceChildren(donut, list);
+    }
+
+    function drawRouteMap(payload) {
+        const target = document.getElementById('network-route-map');
+        if (!target || !window.L) return;
+        if (routeMap) routeMap.remove();
+        routeMap = null;
+        target.replaceChildren();
+        const coordinates = (payload.coordenadas || [])
+            .map(point => [Number(point[0]), Number(point[1])])
+            .filter(point => Number.isFinite(point[0]) && Number.isFinite(point[1]));
+        if (coordinates.length < 2) {
+            target.textContent = 'La troncal no tiene geometría disponible.';
+            return;
+        }
+        routeMap = L.map(target, { zoomControl: true, attributionControl: true, scrollWheelZoom: false, preferCanvas: true });
+        const dark = document.documentElement.dataset.theme === 'dark';
+        L.tileLayer(
+            dark ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png' : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+            { maxZoom: 19, attribution: '&copy; OpenStreetMap &copy; CARTO' },
+        ).addTo(routeMap);
+        const line = L.polyline(coordinates, { color: '#7657ed', weight: 5, opacity: .96 }).addTo(routeMap);
+        routeMap.fitBounds(line.getBounds(), { padding: [18, 18], maxZoom: 15 });
+        setTimeout(() => routeMap?.invalidateSize(), 80);
+    }
+
+    function metric(label, value) {
+        const wrapper = document.createElement('span');
+        const name = document.createElement('small');
+        name.textContent = label;
+        const content = document.createElement('b');
+        content.textContent = value;
+        wrapper.append(name, content);
+        return wrapper;
+    }
+
+    function meta(label, value) {
+        const wrapper = document.createElement('div');
+        const term = document.createElement('dt');
+        term.textContent = label;
+        const content = document.createElement('dd');
+        content.textContent = value || '—';
+        wrapper.append(term, content);
+        return wrapper;
+    }
+
+    async function selectRoute(rutaId, row) {
+        if (!rutaId || !root.dataset.routePanelApi) return;
+        root.querySelectorAll('.odf-table tbody tr.is-selected').forEach(item => item.classList.remove('is-selected'));
+        row?.classList.add('is-selected');
+        setInspectorCollapsed(false);
+        const empty = document.getElementById('network-route-empty');
+        const detail = document.getElementById('network-route-detail');
+        empty.hidden = false;
+        empty.querySelector('strong').textContent = 'Cargando ruta…';
+        detail.hidden = true;
+        routeRequest?.abort();
+        routeRequest = new AbortController();
+        const url = new URL(root.dataset.routePanelApi, location.origin);
+        url.searchParams.set('ruta_id', rutaId);
+        try {
+            const response = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' }, signal: routeRequest.signal, cache: 'no-store' });
+            if (!response.ok) throw new Error();
+            const payload = await response.json();
+            empty.hidden = true;
+            detail.hidden = false;
+            document.getElementById('network-route-name').textContent = payload.ruta.nombre;
+            const metrics = document.getElementById('network-route-metrics');
+            metrics.replaceChildren(
+                metric('Utilización', `${number.format(payload.fibras.utilizacion)}%`),
+                metric('Distancia', `${number.format(payload.ruta.distancia_km)} km`),
+                metric('Fibras', number.format(payload.fibras.total)),
+                metric('Reservas', number.format(payload.reservas.elementos)),
+            );
+            document.getElementById('network-route-meta').replaceChildren(
+                meta('Origen', payload.ruta.origen),
+                meta('Destino', payload.ruta.destino),
+                meta('Trazado', payload.ruta.tipos_trazado.join(' · ')),
+                meta('Reserva lineal', `${number.format(payload.reservas.reserva_m)} m`),
+            );
+            drawRouteMap(payload);
+        } catch (error) {
+            if (error.name === 'AbortError') return;
+            empty.hidden = false;
+            empty.querySelector('strong').textContent = 'No se pudo cargar';
+            empty.querySelector('p').textContent = 'Intenta seleccionar la ruta nuevamente.';
+        }
+    }
+
+    function makeSelectable(row, rutaId, label) {
+        if (!rutaId) return row;
+        row.dataset.routeId = rutaId;
+        row.tabIndex = 0;
+        row.setAttribute('aria-label', `Ver detalle de ${label}`);
+        row.addEventListener('click', () => selectRoute(rutaId, row));
+        row.addEventListener('keydown', event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                selectRoute(rutaId, row);
+            }
+        });
+        return row;
+    }
 
     function cell(value, className) {
         const td = document.createElement('td');
@@ -28,7 +177,10 @@
         button.title = label;
         button.setAttribute('aria-label', label);
         button.textContent = symbol;
-        button.addEventListener('click', handler);
+        button.addEventListener('click', event => {
+            event.stopPropagation();
+            handler(event);
+        });
         return button;
     }
     function actions(item, canEdit, editHandler) {
@@ -148,21 +300,23 @@
         row.appendChild(cell(item.tipo)); row.appendChild(cell(`${number.format(item.distancia_km)} km`, 'odf-number'));
         [item.tramos, item.capacidad, item.fibras, item.reservas].forEach((value) => row.appendChild(cell(value, 'odf-number')));
         const state = document.createElement('td'); state.appendChild(badge(item.estado)); row.appendChild(state);
-        row.appendChild(actions(item, canEditRoute, openRouteEditor)); return row;
+        row.appendChild(actions(item, canEditRoute, openRouteEditor));
+        return makeSelectable(row, item.id, item.nombre);
     }
     function tramoRow(item) {
         const row = document.createElement('tr');
         [item.troncal, item.secuencia, item.origen, item.destino, item.tipo, `${number.format(item.distancia_km)} km`, item.capacidad, item.ocupados, item.libres, `${number.format(item.reservas_m)} m`].forEach((value) => row.appendChild(cell(value)));
-        const state = document.createElement('td'); state.appendChild(badge(item.estado)); row.appendChild(state); row.appendChild(actions(item, false)); return row;
+        const state = document.createElement('td'); state.appendChild(badge(item.estado)); row.appendChild(state); row.appendChild(actions(item, false));
+        return makeSelectable(row, item.ruta_id, item.troncal);
     }
     const text = (id, value) => { const node = document.getElementById(id); if (node) node.textContent = number.format(value || 0); };
     routesTable = new InventoryTable('troncales', {
         api: root.dataset.troncalesApi, exportUrl: root.dataset.troncalesExport, columns: 11, row: routeRow,
-        summary: (s) => { text('troncales-stat-total', s.total); text('troncales-stat-distance', s.distancia_km); text('troncales-stat-segments', s.tramos); text('troncales-stat-fibers', s.fibras); text('troncales-stat-reserves', s.reservas); },
+        summary: (s) => { text('troncales-stat-total', s.total); text('troncales-stat-distance', s.distancia_km); text('troncales-stat-segments', s.tramos); text('troncales-stat-fibers', s.fibras); text('troncales-stat-reserves', s.reservas); renderContextSummary('troncales', s); },
     });
     const tramosTable = new InventoryTable('tramos', {
         api: root.dataset.tramosApi, exportUrl: root.dataset.tramosExport, columns: 12, row: tramoRow,
-        summary: (s) => { text('tramos-stat-total', s.total); text('tramos-stat-distance', s.distancia_km); text('tramos-stat-aerial', s.aereos); text('tramos-stat-underground', s.soterrados); text('tramos-stat-reserve', s.reservas_m); },
+        summary: (s) => { text('tramos-stat-total', s.total); text('tramos-stat-distance', s.distancia_km); text('tramos-stat-aerial', s.aereos); text('tramos-stat-underground', s.soterrados); text('tramos-stat-reserve', s.reservas_m); renderContextSummary('tramos', s); },
     });
 
     function dialogSetup(id, triggerId, submitUrl, beforeOpen) {
@@ -198,9 +352,13 @@
     function selectTab(name) {
         const tab = tabs.find((item) => item.dataset.tab === name) || tabs[0];
         tabs.forEach((item) => { const active = item === tab; item.setAttribute('aria-selected', active); document.getElementById(item.getAttribute('aria-controls')).hidden = !active; });
+        document.getElementById('network-inspector-title').textContent = tab.dataset.tab === 'tramos' ? 'Resumen de tramos' : 'Resumen de troncales';
+        document.getElementById('routes-context-title').textContent = tab.dataset.tab === 'tramos' ? 'Tipos de trazado' : 'Capacidad consolidada';
         if (!tables[tab.dataset.tab].loaded) tables[tab.dataset.tab].load(); const url = new URL(location.href); url.searchParams.set('tab', tab.dataset.tab); history.replaceState({}, '', url);
     }
     tabs.forEach((tab) => tab.addEventListener('click', () => selectTab(tab.dataset.tab)));
     const incoming = new URLSearchParams(location.search); const query = incoming.get('q'); if (query) root.querySelectorAll('[data-filter="q"]').forEach((input) => { input.value = query; });
+    inspectorToggle?.addEventListener('click', () => setInspectorCollapsed(!inspector.classList.contains('is-collapsed')));
+    if (window.innerWidth <= 1700) setInspectorCollapsed(true);
     selectTab(incoming.get('tab') || 'troncales');
 })();

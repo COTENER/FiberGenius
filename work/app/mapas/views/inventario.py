@@ -9,6 +9,7 @@ from django.views.decorators.http import require_http_methods, require_POST
 from django.db import IntegrityError, transaction
 from ..models import (
     Ruta, CoordenadaRuta, InventarioTramo, normalizar_estado_puerto_odf,
+    normalizar_estado_puerto_odf_con_destino,
 )
 
 logger = logging.getLogger('mapas')
@@ -65,7 +66,7 @@ def dashboard_inventario(request):
     from django.db.models import Count, Q
     from ..models import (
         Ruta, InventarioTramo, Reserva, InventarioODF, DetallePuertoODF,
-        InventarioFibra, HubSite, LoteImportacion,
+        InventarioFibra, HubSite,
     )
 
     site_seleccionado = request.GET.get('site', '').strip()
@@ -270,6 +271,79 @@ def dashboard_inventario(request):
         key=lambda ruta: (ruta['utilizacion_hilos'], ruta['hilos_ocupados']),
         reverse=True,
     )[:5]
+    odfs_capacidad_data = []
+    for odf in odfs_data:
+        capacidad_declarada = odf['capacidad_puertos'] or 0
+        ocupados = odf['puertos_ocupados'] or 0
+        libres = odf['puertos_libres'] or 0
+        reservados = odf['puertos_reservados'] or 0
+        capacidad_observada = ocupados + libres + reservados
+        capacidad_total = max(capacidad_declarada, capacidad_observada)
+        utilizados = ocupados + reservados
+        if not capacidad_total:
+            continue
+        odfs_capacidad_data.append({
+            'id': odf['id'],
+            'odf': odf['odf'],
+            'hub_site': odf['hub_site'],
+            'capacidad_total': capacidad_total,
+            'ocupados': ocupados,
+            'reservados': reservados,
+            'libres': max(capacidad_total - utilizados, 0),
+            'utilizados': utilizados,
+            'utilizacion_pct': round(utilizados / capacidad_total * 100, 1),
+        })
+    top_odfs_capacidad = sorted(
+        odfs_capacidad_data,
+        key=lambda odf: (odf['utilizacion_pct'], odf['utilizados']),
+        reverse=True,
+    )[:5]
+
+    puertos_utilizados = puertos_ocupados + puertos_reservados
+    fibras_utilizadas = fibras_ocupadas + fibras_reservadas
+    utilizacion_puertos_pct = round(
+        puertos_utilizados / total_puertos * 100, 1
+    ) if total_puertos else 0
+    disponibilidad_puertos_pct = round(
+        puertos_libres / total_puertos * 100, 1
+    ) if total_puertos else 0
+    utilizacion_fibras_pct = round(
+        fibras_utilizadas / total_fibras * 100, 1
+    ) if total_fibras else 0
+    ocupacion_fibras_pct = round(
+        fibras_ocupadas / total_fibras * 100, 1
+    ) if total_fibras else 0
+    disponibilidad_fibras_pct = round(
+        fibras_libres / total_fibras * 100, 1
+    ) if total_fibras else 0
+    rutas_con_fibras = sum(1 for ruta in resumen_rutas if ruta['total_hilos'])
+    odfs_con_capacidad = len(odfs_capacidad_data)
+    odfs_con_disponibilidad = sum(1 for odf in odfs_capacidad_data if odf['libres'] > 0)
+    odfs_sin_disponibilidad = sum(1 for odf in odfs_capacidad_data if odf['libres'] == 0)
+    odfs_capacidad_atencion = sum(
+        1 for odf in odfs_capacidad_data if 80 <= odf['utilizacion_pct'] < 100
+    )
+    odfs_saturados = sum(1 for odf in odfs_capacidad_data if odf['utilizacion_pct'] >= 100)
+    odfs_disponibilidad_pct = round(
+        odfs_con_disponibilidad / odfs_con_capacidad * 100, 1
+    ) if odfs_con_capacidad else 0
+    rutas_con_disponibilidad = sum(
+        1 for ruta in resumen_rutas if ruta['total_hilos'] and ruta['hilos_libres'] > 0
+    )
+    rutas_sin_disponibilidad = sum(
+        1 for ruta in resumen_rutas if ruta['total_hilos'] and ruta['hilos_libres'] == 0
+    )
+    rutas_capacidad_atencion = sum(
+        1 for ruta in resumen_rutas
+        if ruta['total_hilos'] and 80 <= ruta['utilizacion_hilos'] < 100
+    )
+    rutas_saturadas = sum(
+        1 for ruta in resumen_rutas
+        if ruta['total_hilos'] and ruta['utilizacion_hilos'] >= 100
+    )
+    rutas_disponibilidad_pct = round(
+        rutas_con_disponibilidad / rutas_con_fibras * 100, 1
+    ) if rutas_con_fibras else 0
     rutas_alta_ocupacion = sum(
         1 for ruta in resumen_rutas if ruta['total_hilos'] and ruta['utilizacion_hilos'] >= 85
     )
@@ -290,6 +364,9 @@ def dashboard_inventario(request):
     sites_georreferenciados = sum(
         1 for site in sites if site['latitud'] is not None and site['longitud'] is not None
     )
+    sites_georreferenciados_pct = round(
+        sites_georreferenciados / total_sites * 100, 1
+    ) if total_sites else 0
     sites_sin_coordenadas = total_sites - sites_georreferenciados
     rutas_sin_geometria = sum(1 for ruta in rutas_db if len(ruta.coordenadas.all()) < 2)
     odfs_sin_ubicacion = sum(
@@ -337,19 +414,6 @@ def dashboard_inventario(request):
             'detalle': 'No aparecen en el mapa de cobertura del inventario.',
         })
 
-    lotes_recientes = []
-    lotes_qs = LoteImportacion.objects.select_related('usuario').order_by('-creado_en')[:5]
-    for lote in lotes_qs:
-        lotes_recientes.append({
-            'archivo': lote.archivo_origen,
-            'tipo': lote.tipo,
-            'registros': lote.filas_creadas + lote.filas_actualizadas,
-            'fecha': lote.creado_en,
-            'estado': lote.estado,
-            'estado_label': lote.get_estado_display(),
-            'usuario': lote.usuario.get_username() if lote.usuario else 'Sistema',
-        })
-    actividad_cargas = list(reversed(lotes_recientes))
     total_tramos = sum(len(ruta.tramos_inventario.all()) for ruta in rutas_db)
     total_reservas = sum(len(ruta.reservas.all()) for ruta in rutas_db)
     total_coordenadas = sum(len(ruta.coordenadas.all()) for ruta in rutas_db)
@@ -374,22 +438,41 @@ def dashboard_inventario(request):
         'total_reservas': total_reservas,
         'total_coordenadas': total_coordenadas,
         'sites_georreferenciados': sites_georreferenciados,
+        'sites_georreferenciados_pct': sites_georreferenciados_pct,
         'puertos_libres': puertos_libres,
         'puertos_ocupados': puertos_ocupados,
         'puertos_reservados': puertos_reservados,
+        'puertos_utilizados': puertos_utilizados,
         'total_puertos': total_puertos,
         'ocupacion_puertos_pct': round(puertos_ocupados / total_puertos * 100, 1) if total_puertos else 0,
+        'utilizacion_puertos_pct': utilizacion_puertos_pct,
+        'disponibilidad_puertos_pct': disponibilidad_puertos_pct,
         'fibras_libres': fibras_libres,
         'fibras_ocupadas': fibras_ocupadas,
         'fibras_reservadas': fibras_reservadas,
+        'fibras_utilizadas': fibras_utilizadas,
         'total_fibras': total_fibras,
-        'ocupacion_fibras_pct': round(
-            (fibras_ocupadas + fibras_reservadas) / total_fibras * 100, 1
-        ) if total_fibras else 0,
+        'ocupacion_fibras_pct': ocupacion_fibras_pct,
+        'utilizacion_fibras_pct': utilizacion_fibras_pct,
+        'disponibilidad_fibras_pct': disponibilidad_fibras_pct,
+        'rutas_con_fibras': rutas_con_fibras,
+        'rutas_con_disponibilidad': rutas_con_disponibilidad,
+        'rutas_sin_disponibilidad': rutas_sin_disponibilidad,
+        'rutas_capacidad_atencion': rutas_capacidad_atencion,
+        'rutas_saturadas': rutas_saturadas,
+        'rutas_disponibilidad_pct': rutas_disponibilidad_pct,
+        'odfs_con_capacidad': odfs_con_capacidad,
+        'odfs_con_disponibilidad': odfs_con_disponibilidad,
+        'odfs_sin_disponibilidad': odfs_sin_disponibilidad,
+        'odfs_capacidad_atencion': odfs_capacidad_atencion,
+        'odfs_saturados': odfs_saturados,
+        'odfs_disponibilidad_pct': odfs_disponibilidad_pct,
         'calidad_inventario': calidad_inventario,
         'inventario_con_datos': bool(controles_calidad),
         'alertas_inventario': alertas_inventario[:4],
         'top_rutas_capacidad': top_rutas_capacidad,
+        'top_odfs_capacidad': top_odfs_capacidad,
+        'rutas_dashboard_nombres': [ruta['nombre'] for ruta in resumen_rutas],
         'site_seleccionado': site_seleccionado,
         'trazado_seleccionado': trazado_seleccionado,
         'sites_disponibles': sites_disponibles,
@@ -398,44 +481,9 @@ def dashboard_inventario(request):
             total_odfs, total_puertos, total_tramos, total_fibras,
             total_reservas, total_coordenadas,
         ],
-        'actividad_cargas_labels': [
-            lote['fecha'].strftime('%d/%m') for lote in actividad_cargas
-        ],
-        'actividad_cargas_values': [lote['registros'] for lote in actividad_cargas],
-        'lotes_recientes': lotes_recientes,
         'odf_list': [{'odf': odf['odf'], 'hub_site': odf['hub_site']} for odf in odfs_data],
         'hub_sites': [site['nombre'] for site in sites_disponibles],
     }
-
-    # Datos para el mapa de sites
-    sites_map_data = []
-    rutas_por_site = defaultdict(set)
-    for tramo in tramos_filtrados.values('ruta_id', 'hub_site', 'destino'):
-        for nombre_site in (tramo['hub_site'], tramo['destino']):
-            if nombre_site:
-                rutas_por_site[nombre_site].add(tramo['ruta_id'])
-    fibras_por_ruta = {
-        fila['ruta_id']: fila['total']
-        for fila in fibras_filtradas.values('ruta_id').annotate(total=Count('id'))
-    }
-    odfs_por_site = defaultdict(int)
-    for odf in odfs_data:
-        if odf['hub_site']:
-            odfs_por_site[odf['hub_site']] += 1
-
-    for site in sites:
-        if site['latitud'] is None or site['longitud'] is None:
-            continue
-        rutas_site = rutas_por_site[site['nombre']]
-        sites_map_data.append({
-            'nombre': site['nombre'],
-            'lat': float(site['latitud']),
-            'lng': float(site['longitud']),
-            'rutas_count': len(rutas_site),
-            'odf_count': odfs_por_site[site['nombre']],
-            'hilos_count': sum(fibras_por_ruta.get(ruta_id, 0) for ruta_id in rutas_site),
-        })
-    context['sites_map_data'] = json.dumps(sites_map_data)
     return render(request, 'mapa_inventario/dashboard_inventario.html', context)
 
 @login_required
@@ -1772,7 +1820,15 @@ def import_puertos_archivo(request):
             if not puerto_val or puerto_val == 'nan' or puerto_val == 'None':
                 continue
 
-            estado_val = normalizar_estado_puerto_odf(df_estado.iloc[i])
+            destino_val = (
+                str(df_destino.iloc[i]).strip()
+                if str(df_destino.iloc[i]).strip() != 'nan'
+                else ''
+            )
+            estado_val = normalizar_estado_puerto_odf_con_destino(
+                df_estado.iloc[i],
+                destino_val,
+            )
 
             datos = {
                 'bandeja': str(df_bandeja.iloc[i]).strip() if str(df_bandeja.iloc[i]).strip() != 'nan' else '',
@@ -1780,7 +1836,7 @@ def import_puertos_archivo(request):
                 'estado_puerto': estado_val,
                 'tipo_conector': str(df_conector.iloc[i]).strip() if str(df_conector.iloc[i]).strip() != 'nan' else '',
                 'patchcord': str(df_patch.iloc[i]).strip() if str(df_patch.iloc[i]).strip() != 'nan' else '',
-                'destino': str(df_destino.iloc[i]).strip() if str(df_destino.iloc[i]).strip() != 'nan' else '',
+                'destino': destino_val,
             }
 
             obj, created = DetallePuertoODF.objects.update_or_create(

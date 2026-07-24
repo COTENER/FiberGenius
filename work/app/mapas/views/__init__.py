@@ -92,6 +92,7 @@ from .operacion_inventario import (
     api_tramos_paginados,
     api_fibras_paginadas,
     api_elementos_paginados,
+    api_panel_troncal,
     create_tramo_manual,
     exportar_inventario,
     busqueda_global,

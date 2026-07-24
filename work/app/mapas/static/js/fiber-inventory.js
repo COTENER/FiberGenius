@@ -5,6 +5,10 @@
     const formatter = new Intl.NumberFormat('es-PE', { maximumFractionDigits: 2 });
     const csrf = () => (document.cookie.match(/(?:^|; )csrftoken=([^;]+)/) || [])[1] || '';
     const put = (id, value) => { const node = document.getElementById(id); if (node) node.textContent = formatter.format(value || 0); };
+    const inspector = document.getElementById('network-inspector');
+    const inspectorToggle = document.getElementById('network-inspector-toggle');
+    let routeMap = null;
+    let routeRequest = null;
 
     function cell(value) { const td = document.createElement('td'); td.textContent = value === null || value === undefined || value === '' ? '—' : value; return td; }
     function badge(value) {
@@ -13,7 +17,7 @@
         if (state.includes('fuera') || state.includes('error')) span.classList.add('is-danger');
         if (!value) span.classList.add('is-neutral'); span.textContent = value || 'Sin estado'; return span;
     }
-    function actionButton(label, symbol, callback) { const button = document.createElement('button'); button.type = 'button'; button.className = 'odf-icon-action'; button.title = label; button.setAttribute('aria-label', label); button.textContent = symbol; button.addEventListener('click', callback); return button; }
+    function actionButton(label, symbol, callback) { const button = document.createElement('button'); button.type = 'button'; button.className = 'odf-icon-action'; button.title = label; button.setAttribute('aria-label', label); button.textContent = symbol; button.addEventListener('click', (event) => { event.stopPropagation(); callback(); }); return button; }
     function actionCell(item, editor) {
         const td = document.createElement('td'); const wrap = document.createElement('div'); wrap.className = 'network-actions';
         wrap.appendChild(actionButton('Abrir ficha 360°', '◉', () => window.FiberGenius && window.FiberGenius.openAsset360 ? window.FiberGenius.openAsset360(item.detail_url) : window.location.assign(item.detail_url)));
@@ -27,6 +31,238 @@
             const objectUrl = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = objectUrl; link.download = match ? match[1] : 'FiberGenius.xlsx'; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(objectUrl);
             status.classList.add('is-success'); status.textContent = 'Archivo descargado correctamente.';
         } catch (_error) { status.classList.add('is-error'); status.textContent = 'No se pudo generar el archivo. Intenta nuevamente.'; }
+    }
+
+    function setInspectorCollapsed(collapsed) {
+        if (!inspector || !inspectorToggle) return;
+        inspector.classList.toggle('is-collapsed', collapsed);
+        inspectorToggle.setAttribute('aria-expanded', String(!collapsed));
+        inspectorToggle.setAttribute('aria-label', collapsed ? 'Mostrar resumen' : 'Ocultar resumen');
+        inspectorToggle.title = collapsed ? 'Mostrar resumen' : 'Ocultar resumen';
+        if (!collapsed && routeMap) setTimeout(() => routeMap.invalidateSize(), 240);
+    }
+
+    if (inspectorToggle) {
+        inspectorToggle.addEventListener('click', () => {
+            setInspectorCollapsed(!inspector.classList.contains('is-collapsed'));
+        });
+        setInspectorCollapsed(window.innerWidth < 1700);
+    }
+
+    function switchInspectorContext(name) {
+        root.querySelectorAll('[data-inspector-context]').forEach((section) => {
+            section.hidden = section.dataset.inspectorContext !== name;
+        });
+    }
+
+    function renderFiberSummary(summary) {
+        const total = Number(summary.total || 0);
+        const free = Number(summary.libres || 0);
+        const used = Number(summary.ocupadas || 0);
+        const reserved = Number(summary.reservadas || 0);
+        put('fiber-summary-total', total);
+        put('fiber-summary-free', free);
+        put('fiber-summary-used', used);
+        put('fiber-summary-reserved', reserved);
+        const donut = document.getElementById('fiber-summary-chart');
+        if (donut) {
+            const freePct = total ? (free / total) * 100 : 0;
+            const usedPct = total ? (used / total) * 100 : 0;
+            const usedEnd = freePct + usedPct;
+            donut.style.background = total
+                ? `conic-gradient(#18b777 0 ${freePct}%, #2f74ee ${freePct}% ${usedEnd}%, #f59e0b ${usedEnd}% 100%)`
+                : 'conic-gradient(#e8edf5 0 100%)';
+        }
+        const ranking = document.getElementById('fiber-top-routes');
+        if (!ranking) return;
+        ranking.replaceChildren();
+        const routes = Array.isArray(summary.top_troncales) ? summary.top_troncales : [];
+        if (!routes.length) {
+            const empty = document.createElement('p');
+            empty.className = 'network-inspector-empty';
+            empty.textContent = 'No hay troncales con los filtros actuales.';
+            ranking.appendChild(empty);
+            return;
+        }
+        routes.forEach((route) => {
+            const item = document.createElement('div');
+            item.className = 'network-ranking__item';
+            item.tabIndex = 0;
+            item.setAttribute('role', 'button');
+            item.setAttribute('aria-label', `Ver ${route.nombre}`);
+            const label = document.createElement('div');
+            label.className = 'network-ranking__label';
+            const name = document.createElement('span');
+            name.textContent = route.nombre;
+            name.title = route.nombre;
+            const value = document.createElement('b');
+            value.textContent = `${formatter.format(route.utilizacion)}%`;
+            label.append(name, value);
+            const bar = document.createElement('div');
+            bar.className = 'network-ranking__bar';
+            const fill = document.createElement('i');
+            fill.style.width = `${Math.min(100, Number(route.utilizacion || 0))}%`;
+            bar.appendChild(fill);
+            item.append(label, bar);
+            const select = () => loadRoutePanel({ ruta_id: route.id, troncal: route.nombre });
+            item.addEventListener('click', select);
+            item.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    select();
+                }
+            });
+            ranking.appendChild(item);
+        });
+    }
+
+    function renderReserveSummary(summary) {
+        put('reserve-summary-total', summary.total);
+        const meters = document.getElementById('reserve-summary-meters');
+        if (meters) meters.textContent = `${formatter.format(summary.reserva_m || 0)} m`;
+        const list = document.getElementById('reserve-type-summary');
+        if (!list) return;
+        list.replaceChildren();
+        const types = Array.isArray(summary.tipos_detalle) ? summary.tipos_detalle : [];
+        if (!types.length) {
+            const empty = document.createElement('p');
+            empty.className = 'network-inspector-empty';
+            empty.textContent = 'No hay elementos con los filtros actuales.';
+            list.appendChild(empty);
+            return;
+        }
+        types.forEach((type) => {
+            const item = document.createElement('div');
+            item.className = 'network-type-list__item';
+            const label = document.createElement('div');
+            label.className = 'network-type-list__label';
+            const name = document.createElement('span');
+            name.textContent = type.tipo;
+            const value = document.createElement('b');
+            value.textContent = formatter.format(type.total);
+            label.append(name, value);
+            item.appendChild(label);
+            if (Number(type.reserva_m || 0) > 0) {
+                const detail = document.createElement('small');
+                detail.textContent = `${formatter.format(type.reserva_m)} m documentados`;
+                item.appendChild(detail);
+            }
+            list.appendChild(item);
+        });
+    }
+
+    function drawRouteMap(payload) {
+        const target = document.getElementById('network-route-map');
+        if (!target || !window.L) return;
+        if (routeMap) {
+            routeMap.remove();
+            routeMap = null;
+        }
+        target.replaceChildren();
+        const coordinates = (payload.coordenadas || [])
+            .map((point) => [Number(point[0]), Number(point[1])])
+            .filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1]));
+        const markers = (payload.puntos || [])
+            .map((point) => ({ ...point, latitud: Number(point.latitud), longitud: Number(point.longitud) }))
+            .filter((point) => Number.isFinite(point.latitud) && Number.isFinite(point.longitud));
+        if (coordinates.length < 2 && !markers.length) {
+            target.classList.add('is-empty');
+            target.textContent = 'La troncal no tiene geometría disponible.';
+            return;
+        }
+        target.classList.remove('is-empty');
+        routeMap = L.map(target, {
+            zoomControl: true,
+            attributionControl: true,
+            scrollWheelZoom: false,
+            preferCanvas: true,
+        });
+        const dark = document.documentElement.dataset.theme === 'dark';
+        L.tileLayer(
+            dark
+                ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+                : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+            { maxZoom: 19, attribution: '&copy; OpenStreetMap &copy; CARTO' },
+        ).addTo(routeMap);
+        const bounds = L.latLngBounds([]);
+        if (coordinates.length >= 2) {
+            const line = L.polyline(coordinates, { color: '#216cf4', weight: 4, opacity: .95 }).addTo(routeMap);
+            bounds.extend(line.getBounds());
+        }
+        markers.forEach((point) => {
+            const marker = L.circleMarker([point.latitud, point.longitud], {
+                radius: 4,
+                color: '#fff',
+                weight: 2,
+                fillColor: '#f59e0b',
+                fillOpacity: 1,
+            }).bindTooltip(`${point.tipo}: ${point.nombre}`);
+            marker.addTo(routeMap);
+            bounds.extend(marker.getLatLng());
+        });
+        if (bounds.isValid()) routeMap.fitBounds(bounds, { padding: [18, 18], maxZoom: 15 });
+        setTimeout(() => routeMap && routeMap.invalidateSize(), 80);
+    }
+
+    async function loadRoutePanel(item, selectedRow) {
+        if (!item || !item.ruta_id || !root.dataset.routePanelApi) return;
+        root.querySelectorAll('.odf-table tbody tr.is-selected').forEach((row) => row.classList.remove('is-selected'));
+        if (selectedRow) selectedRow.classList.add('is-selected');
+        setInspectorCollapsed(false);
+        const state = document.getElementById('network-route-state');
+        const empty = document.getElementById('network-route-empty');
+        const detail = document.getElementById('network-route-detail');
+        if (state) state.textContent = 'Cargando detalle…';
+        if (empty) empty.hidden = false;
+        if (detail) detail.hidden = true;
+        if (routeRequest) routeRequest.abort();
+        routeRequest = new AbortController();
+        const url = new URL(root.dataset.routePanelApi, location.origin);
+        url.searchParams.set('ruta_id', item.ruta_id);
+        try {
+            const response = await fetch(url, {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                signal: routeRequest.signal,
+            });
+            if (!response.ok) throw new Error();
+            const payload = await response.json();
+            if (empty) empty.hidden = true;
+            if (detail) detail.hidden = false;
+            if (state) state.textContent = payload.ruta.tipos_trazado.join(' · ') || 'Sin trazado clasificado';
+            document.getElementById('network-route-name').textContent = payload.ruta.nombre;
+            document.getElementById('network-route-utilization').textContent = `${formatter.format(payload.fibras.utilizacion)}%`;
+            document.getElementById('network-route-distance').textContent = `${formatter.format(payload.ruta.distancia_km)} km`;
+            document.getElementById('network-route-origin').textContent = payload.ruta.origen;
+            document.getElementById('network-route-destination').textContent = payload.ruta.destino;
+            document.getElementById('network-route-fibers').textContent = `${formatter.format(payload.fibras.ocupadas)} ocupados · ${formatter.format(payload.fibras.libres)} libres`;
+            document.getElementById('network-route-reserves').textContent = `${formatter.format(payload.reservas.elementos)} elementos · ${formatter.format(payload.reservas.reserva_m)} m`;
+            const open = document.getElementById('network-route-open');
+            open.href = payload.ruta.mapa_url;
+            open.hidden = false;
+            drawRouteMap(payload);
+        } catch (error) {
+            if (error.name === 'AbortError') return;
+            if (state) state.textContent = 'No se pudo cargar';
+            if (empty) {
+                empty.hidden = false;
+                const message = empty.querySelector('p');
+                if (message) message.textContent = 'No fue posible obtener el detalle de esta troncal.';
+            }
+        }
+    }
+
+    function selectableRow(row, item) {
+        if (!item.ruta_id) return row;
+        row.dataset.routeId = item.ruta_id;
+        row.tabIndex = 0;
+        row.addEventListener('click', () => loadRoutePanel(item, row));
+        row.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                loadRoutePanel(item, row);
+            }
+        });
+        return row;
     }
 
     class InventoryTable {
@@ -48,7 +284,7 @@
         async load() {
             if (!this.panel) return; if (this.controller) this.controller.abort(); this.controller = new AbortController(); this.message.className = 'odf-message'; this.message.textContent = 'Consultando inventario…'; const url = new URL(this.options.api, location.origin); url.search = this.params().toString();
             try {
-                const response = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' }, signal: this.controller.signal }); if (!response.ok) throw new Error(); const payload = await response.json(); const meta = payload.pagination;
+                const response = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' }, signal: this.controller.signal, cache: 'no-store' }); if (!response.ok) throw new Error(); const payload = await response.json(); const meta = payload.pagination;
                 this.page = meta.page; this.rows(payload.data || []); this.options.summary(payload.summary || {}); const start = meta.total ? ((meta.page - 1) * meta.page_size) + 1 : 0; const end = Math.min(meta.page * meta.page_size, meta.total); this.info.textContent = `Mostrando ${start} a ${end} de ${formatter.format(meta.total)} resultados`; this.previous.disabled = !meta.has_previous; this.next.disabled = !meta.has_next; this.pages(meta); this.message.textContent = ''; this.loaded = true;
             } catch (error) { if (error.name === 'AbortError') return; this.message.classList.add('is-error'); this.message.textContent = 'No se pudo cargar el inventario.'; }
         }
@@ -60,10 +296,10 @@
     }
 
     let fiberEditor;
-    function fiberRow(item) { const row = document.createElement('tr'); row.appendChild(cell(item.troncal)); row.appendChild(cell(item.numero)); const state = document.createElement('td'); state.appendChild(badge(item.estado)); row.appendChild(state); [item.servicio, item.origen, item.destino, item.conector].forEach((value) => row.appendChild(cell(value))); row.appendChild(actionCell(item, root.dataset.canEditFiber === 'true' ? openFiberEditor : null)); return row; }
-    function reserveRow(item) { const row = document.createElement('tr'); [item.troncal, item.nombre, item.tipo, item.reserva_m === null ? '—' : `${formatter.format(item.reserva_m)} m`, item.tramo, item.latitud, item.longitud].forEach((value) => row.appendChild(cell(value))); const state = document.createElement('td'); state.appendChild(badge(item.estado)); row.appendChild(state); row.appendChild(actionCell(item)); return row; }
-    const fibers = new InventoryTable('fibras', { api: root.dataset.fibersApi, exportUrl: root.dataset.fibersExport, columns: 8, row: fiberRow, summary: (s) => { put('fibras-stat-total', s.total); put('fibras-stat-free', s.libres); put('fibras-stat-used', s.ocupadas); put('fibras-stat-reserved', s.reservadas); put('fibras-stat-routes', s.troncales); } });
-    const reserves = new InventoryTable('reservas', { api: root.dataset.reservesApi, exportUrl: root.dataset.reservesExport, columns: 9, row: reserveRow, summary: (s) => { put('reservas-stat-total', s.total); put('reservas-stat-meters', s.reserva_m); put('reservas-stat-types', s.tipos); put('reservas-stat-routes', s.troncales); put('reservas-stat-pending', s.por_confirmar); } });
+    function fiberRow(item) { const row = document.createElement('tr'); row.appendChild(cell(item.troncal)); row.appendChild(cell(item.numero)); const state = document.createElement('td'); state.appendChild(badge(item.estado)); row.appendChild(state); [item.servicio, item.origen, item.destino, item.conector].forEach((value) => row.appendChild(cell(value))); row.appendChild(actionCell(item, root.dataset.canEditFiber === 'true' ? openFiberEditor : null)); return selectableRow(row, item); }
+    function reserveRow(item) { const row = document.createElement('tr'); [item.troncal, item.nombre, item.tipo, item.reserva_m === null ? '—' : `${formatter.format(item.reserva_m)} m`, item.tramo, item.latitud, item.longitud].forEach((value) => row.appendChild(cell(value))); const state = document.createElement('td'); state.appendChild(badge(item.estado)); row.appendChild(state); row.appendChild(actionCell(item)); return selectableRow(row, item); }
+    const fibers = new InventoryTable('fibras', { api: root.dataset.fibersApi, exportUrl: root.dataset.fibersExport, columns: 8, row: fiberRow, summary: (s) => { put('fibras-stat-total', s.total); put('fibras-stat-free', s.libres); put('fibras-stat-used', s.ocupadas); put('fibras-stat-reserved', s.reservadas); put('fibras-stat-routes', s.troncales); renderFiberSummary(s); } });
+    const reserves = new InventoryTable('reservas', { api: root.dataset.reservesApi, exportUrl: root.dataset.reservesExport, columns: 9, row: reserveRow, summary: (s) => { put('reservas-stat-total', s.total); put('reservas-stat-meters', s.reserva_m); put('reservas-stat-types', s.tipos); put('reservas-stat-routes', s.troncales); put('reservas-stat-pending', s.por_confirmar); renderReserveSummary(s); } });
 
     function setupDialog(id, triggerId, createUrl, onReset) {
         const dialog = document.getElementById(id); if (!dialog) return null; const form = dialog.querySelector('form'); const message = form.querySelector('[data-form-message]'); const trigger = document.getElementById(triggerId);
@@ -83,6 +319,6 @@
     }
 
     const tables = { fibras: fibers, reservas: reserves }; const tabs = [...root.querySelectorAll('[role="tab"]')];
-    function selectTab(name) { const tab = tabs.find((item) => item.dataset.tab === name) || tabs[0]; if (!tab) return; tabs.forEach((item) => { const active = item === tab; item.setAttribute('aria-selected', active); document.getElementById(item.getAttribute('aria-controls')).hidden = !active; }); const table = tables[tab.dataset.tab]; if (table && !table.loaded) table.load(); const url = new URL(location.href); url.searchParams.set('tab', tab.dataset.tab); history.replaceState({}, '', url); }
+    function selectTab(name) { const tab = tabs.find((item) => item.dataset.tab === name) || tabs[0]; if (!tab) return; tabs.forEach((item) => { const active = item === tab; item.setAttribute('aria-selected', active); document.getElementById(item.getAttribute('aria-controls')).hidden = !active; }); switchInspectorContext(tab.dataset.tab); const table = tables[tab.dataset.tab]; if (table && !table.loaded) table.load(); const url = new URL(location.href); url.searchParams.set('tab', tab.dataset.tab); history.replaceState({}, '', url); }
     tabs.forEach((tab) => tab.addEventListener('click', () => selectTab(tab.dataset.tab))); const incoming = new URLSearchParams(location.search); const query = incoming.get('q'); if (query) root.querySelectorAll('[data-filter="q"]').forEach((input) => { input.value = query; }); selectTab(incoming.get('tab') || root.dataset.defaultTab);
 })();

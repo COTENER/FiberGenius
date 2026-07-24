@@ -376,7 +376,9 @@
     transition: margin-left var(--transition-base);
     display: flex;
     flex-direction: column;
-    min-height: 100vh;
+    height: 100vh;
+    min-height: 0;
+    overflow: hidden;
 }
 .sidebar--collapsed ~ .main-wrapper {
     margin-left: var(--sidebar-collapsed-width);
@@ -384,8 +386,11 @@
 
 .main-content {
     flex: 1;
+    min-height: 0;
     padding: var(--space-6);
     margin-top: var(--topbar-height);
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
 /* Full-width layout (mapa) */

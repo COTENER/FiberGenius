@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% load static %}
 
-{% block title %}Dashboard de Inventario — FiberGenius{% endblock %}
+{% block title %}Dashboard de Inventario — Fiber Genius{% endblock %}
 {% block page_title %}Inventario / Resumen{% endblock %}
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'vendor/leaflet/leaflet-1.9.4.css' %}">
-<link rel="stylesheet" href="{% static 'css/dashboard-inventario-v2.css' %}">
+<link rel="stylesheet" href="{% static 'css/dashboard-inventario-v2.css' %}?v=20260723-dashboard-layout-1">
 {% endblock %}
 
 {% block content %}
@@ -17,7 +17,6 @@
 
 {% block extra_js %}
 <script src="{% static 'vendor/chartjs/chart-4.5.1.umd.min.js' %}"></script>
-<script src="{% static 'vendor/chartjs/chartjs-plugin-datalabels-2.2.0.min.js' %}"></script>
 <script src="{% static 'vendor/leaflet/leaflet-1.9.4.js' %}"></script>
-<script src="{% static 'js/dashboard-inventario-v3.js' %}?v=20260721-2"></script>
+<script src="{% static 'js/dashboard-inventario-v3.js' %}?v=20260723-dashboard-layout-1"></script>
 {% endblock %}

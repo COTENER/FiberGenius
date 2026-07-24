@@ -3,7 +3,8 @@
         map: null,
         layerGroups: {
             tramos: L.layerGroup(),
-            sites: L.layerGroup()
+            sites: L.layerGroup(),
+            routeSelection: L.layerGroup()
         },
         tileLayer: null,
         data: [],
@@ -23,7 +24,15 @@
         rutasPolylines: {}, // { 'Nombre Ruta': [polyline1, polyline2, ...] }
         rutasHalos: {},     // { 'Nombre Ruta': [halo1, halo2, ...] }
         selectedRuta: null,
+        renderedSelectionRuta: null,
         siteMarkers: {},
+        selectedExternalMarker: null,
+        routeSearch: {
+            index: [],
+            matches: [],
+            activeIndex: -1,
+            isOpen: false
+        },
         navigation: {
             sitePayload: null,
             odf: null,
@@ -32,6 +41,56 @@
             portAbortController: null
         }
     };
+
+    const NETWORK_MARKER_ICONS = {
+        site: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 21V9.5L12 5v16M12 11h8.5v10M7.5 12h.01M7.5 16h.01M16 15h.01M16 18h.01M9 5V2.8M7.6 3.5 9 2l1.4 1.5"/></svg>',
+        odf: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="2.5" width="14" height="19" rx="2"/><path d="M8 6.5h8M8 17.5h8M9 21.5v1M15 21.5v1"/><circle cx="9" cy="10.5" r=".9"/><circle cx="15" cy="10.5" r=".9"/><circle cx="9" cy="14" r=".9"/><circle cx="15" cy="14" r=".9"/></svg>',
+        poste: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v19M5 7h14M7.5 7v3M16.5 7v3M9 3.5h6M4 10.5l3.5-2M20 10.5l-3.5-2"/></svg>',
+        mufa: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="3" width="8" height="18" rx="4"/><path d="M8 8h8M8 12h8M8 16h8M4 9h4M16 9h4M4 15h4M16 15h4"/></svg>',
+        camara: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="12" rx="9" ry="7"/><ellipse cx="12" cy="12" rx="6.5" ry="4.7"/><path d="M6.5 9.5h11M6.5 14.5h11"/><circle cx="9" cy="12" r=".65" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r=".65" fill="currentColor" stroke="none"/></svg>',
+        reserva: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11.5" cy="12" r="7.5"/><circle cx="11.5" cy="12" r="5"/><circle cx="11.5" cy="12" r="2.5"/><path d="M18.5 14.5h2v2h1.5"/></svg>',
+        torre: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 2 5.5 20h-11L12 2ZM8 16h8M9 12h6M10 8h4M5 6a9 9 0 0 1 14 0M2.5 3.5a13 13 0 0 1 19 0"/></svg>',
+        default: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 10c0 5.5-8 12-8 12S4 15.5 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>'
+    };
+
+    function normalizeMarkerType(value) {
+        const normalized = String(value || '')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+            .trim();
+        if (normalized.includes('poste')) return 'poste';
+        if (normalized.includes('mufa') || normalized.includes('empalme') || normalized.includes('cierre')) return 'mufa';
+        if (normalized.includes('camara') || normalized.includes('registro')) return 'camara';
+        if (normalized.includes('reserva') || normalized.includes('bobina')) return 'reserva';
+        if (normalized.includes('torre')) return 'torre';
+        if (normalized.includes('odf')) return 'odf';
+        if (normalized.includes('site') || normalized.includes('hub')) return 'site';
+        return 'default';
+    }
+
+    function buildNetworkMarkerHtml(type, label, options) {
+        const normalizedType = normalizeMarkerType(type);
+        const settings = options || {};
+        const classes = [
+            'network-marker',
+            settings.anchor ? 'network-marker--anchor' : 'network-marker--asset',
+            `network-marker--${normalizedType}`
+        ];
+        if (settings.site) classes.push('site-marker');
+        const labelClasses = settings.site
+            ? 'network-marker-label site-marker-label'
+            : 'network-marker-label';
+        return `<div class="${classes.join(' ')}">${NETWORK_MARKER_ICONS[normalizedType] || NETWORK_MARKER_ICONS.default}<span class="${labelClasses}">${displayValue(label, type || 'Elemento')}</span></div>`;
+    }
+
+    function updateMarkerLabelVisibility() {
+        const mapElement = document.getElementById('map');
+        if (!mapElement || !state.map) return;
+        const zoom = state.map.getZoom();
+        mapElement.classList.toggle('map-site-labels-visible', zoom >= 14);
+        mapElement.classList.toggle('map-asset-labels-visible', zoom >= 16);
+    }
 
     function initMap() {
         const mapElement = document.getElementById('map');
@@ -44,6 +103,7 @@
 
         state.layerGroups.tramos.addTo(state.map);
         state.layerGroups.sites.addTo(state.map);
+        state.layerGroups.routeSelection.addTo(state.map);
 
         const attribution = mapElement.dataset.tileAttribution || 'Cartografía configurable';
         const createLayer = (url) => url ? L.tileLayer(url, { maxZoom: 19, attribution }) : null;
@@ -51,9 +111,19 @@
         const mapOscuro = createLayer(mapElement.dataset.tileDark);
         const satelite = createLayer(mapElement.dataset.tileSatellite);
         const baseMaps = {};
-        if (mapClaro) baseMaps['Mapa claro'] = mapClaro;
-        if (mapOscuro) baseMaps['Mapa oscuro'] = mapOscuro;
-        if (satelite) baseMaps['Satélite'] = satelite;
+        const basemapThemes = new Map();
+        if (mapClaro) {
+            baseMaps['Mapa claro'] = mapClaro;
+            basemapThemes.set(mapClaro, 'light');
+        }
+        if (mapOscuro) {
+            baseMaps['Mapa oscuro'] = mapOscuro;
+            basemapThemes.set(mapOscuro, 'dark');
+        }
+        if (satelite) {
+            baseMaps['Satélite'] = satelite;
+            basemapThemes.set(satelite, 'satellite');
+        }
 
         let tileErrors = 0;
         const showOfflineNotice = () => {
@@ -81,11 +151,20 @@
         const isDark = theme === 'dark' || document.body.classList.contains('dark-mode');
 
         const preferredLayer = isDark ? (mapOscuro || mapClaro) : (mapClaro || mapOscuro);
-        if (preferredLayer) preferredLayer.addTo(state.map);
+        if (preferredLayer) {
+            preferredLayer.addTo(state.map);
+            state.tileLayer = preferredLayer;
+            mapElement.dataset.basemapTheme = basemapThemes.get(preferredLayer) || (isDark ? 'dark' : 'light');
+        }
         else showOfflineNotice();
 
         if (Object.keys(baseMaps).length) {
             L.control.layers(baseMaps, null, { position: 'topright', collapsed: true }).addTo(state.map);
+            state.map.on('baselayerchange', (event) => {
+                state.tileLayer = event.layer;
+                mapElement.dataset.basemapTheme = basemapThemes.get(event.layer) || 'light';
+                applyRouteFocusStyles();
+            });
         }
 
         setupFullscreenControl();
@@ -95,6 +174,8 @@
         setupSearch();
         setupNetworkNavigation();
         cargarDatosInventario();
+        updateMarkerLabelVisibility();
+        state.map.on('zoomend', updateMarkerLabelVisibility);
 
         // Cerrar popup draggable al hacer click en el mapa
         state.map.on('click', function(e) {
@@ -275,6 +356,7 @@
             state.mostrarTodasRutas = this.checked;
             if (this.checked) {
                 state.selectedRuta = null;
+                resetRouteSearchInput();
                 closeRoutePanel();
             }
             renderTramos();
@@ -282,68 +364,352 @@
     }
 
 
+    function normalizeSearchText(value) {
+        return String(value || '')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+            .replace(/[_/\\-]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    function getRouteSearchMeta(ruta) {
+        const tramos = Array.isArray(ruta.tramos) ? ruta.tramos : [];
+        const principal = tramos.find((tramo) =>
+            Array.isArray(tramo.coordenadas) && tramo.coordenadas.length
+        ) || tramos[0] || {};
+        const uniqueValues = (field) => [...new Set(
+            tramos.map((tramo) => String(tramo[field] || '').trim()).filter(Boolean)
+        )];
+        const nombre = String(ruta.nombre || 'Ruta sin nombre').trim();
+        const codigo = nombre.includes('_') ? nombre.split('_')[0] : nombre;
+        const origenes = uniqueValues('origen');
+        const destinos = uniqueValues('destino');
+        const sites = uniqueValues('hub_site');
+        const odfs = uniqueValues('odf_nombre');
+        const tiposFibra = uniqueValues('tipo_fibra');
+        const seriales = uniqueValues('serial');
+        const tipos = [...new Set(tramos.map((tramo) => getFilterCat(tramo.tipo_trazado)))];
+        const estados = uniqueValues('estado');
+        const origen = principal.hub_site || principal.origen || ruta.otu || 'Origen no especificado';
+        const destino = principal.destino || ruta.olt || 'Destino no especificado';
+        const distanciaM = tramos.reduce((total, tramo) => {
+            const value = Number(tramo.distancia_m);
+            return total + (Number.isFinite(value) ? value : 0);
+        }, 0);
+        const searchText = normalizeSearchText([
+            nombre,
+            codigo,
+            ruta.otu,
+            ruta.olt,
+            ruta.pon,
+            ...origenes,
+            ...destinos,
+            ...sites,
+            ...odfs,
+            ...tiposFibra,
+            ...seriales,
+            ...tipos,
+            ...estados
+        ].join(' '));
+
+        return {
+            ruta,
+            nombre,
+            codigo,
+            origen: String(origen),
+            destino: String(destino),
+            tipo: tipos.length === 1 ? tipos[0] : (tipos.length > 1 ? 'HIBRIDO' : 'DESCONOCIDO'),
+            estado: estados[0] || 'Sin estado',
+            distanciaM,
+            searchText
+        };
+    }
+
+    function buildRouteSearchIndex() {
+        state.routeSearch.index = state.data.map(getRouteSearchMeta);
+        state.routeSearch.matches = [];
+        state.routeSearch.activeIndex = -1;
+    }
+
+    function findRouteMatches(query) {
+        const normalized = normalizeSearchText(query);
+        if (normalized.length < 2) return [];
+        const terms = normalized.split(' ').filter(Boolean);
+        return state.routeSearch.index
+            .filter((item) => terms.every((term) => item.searchText.includes(term)))
+            .sort((a, b) => {
+                const aName = normalizeSearchText(a.nombre);
+                const bName = normalizeSearchText(b.nombre);
+                const aCode = normalizeSearchText(a.codigo);
+                const bCode = normalizeSearchText(b.codigo);
+                const score = (name, code) => {
+                    if (name === normalized || code === normalized) return 0;
+                    if (name.startsWith(normalized) || code.startsWith(normalized)) return 1;
+                    return 2;
+                };
+                return score(aName, aCode) - score(bName, bCode) ||
+                    a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' });
+            })
+            .slice(0, 8);
+    }
+
+    function routeSearchElements() {
+        return {
+            container: document.getElementById('route-search'),
+            input: document.getElementById('route-search-input'),
+            results: document.getElementById('route-search-results'),
+            status: document.getElementById('route-search-status'),
+            clear: document.getElementById('clear-search-btn')
+        };
+    }
+
+    function setRouteSearchOpen(isOpen) {
+        const { input, results } = routeSearchElements();
+        if (!input || !results) return;
+        state.routeSearch.isOpen = Boolean(isOpen);
+        results.hidden = !state.routeSearch.isOpen;
+        input.setAttribute('aria-expanded', String(state.routeSearch.isOpen));
+        if (!state.routeSearch.isOpen) {
+            state.routeSearch.activeIndex = -1;
+            input.removeAttribute('aria-activedescendant');
+        }
+    }
+
+    function updateRouteSearchActiveOption() {
+        const { input, results } = routeSearchElements();
+        if (!input || !results) return;
+        const options = [...results.querySelectorAll('[role="option"]')];
+        options.forEach((option, index) => {
+            const isActive = index === state.routeSearch.activeIndex;
+            option.classList.toggle('is-active', isActive);
+            option.setAttribute('aria-selected', String(isActive));
+            if (isActive) {
+                input.setAttribute('aria-activedescendant', option.id);
+                option.scrollIntoView({ block: 'nearest' });
+            }
+        });
+    }
+
+    function renderRouteSearchResults(query) {
+        const { results, status } = routeSearchElements();
+        if (!results || !status) return;
+        const normalized = normalizeSearchText(query);
+        results.replaceChildren();
+        state.routeSearch.activeIndex = -1;
+        state.routeSearch.matches = findRouteMatches(query);
+
+        if (normalized.length < 2) {
+            status.textContent = 'Escribe al menos 2 caracteres.';
+            setRouteSearchOpen(false);
+            return;
+        }
+
+        if (!state.routeSearch.matches.length) {
+            const empty = document.createElement('div');
+            empty.className = 'route-search-empty';
+            empty.textContent = 'No hay troncales que coincidan.';
+            results.appendChild(empty);
+            status.textContent = 'Sin coincidencias.';
+            setRouteSearchOpen(true);
+            return;
+        }
+
+        state.routeSearch.matches.forEach((item, index) => {
+            const option = document.createElement('button');
+            option.type = 'button';
+            option.id = `route-search-option-${index}`;
+            option.className = 'route-search-result';
+            option.setAttribute('role', 'option');
+            option.setAttribute('aria-selected', 'false');
+            option.title = item.nombre;
+
+            const heading = document.createElement('span');
+            heading.className = 'route-search-result__heading';
+            const code = document.createElement('strong');
+            code.textContent = item.codigo;
+            const type = document.createElement('span');
+            type.className = `route-search-result__type route-search-result__type--${item.tipo.toLowerCase()}`;
+            type.textContent = item.tipo === 'DESCONOCIDO' ? 'Sin clasificar' : item.tipo;
+            heading.append(code, type);
+
+            const path = document.createElement('span');
+            path.className = 'route-search-result__path';
+            path.textContent = `${item.origen} → ${item.destino}`;
+
+            const meta = document.createElement('span');
+            meta.className = 'route-search-result__meta';
+            const distance = item.distanciaM > 0
+                ? `${(item.distanciaM / 1000).toLocaleString('es-PE', { maximumFractionDigits: 2 })} km`
+                : 'Distancia no registrada';
+            meta.textContent = `${distance} · ${item.estado}`;
+
+            option.append(heading, path, meta);
+            option.addEventListener('mouseenter', () => {
+                state.routeSearch.activeIndex = index;
+                updateRouteSearchActiveOption();
+            });
+            option.addEventListener('click', () => selectRoute(item.ruta));
+            results.appendChild(option);
+        });
+
+        status.textContent = `${state.routeSearch.matches.length} coincidencias mostradas.`;
+        setRouteSearchOpen(true);
+    }
+
+    function resetRouteSearchInput() {
+        const { input, clear, status } = routeSearchElements();
+        if (input) {
+            input.value = '';
+            delete input.dataset.selectedRoute;
+        }
+        if (clear) clear.style.display = 'none';
+        if (status) status.textContent = '';
+        setRouteSearchOpen(false);
+    }
+
+    function clearRouteSearch(options) {
+        const settings = options || {};
+        const needsRender = !state.mostrarTodasRutas;
+        resetRouteSearchInput();
+        state.selectedRuta = null;
+        state.mostrarTodasRutas = true;
+        const allRoutes = document.getElementById('chk-rutas-global');
+        if (allRoutes) allRoutes.checked = true;
+        closeRoutePanel();
+        if (needsRender) renderTramos();
+        else applyRouteFocusStyles();
+        if (settings.fit !== false) fitBoundsToData();
+    }
+
+    function selectRoute(ruta, tramo, options) {
+        if (!ruta) return;
+        const settings = options || {};
+        let needsRender = !state.mostrarTodasRutas;
+        const filterIds = {
+            AEREO: 'chk-aereo',
+            SOTERRADO: 'chk-soterrado',
+            HIBRIDO: 'chk-hibrido',
+            DESCONOCIDO: 'chk-desconocido'
+        };
+        const routeCategories = new Set(
+            (ruta.tramos || []).map((item) => getFilterCat(item.tipo_trazado))
+        );
+        routeCategories.forEach((category) => {
+            if (!state.filters[category]) {
+                state.filters[category] = true;
+                needsRender = true;
+                const checkbox = document.getElementById(filterIds[category]);
+                if (checkbox) checkbox.checked = true;
+            }
+        });
+        const meta = state.routeSearch.index.find((item) => item.ruta === ruta) || getRouteSearchMeta(ruta);
+        const { input, clear } = routeSearchElements();
+        state.selectedRuta = ruta.nombre;
+        state.mostrarTodasRutas = true;
+        const allRoutes = document.getElementById('chk-rutas-global');
+        if (allRoutes) allRoutes.checked = true;
+        if (input) {
+            input.value = meta.codigo;
+            input.dataset.selectedRoute = ruta.nombre;
+        }
+        if (clear) clear.style.display = 'flex';
+        setRouteSearchOpen(false);
+
+        if (needsRender) renderTramos();
+        else applyRouteFocusStyles();
+        if (settings.fit !== false) fitRouteBounds(ruta.nombre);
+
+        const tramoPrincipal = tramo || (ruta.tramos || []).find((item) =>
+            Array.isArray(item.coordenadas) && item.coordenadas.length > 0
+        ) || (ruta.tramos || [])[0];
+        if (tramoPrincipal && settings.openPanel !== false) {
+            openRoutePanel(ruta, tramoPrincipal);
+        }
+    }
+
     function setupSearch() {
-        const input = document.getElementById('route-search-input');
+        const { container, input, results, clear: clearBtn } = routeSearchElements();
         const btn = document.getElementById('search-btn');
-        const clearBtn = document.getElementById('clear-search-btn');
-        if (!input || !btn || !clearBtn) return;
+        if (!container || !input || !results || !btn || !clearBtn) return;
 
         btn.addEventListener('click', buscarYResaltarRuta);
-        input.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') buscarYResaltarRuta();
+        input.addEventListener('keydown', (event) => {
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                if (!state.routeSearch.isOpen) renderRouteSearchResults(input.value);
+                if (!state.routeSearch.matches.length) return;
+                event.preventDefault();
+                const direction = event.key === 'ArrowDown' ? 1 : -1;
+                const total = state.routeSearch.matches.length;
+                state.routeSearch.activeIndex =
+                    (state.routeSearch.activeIndex + direction + total) % total;
+                updateRouteSearchActiveOption();
+            } else if (event.key === 'Enter') {
+                event.preventDefault();
+                if (state.routeSearch.isOpen && state.routeSearch.matches.length) {
+                    const index = state.routeSearch.activeIndex >= 0
+                        ? state.routeSearch.activeIndex : 0;
+                    selectRoute(state.routeSearch.matches[index].ruta);
+                } else {
+                    buscarYResaltarRuta();
+                }
+            } else if (event.key === 'Escape' && state.routeSearch.isOpen) {
+                event.preventDefault();
+                event.stopPropagation();
+                setRouteSearchOpen(false);
+            }
         });
 
         input.addEventListener('input', () => {
+            delete input.dataset.selectedRoute;
             clearBtn.style.display = input.value ? 'flex' : 'none';
+            renderRouteSearchResults(input.value);
+        });
+        input.addEventListener('focus', () => {
+            if (normalizeSearchText(input.value).length >= 2 && !input.dataset.selectedRoute) {
+                renderRouteSearchResults(input.value);
+            }
         });
 
-        clearBtn.addEventListener('click', () => {
-            input.value = '';
-            clearBtn.style.display = 'none';
-            state.selectedRuta = null;
-            state.mostrarTodasRutas = true;
-            const allRoutes = document.getElementById('chk-rutas-global');
-            if (allRoutes) allRoutes.checked = true;
-            closeRoutePanel();
-            renderTramos();
-            fitBoundsToData();
+        clearBtn.addEventListener('click', () => clearRouteSearch({ fit: true }));
+        document.addEventListener('click', (event) => {
+            if (!container.contains(event.target)) setRouteSearchOpen(false);
         });
     }
 
     function buscarYResaltarRuta() {
-        const query = document.getElementById('route-search-input').value.trim();
+        const { input } = routeSearchElements();
+        if (!input) return;
+        const query = input.value.trim();
         
         if (!query) {
-            state.selectedRuta = null;
-            state.mostrarTodasRutas = true;
-            const allRoutes = document.getElementById('chk-rutas-global');
-            if (allRoutes) allRoutes.checked = true;
-            closeRoutePanel();
-            renderTramos();
+            clearRouteSearch({ fit: false });
             return;
         }
 
-        const rutaEncontrada = state.data.find((ruta) =>
-            String(ruta.nombre || '').localeCompare(query, undefined, { sensitivity: 'base' }) === 0
+        const selectedName = input.dataset.selectedRoute;
+        const normalized = normalizeSearchText(query);
+        const exact = state.routeSearch.index.find((item) =>
+            item.nombre === selectedName ||
+            normalizeSearchText(item.nombre) === normalized ||
+            normalizeSearchText(item.codigo) === normalized
         );
+        const matches = exact ? [exact] : findRouteMatches(query);
         
-        if (rutaEncontrada) {
-            const nombreRuta = rutaEncontrada.nombre;
-            state.selectedRuta = nombreRuta;
-            document.getElementById('route-search-input').value = nombreRuta;
-            renderTramos();
-            applyRouteFocusStyles();
-            fitRouteBounds(nombreRuta);
-
-            const tramoPrincipal = (rutaEncontrada.tramos || []).find((tramo) =>
-                Array.isArray(tramo.coordenadas) && tramo.coordenadas.length > 0
-            ) || (rutaEncontrada.tramos || [])[0];
-            if (tramoPrincipal) {
-                openRoutePanel(rutaEncontrada, tramoPrincipal);
-            }
+        if (matches.length === 1 || exact) {
+            selectRoute(matches[0].ruta);
+        } else if (matches.length > 1) {
+            renderRouteSearchResults(query);
+            input.focus();
         } else {
             if (window.FiberGenius && window.FiberGenius.notify) {
-                window.FiberGenius.notify('Troncal no encontrada en el mapa.', 'warning');
+                window.FiberGenius.notify(
+                    normalized.length < 2
+                        ? 'Escribe al menos 2 caracteres para buscar.'
+                        : 'Troncal no encontrada en el mapa.',
+                    'warning'
+                );
             }
         }
     }
@@ -393,6 +759,7 @@
                 if(response.status === 'success') {
                     state.data = Array.isArray(response.data) ? response.data : [];
                     state.sites = Array.isArray(response.sites) ? response.sites : [];
+                    buildRouteSearchIndex();
                     renderTramos();
                     fitBoundsToData();
                     updateSummaryCards();
@@ -425,14 +792,8 @@
                     const rutaUrl = urlParams.get('ruta');
                     if (rutaUrl) {
                         const input = document.getElementById('route-search-input');
-                        const chkAll = document.getElementById('chk-rutas-global');
                         if (input) {
                             input.value = rutaUrl;
-                            state.mostrarTodasRutas = false; // Desactivar "Mostrar Todas" para aislar
-                            if (chkAll) {
-                                chkAll.checked = false;
-                                chkAll.dispatchEvent(new Event('change'));
-                            }
                             buscarYResaltarRuta();
                         }
                     }
@@ -625,16 +986,21 @@
                     </div>
 
                     <div class="popup-toggle-row">
-                        <span style="font-size:12px; font-weight:600; color:var(--text-primary);">Mostrar reservas de esta ruta</span>
+                        <span style="font-size:12px; font-weight:600; color:var(--text-primary);">Mostrar elementos externos de esta ruta</span>
                         <label class="toggle-switch">
                             <input class="js-route-reserves" type="checkbox" ${state.rutasMostrandoReservas.has(ruta.nombre) ? 'checked' : ''}>
                             <span class="toggle-slider"></span>
                         </label>
                     </div>
-                    <button class="route-detail__fit" type="button" data-route-fit>
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="m4.93 4.93 2.83 2.83"/><path d="m16.24 16.24 2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><path d="m4.93 19.07 2.83-2.83"/><path d="m16.24 7.76 2.83-2.83"/></svg>
-                        Centrar troncal en el mapa
-                    </button>
+                    <div class="route-detail__actions">
+                        <button class="route-detail__fit" type="button" data-route-fit>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="m4.93 4.93 2.83 2.83"/><path d="m16.24 16.24 2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><path d="m4.93 19.07 2.83-2.83"/><path d="m16.24 7.76 2.83-2.83"/></svg>
+                            Centrar
+                        </button>
+                        <button class="route-detail__clear" type="button" data-route-clear>
+                            Limpiar selección
+                        </button>
+                    </div>
                 </div>
             </div>
         `;
@@ -650,9 +1016,11 @@
 
         const close = panel.querySelector('[data-route-close]');
         const fit = panel.querySelector('[data-route-fit]');
+        const clear = panel.querySelector('[data-route-clear]');
         const reserves = panel.querySelector('.js-route-reserves');
         if (close) close.addEventListener('click', closeRoutePanel);
         if (fit) fit.addEventListener('click', () => fitRouteBounds(ruta.nombre));
+        if (clear) clear.addEventListener('click', () => clearRouteSearch({ fit: true }));
         if (reserves) {
             reserves.addEventListener('change', () => {
                 window.toggleReservasRuta(ruta.nombre, reserves.checked);
@@ -662,16 +1030,20 @@
 
     function applyRouteFocusStyles() {
         const hasSelection = Boolean(state.selectedRuta);
+        const basemapTheme = document.getElementById('map')?.dataset.basemapTheme || 'light';
+        const selectionHaloColor = ['dark', 'satellite'].includes(basemapTheme)
+            ? '#f8fafc'
+            : '#0f172a';
         Object.keys(state.rutasPolylines).forEach((nombreRuta) => {
             const isSelected = state.selectedRuta === nombreRuta;
             const isDimmed = hasSelection && !isSelected;
             const lineStyle = isSelected
-                ? { weight: 8, opacity: 1 }
+                ? { weight: 8.5, opacity: 1 }
                 : isDimmed
-                    ? { weight: 4, opacity: 0.28 }
+                    ? { weight: 4, opacity: 0.13 }
                     : { weight: 5.5, opacity: 0.9 };
             const haloStyle = isSelected
-                ? { color: '#ffffff', weight: 12, opacity: 0.86 }
+                ? { color: selectionHaloColor, weight: 16, opacity: 0.82 }
                 : { color: '#0ea5e9', weight: 11, opacity: 0 };
 
             (state.rutasHalos[nombreRuta] || []).forEach((halo) => {
@@ -679,10 +1051,92 @@
                 if (isSelected && halo.bringToBack) halo.bringToBack();
             });
             (state.rutasPolylines[nombreRuta] || []).forEach((polyline) => {
-                polyline.setStyle(lineStyle);
+                polyline.setStyle({
+                    ...lineStyle,
+                    color: polyline._routeBaseColor
+                });
                 if (isSelected && polyline.bringToFront) polyline.bringToFront();
             });
         });
+        updateRouteSelectionOverlay();
+    }
+
+    function updateRouteSelectionOverlay() {
+        if (state.renderedSelectionRuta === state.selectedRuta) return;
+        state.layerGroups.routeSelection.clearLayers();
+        Object.values(state.siteMarkers).forEach((marker) => {
+            marker.getElement()?.querySelector('.network-marker')?.classList.remove('is-route-endpoint');
+        });
+        state.renderedSelectionRuta = state.selectedRuta;
+        if (!state.selectedRuta) return;
+
+        const ruta = state.data.find((item) => item.nombre === state.selectedRuta);
+        if (!ruta) return;
+        const coordinates = [];
+        (ruta.tramos || []).forEach((tramo) => {
+            if (Array.isArray(tramo.coordenadas)) {
+                tramo.coordenadas.forEach((coordinate) => {
+                    if (Array.isArray(coordinate) && coordinate.length >= 2) {
+                        coordinates.push(coordinate);
+                    }
+                });
+            }
+        });
+        if (!coordinates.length) return;
+
+        const meta = state.routeSearch.index.find((item) => item.ruta === ruta) || getRouteSearchMeta(ruta);
+        const start = coordinates[0];
+        const end = coordinates[coordinates.length - 1];
+        const middle = coordinates[Math.floor(coordinates.length / 2)];
+        const endpointIcon = (label) => L.divIcon({
+            className: 'route-selection-endpoint-icon',
+            html: `<span class="route-selection-endpoint" aria-hidden="true"></span><span class="sr-only">${label}</span>`,
+            iconSize: [12, 12],
+            iconAnchor: [6, 6]
+        });
+        const nearbySiteMarker = (coordinate) => {
+            const point = L.latLng(coordinate);
+            let nearest = null;
+            let nearestDistance = Number.POSITIVE_INFINITY;
+            state.sites.forEach((site) => {
+                const lat = Number(site.lat);
+                const lon = Number(site.lon);
+                if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+                const distance = point.distanceTo(L.latLng(lat, lon));
+                if (distance < nearestDistance) {
+                    nearestDistance = distance;
+                    nearest = state.siteMarkers[site.id] || null;
+                }
+            });
+            return nearestDistance <= 35 ? nearest : null;
+        };
+        const addEndpoint = (coordinate, label) => {
+            const siteMarker = nearbySiteMarker(coordinate);
+            if (siteMarker) {
+                siteMarker.getElement()?.querySelector('.network-marker')?.classList.add('is-route-endpoint');
+                return;
+            }
+            L.marker(coordinate, {
+                icon: endpointIcon(label),
+                interactive: false,
+                keyboard: false,
+                zIndexOffset: 800
+            }).addTo(state.layerGroups.routeSelection);
+        };
+
+        addEndpoint(start, 'Inicio de la troncal');
+        if (String(start) !== String(end)) addEndpoint(end, 'Fin de la troncal');
+        L.marker(middle, {
+            icon: L.divIcon({
+                className: 'route-selection-label-icon',
+                html: `<span class="route-selection-label"><b>${displayValue(meta.codigo)}</b><small>Seleccionada</small></span>`,
+                iconSize: [190, 42],
+                iconAnchor: [95, 54]
+            }),
+            interactive: false,
+            keyboard: false,
+            zIndexOffset: 850
+        }).addTo(state.layerGroups.routeSelection);
     }
 
     function renderTramos() {
@@ -695,11 +1149,9 @@
             }
         });
         state.dataCache.reservas = [];
+        state.selectedExternalMarker = null;
         state.rutasPolylines = {};
         state.rutasHalos = {};
-
-        const datalist = document.getElementById('routes-datalist');
-        if (datalist) datalist.innerHTML = '';
 
         state.data.forEach(ruta => {
             // Lógica de visibilidad: 
@@ -707,12 +1159,6 @@
             // 1. Es la ruta seleccionada específicamente por el buscador.
             // 2. No hay ninguna ruta seleccionada y el toggle de "Mostrar Todas las Rutas" está activado.
             const debeMostrarRuta = state.mostrarTodasRutas || state.selectedRuta === ruta.nombre;
-
-            if (datalist) {
-                const option = document.createElement('option');
-                option.value = ruta.nombre;
-                datalist.appendChild(option);
-            }
 
             state.rutasPolylines[ruta.nombre] = [];
             state.rutasHalos[ruta.nombre] = [];
@@ -738,12 +1184,11 @@
                         opacity: 0.9,
                         lineJoin: 'round'
                     });
+                    polyline._routeBaseColor = getColorForTrazado(tramo.tipo_trazado);
 
                     polyline.on('click', function(e) {
                         L.DomEvent.stopPropagation(e);
-                        state.selectedRuta = ruta.nombre;
-                        applyRouteFocusStyles();
-                        openRoutePanel(ruta, tramo);
+                        selectRoute(ruta, tramo, { fit: false });
                     });
                     
                     polyline.on('mouseover', function() {
@@ -770,29 +1215,53 @@
             // Preparar Reservas de esta ruta
             if (ruta.reservas_nodos && ruta.reservas_nodos.length > 0) {
                 ruta.reservas_nodos.forEach(res => {
-                    const tipo = String(res.tipo || 'default').toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'default';
-                    const iconUrl = `/static/img/iconos/${tipo}-icono.png`;
-                    const customIcon = L.icon({ 
-                        iconUrl: iconUrl, 
-                        iconSize: [32, 32], 
-                        iconAnchor: [16, 32], 
-                        popupAnchor: [0, -30] 
+                    const assetType = normalizeMarkerType(res.tipo);
+                    const customIcon = L.divIcon({
+                        className: 'custom-network-marker-icon custom-external-icon',
+                        html: buildNetworkMarkerHtml(assetType, res.nombre, { anchor: false }),
+                        iconSize: [42, 70],
+                        iconAnchor: [21, 21],
+                        popupAnchor: [0, -22]
                     });
-                    
+                    const reservaMetros = Number(res.reserva_m || 0);
+                    const reservaDetalle = reservaMetros > 0
+                        ? `<div style="font-size:12px; margin-bottom:4px;"><strong>Reserva de cable:</strong> ${displayValue(reservaMetros)} m</div>`
+                        : '';
                     const resPopup = `
                         <div style="font-family: var(--font-sans); padding: 5px;">
-                            <h4 style="margin:0 0 8px 0; color:var(--primary); font-size:14px; border-bottom:1px solid var(--border-color); padding-bottom:4px;">${displayValue(res.nombre, 'Reserva')}</h4>
+                            <h4 style="margin:0 0 8px 0; color:var(--primary); font-size:14px; border-bottom:1px solid var(--border-color); padding-bottom:4px;">${displayValue(res.nombre, 'Elemento de red')}</h4>
                             <div style="font-size:12px; margin-bottom:4px;"><strong>Tipo:</strong> ${displayValue(res.tipo)}</div>
-                            <div style="font-size:12px; margin-bottom:4px;"><strong>Reserva fija:</strong> ${displayValue(res.reserva_m, '0')} m</div>
+                            ${reservaDetalle}
                             <div style="font-size:12px; color:var(--text-secondary);">Pertenece a: ${displayValue(ruta.nombre)}</div>
                         </div>
                     `;
                     
-                    const marker = L.marker([res.lat, res.lon], { icon: customIcon })
+                    const marker = L.marker([res.lat, res.lon], {
+                        icon: customIcon,
+                        title: `${res.tipo || 'Elemento'}: ${res.nombre || 'Sin nombre'}`,
+                        riseOnHover: true,
+                        zIndexOffset: 500
+                    })
                         .bindPopup(resPopup);
-                    
+
+                    marker.on('popupopen', () => {
+                        if (state.selectedExternalMarker && state.selectedExternalMarker !== marker) {
+                            state.selectedExternalMarker.getElement()?.querySelector('.network-marker')?.classList.remove('is-selected');
+                        }
+                        state.selectedExternalMarker = marker;
+                        marker.getElement()?.querySelector('.network-marker')?.classList.add('is-selected');
+                    });
+                    marker.on('popupclose', () => {
+                        marker.getElement()?.querySelector('.network-marker')?.classList.remove('is-selected');
+                        if (state.selectedExternalMarker === marker) state.selectedExternalMarker = null;
+                    });
+
                     // Solo guardamos en caché en vez de añadir al mapa directamente
-                    state.dataCache.reservas.push({ marker: marker, rutaNombre: ruta.nombre });
+                    state.dataCache.reservas.push({
+                        marker,
+                        rutaNombre: ruta.nombre,
+                        tipo: assetType
+                    });
                 });
             }
         });
@@ -810,14 +1279,15 @@
         state.sites.forEach((site) => {
             if (!Number.isFinite(Number(site.lat)) || !Number.isFinite(Number(site.lon))) return;
             const icon = L.divIcon({
-                className: 'custom-site-icon',
-                html: `<div class="site-marker"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21V8l8-4v17M12 10h8v11M8 10v.01M8 14v.01M8 18v.01M16 14v.01M16 18v.01"/></svg><span class="site-marker-label">${displayValue(site.nombre, 'Site')}</span></div>`,
-                iconSize: [38, 65],
-                iconAnchor: [19, 19]
+                className: 'custom-network-marker-icon custom-site-icon',
+                html: buildNetworkMarkerHtml('site', site.nombre, { anchor: true, site: true }),
+                iconSize: [44, 72],
+                iconAnchor: [22, 22]
             });
             const marker = L.marker([Number(site.lat), Number(site.lon)], {
                 icon,
-                title: String(site.nombre || 'Site')
+                title: String(site.nombre || 'Site'),
+                riseOnHover: true
             });
             marker.on('click', (event) => {
                 L.DomEvent.stopPropagation(event);
@@ -827,6 +1297,7 @@
             marker.addTo(state.layerGroups.sites);
             state.siteMarkers[site.id] = marker;
         });
+        state.renderedSelectionRuta = null;
     }
 
     function fitBoundsToData() {
@@ -1019,6 +1490,16 @@
         if (!panel) return;
 
         networkElement('network-nav-close').addEventListener('click', closeNetworkNavigation);
+        panel.addEventListener('click', (event) => {
+            const link = event.target.closest('[data-open-asset-360]');
+            if (!link || !panel.contains(link) || link.getAttribute('href') === '#') return;
+
+            const openAsset360 = window.FiberGenius && window.FiberGenius.openAsset360;
+            if (typeof openAsset360 !== 'function') return;
+
+            event.preventDefault();
+            openAsset360(link.href);
+        });
         networkElement('network-tab-summary').addEventListener('click', () => setOdfTab('summary'));
         networkElement('network-tab-ports').addEventListener('click', () => setOdfTab('ports'));
         networkElement('network-port-prev').addEventListener('click', () => {
@@ -1167,7 +1648,8 @@
             card.className = 'network-odf-card';
             card.setAttribute('aria-label', 'Abrir ODF ' + odf.odf);
             card.innerHTML =
-                '<span class="network-odf-card__head"><strong>' + displayValue(odf.odf) + '</strong>' +
+                '<span class="network-odf-card__head"><span class="network-odf-card__icon" aria-hidden="true">' +
+                NETWORK_MARKER_ICONS.odf + '</span><strong>' + displayValue(odf.odf) + '</strong>' +
                 '<span>' + displayValue(odf.sala) + ' · ' + displayValue(odf.rack) + ' ›</span></span>' +
                 '<span class="network-odf-card__counts">' +
                 '<span><b>' + networkNumber.format(odf.ocupados) + '</b>Ocupados</span>' +
@@ -1336,7 +1818,7 @@
             '<dt>Destino</dt><dd>' + displayValue(port.destino) + '</dd>' +
             '<dt>Conector</dt><dd>' + displayValue(port.conector) + '</dd>' +
             '<dt>Patchcord</dt><dd>' + displayValue(port.patchcord) + '</dd>' +
-            '</dl><a href="' + displayValue(port.detail_url, '#') + '">Abrir ficha 360° →</a>';
+            '</dl><a data-open-asset-360 href="' + displayValue(port.detail_url, '#') + '">Abrir ficha 360° →</a>';
         detail.hidden = false;
     }
 

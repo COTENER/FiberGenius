@@ -16,12 +16,13 @@ from django.contrib.auth.decorators import login_required, permission_required
 from django.core.exceptions import PermissionDenied
 from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, ExpressionWrapper, F, FloatField, Q, Sum
 from django.http import Http404, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
 
 from ..models import (
+    CoordenadaRuta,
     DetallePuertoODF,
     HubSite,
     InventarioFibra,
@@ -48,7 +49,11 @@ def _texto(valor, defecto="—"):
     if valor is None:
         return defecto
     texto = str(valor).strip()
-    return texto or defecto
+    if not texto or texto.casefold() in {
+        "-", "nan", "none", "null", "n/a", "sin dato", "sin_dato",
+    }:
+        return defecto
+    return texto
 
 
 def _pagina(request, queryset, serializador):
@@ -184,7 +189,35 @@ def _resumen_odfs(queryset):
         reservados=Sum("puertos_reservados"),
         sites=Count("hub_site", distinct=True),
     )
-    return {clave: valor or 0 for clave, valor in resumen.items()}
+    resultado = {clave: valor or 0 for clave, valor in resumen.items()}
+    utilizacion = ExpressionWrapper(
+        100.0 * F("puertos_ocupados") / F("capacidad_puertos"),
+        output_field=FloatField(),
+    )
+    resultado["top_ocupacion"] = [
+        {
+            "id": item["id"],
+            "odf": item["odf"],
+            "site": item["hub_site"],
+            "capacidad": item["capacidad_puertos"] or 0,
+            "ocupados": item["puertos_ocupados"] or 0,
+            "porcentaje": round(item["porcentaje"] or 0, 1),
+        }
+        for item in (
+            queryset.filter(capacidad_puertos__gt=0)
+            .annotate(porcentaje=utilizacion)
+            .order_by("-porcentaje", "-puertos_ocupados", "odf")
+            .values(
+                "id",
+                "odf",
+                "hub_site",
+                "capacidad_puertos",
+                "puertos_ocupados",
+                "porcentaje",
+            )[:5]
+        )
+    ]
+    return resultado
 
 
 def _serializar_odfs(odfs):
@@ -420,6 +453,7 @@ def _serializar_fibras(fibras):
     return [
         {
             "id": fibra.pk,
+            "ruta_id": fibra.ruta_id,
             "troncal": fibra.ruta.nombre,
             "numero": _texto(fibra.fibra_numero),
             "estado": _texto(fibra.estado),
@@ -441,7 +475,27 @@ def _resumen_fibras(queryset):
         reservadas=Count("id", filter=Q(estado__in=["Reservado", "Reservada"])),
         troncales=Count("ruta_id", distinct=True),
     )
-    return {clave: valor or 0 for clave, valor in resumen.items()}
+    resumen = {clave: valor or 0 for clave, valor in resumen.items()}
+    ranking = queryset.values("ruta_id", "ruta__nombre").annotate(
+        total=Count("id"),
+        ocupadas=Count("id", filter=Q(estado__in=["Ocupado", "Ocupada"])),
+        reservadas=Count("id", filter=Q(estado__in=["Reservado", "Reservada"])),
+    ).order_by("-ocupadas", "-reservadas", "ruta__nombre")[:5]
+    resumen["top_troncales"] = [
+        {
+            "id": fila["ruta_id"],
+            "nombre": fila["ruta__nombre"],
+            "total": fila["total"],
+            "ocupadas": fila["ocupadas"],
+            "reservadas": fila["reservadas"],
+            "utilizacion": round(
+                ((fila["ocupadas"] + fila["reservadas"]) / fila["total"]) * 100,
+                1,
+            ) if fila["total"] else 0,
+        }
+        for fila in ranking
+    ]
+    return resumen
 
 
 def _filtro_elementos(request):
@@ -467,6 +521,7 @@ def _serializar_elementos(elementos):
     return [
         {
             "id": elemento.pk,
+            "ruta_id": elemento.ruta_id,
             "troncal": elemento.ruta.nombre,
             "nombre": _texto(elemento.nombre),
             "tipo": _texto(elemento.tipo),
@@ -490,7 +545,19 @@ def _resumen_elementos(queryset):
         por_confirmar=Count("id", filter=Q(estado__iexact="POR_CONFIRMAR")),
     )
     resumen["reserva_m"] = round(resumen["reserva_m"] or 0, 2)
-    return {clave: valor or 0 for clave, valor in resumen.items()}
+    resumen = {clave: valor or 0 for clave, valor in resumen.items()}
+    resumen["tipos_detalle"] = [
+        {
+            "tipo": fila["tipo"] or "SIN CLASIFICAR",
+            "total": fila["total"],
+            "reserva_m": round(fila["reserva_m"] or 0, 2),
+        }
+        for fila in queryset.values("tipo").annotate(
+            total=Count("id"),
+            reserva_m=Sum("reserva_m"),
+        ).order_by("-total", "tipo")[:6]
+    ]
+    return resumen
 
 
 @login_required
@@ -592,6 +659,98 @@ def api_elementos_paginados(request):
     payload = json.loads(response.content)
     payload["summary"] = _resumen_elementos(queryset)
     return JsonResponse(payload)
+
+
+@login_required
+@permission_required("mapas.view_ruta", raise_exception=True)
+def api_panel_troncal(request):
+    """Detalle contextual de una troncal, solicitado únicamente al seleccionarla."""
+    ruta_id = request.GET.get("ruta_id", "").strip()
+    if not ruta_id.isdigit():
+        return JsonResponse(
+            {"status": "error", "message": "Troncal no válida."},
+            status=400,
+        )
+    ruta = get_object_or_404(Ruta, pk=ruta_id)
+    fibras = InventarioFibra.objects.filter(ruta=ruta)
+    tramos = InventarioTramo.objects.filter(ruta=ruta).order_by("tramo_secuencia")
+    reservas = Reserva.objects.filter(ruta=ruta).order_by(
+        "orden_en_ruta", "nombre", "id"
+    )
+    coordenadas = list(
+        CoordenadaRuta.objects.filter(ruta=ruta)
+        .order_by("orden")
+        .values_list("latitud", "longitud")
+    )
+    if len(coordenadas) > 500:
+        ultimo = len(coordenadas) - 1
+        coordenadas = [
+            coordenadas[round(indice * ultimo / 499)]
+            for indice in range(500)
+        ]
+
+    resumen_fibras = _resumen_fibras(fibras)
+    extremos = list(
+        tramos.values(
+            "tramo_secuencia", "origen", "destino", "hub_site",
+            "odf_nombre", "tipo_trazado",
+        )
+    )
+    distancia_m = tramos.aggregate(total=Sum("distancia_m"))["total"] or 0
+    reservas_m = reservas.aggregate(total=Sum("reserva_m"))["total"] or 0
+
+    return JsonResponse({
+        "status": "success",
+        "ruta": {
+            "id": ruta.pk,
+            "nombre": ruta.nombre,
+            "distancia_km": round(distancia_m / 1000, 2),
+            "tramos": len(extremos),
+            "tipos_trazado": sorted({
+                tramo["tipo_trazado"]
+                for tramo in extremos
+                if tramo["tipo_trazado"]
+            }),
+            "origen": _texto(
+                extremos[0]["odf_nombre"]
+                or extremos[0]["hub_site"]
+                or extremos[0]["origen"]
+            ) if extremos else "—",
+            "destino": _texto(extremos[-1]["destino"]) if extremos else "—",
+            "mapa_url": f'{reverse("mapa_inventario")}?{urlencode({"ruta": ruta.nombre})}',
+        },
+        "fibras": {
+            "total": resumen_fibras["total"],
+            "libres": resumen_fibras["libres"],
+            "ocupadas": resumen_fibras["ocupadas"],
+            "reservadas": resumen_fibras["reservadas"],
+            "utilizacion": round(
+                (
+                    (resumen_fibras["ocupadas"] + resumen_fibras["reservadas"])
+                    / resumen_fibras["total"]
+                ) * 100,
+                1,
+            ) if resumen_fibras["total"] else 0,
+        },
+        "reservas": {
+            "elementos": reservas.count(),
+            "reserva_m": round(reservas_m, 2),
+        },
+        "coordenadas": [
+            [float(latitud), float(longitud)]
+            for latitud, longitud in coordenadas
+        ],
+        "puntos": [
+            {
+                "nombre": reserva.nombre,
+                "tipo": _texto(reserva.tipo, "SIN CLASIFICAR"),
+                "latitud": float(reserva.latitud),
+                "longitud": float(reserva.longitud),
+                "reserva_m": reserva.reserva_m or 0,
+            }
+            for reserva in reservas[:100]
+        ],
+    })
 
 
 def _numero_no_negativo(data, clave, entero=False):
