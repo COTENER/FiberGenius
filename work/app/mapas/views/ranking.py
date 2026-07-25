@@ -8,7 +8,7 @@ from datetime import datetime
 from django.shortcuts import render
 from django.http import JsonResponse, HttpResponse
 from django.contrib.auth.decorators import login_required, permission_required
-from django.db import connection
+from django.db import DatabaseError, connection
 
 from ..models import Ruta
 from .utils import get_geo_bounds
@@ -171,8 +171,11 @@ def ranking(request):
         try:
             cursor.execute(top_opticos_query, opticos_params)
             top_opticos_raw = cursor.fetchall()
-        except Exception as e:
-            logger.warning(f"Error en ranking opticos: {e}. Intentando consulta sin columnas nuevas.")
+        except DatabaseError:
+            logger.warning(
+                "Falló la consulta óptica extendida; se intentará la consulta compatible",
+                exc_info=True,
+            )
             # Fallback: Quitar event_test_status de la consulta si falla
             query_segura = f"""
                 SELECT
@@ -194,8 +197,8 @@ def ranking(request):
             try:
                 cursor.execute(query_segura, opticos_params)
                 top_opticos_raw = cursor.fetchall()
-            except Exception as e2:
-                logger.error(f"Fallo critico en ranking opticos: {e2}")
+            except DatabaseError:
+                logger.exception("Falló también la consulta óptica compatible")
                 top_opticos_raw = []
 
         top_opticos_data = []

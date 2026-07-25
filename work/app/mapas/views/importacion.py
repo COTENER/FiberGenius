@@ -137,8 +137,8 @@ def save_uploaded_file(uploaded_file, destination_path):
             for chunk in uploaded_file.chunks():
                 destination.write(chunk)
         return True
-    except Exception as e:
-        logger.error(f"Error al guardar el archivo en {destination_path}: {e}")
+    except OSError:
+        logger.exception("Error al guardar el archivo en %s", destination_path)
         return False
 
 
@@ -1192,11 +1192,12 @@ def cargar_csv(request, tipo_csv):
 
                 return redirect('configuracion')
             except Exception as e:
+                logger.exception("Error inesperado al procesar la carga %s", tipo_csv)
                 lote.estado = 'FALLIDO'
                 lote.detalle_errores = [str(e)[:1000]]
                 lote.finalizado_en = now()
                 lote.save(update_fields=['estado', 'detalle_errores', 'finalizado_en'])
-                messages.error(request, f"Ocurrió un error al procesar el archivo: {e}")
+                messages.error(request, "No se pudo procesar el archivo. Consulte el detalle del lote.")
                 return redirect('configuracion')
         else:
             messages.error(request, "No se adjuntó ningún archivo.")

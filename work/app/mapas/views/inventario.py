@@ -13,6 +13,7 @@ from ..models import (
 )
 
 logger = logging.getLogger('mapas')
+ERRORES_DATOS_ENTRADA = (json.JSONDecodeError, TypeError, ValueError, ValidationError)
 
 
 def _archivo_dentro_del_limite(archivo):
@@ -836,8 +837,18 @@ def import_fibras_csv(request):
                 )
                 
             return JsonResponse({"status": "success", "message": "Hilos importados correctamente."})
-        except Exception as e:
-            return JsonResponse({"status": "error", "message": f"Error procesando CSV: {str(e)}"}, status=500)
+        except ERRORES_DATOS_ENTRADA:
+            logger.info("CSV de fibras inválido", exc_info=True)
+            return JsonResponse(
+                {"status": "error", "message": "El archivo CSV contiene datos inválidos."},
+                status=400,
+            )
+        except Exception:
+            logger.exception("Error inesperado al importar fibras")
+            return JsonResponse(
+                {"status": "error", "message": "No se pudo procesar el archivo CSV."},
+                status=500,
+            )
     return JsonResponse({"status": "error", "message": "Método no permitido"}, status=405)
 
 @login_required
@@ -888,8 +899,11 @@ def update_detalle_fibra(request):
                     )
             
             return JsonResponse({"status": "success", "message": "Fibra actualizada correctamente"})
-        except Exception as e:
-            return JsonResponse({"status": "error", "message": str(e)}, status=400)
+        except ERRORES_DATOS_ENTRADA:
+            return JsonResponse({"status": "error", "message": "Los datos de la fibra no son válidos."}, status=400)
+        except Exception:
+            logger.exception("Error inesperado al actualizar una fibra")
+            return JsonResponse({"status": "error", "message": "No se pudo actualizar la fibra."}, status=500)
     return JsonResponse({"status": "error", "message": "Método no permitido"}, status=405)
 
 @login_required
@@ -989,8 +1003,11 @@ def update_detalle_puerto(request):
                 "status": "success", 
                 "message": "Puerto actualizado correctamente"
             })
-        except Exception as e:
-            return JsonResponse({"status": "error", "message": str(e)}, status=400)
+        except ERRORES_DATOS_ENTRADA:
+            return JsonResponse({"status": "error", "message": "Los datos del puerto no son válidos."}, status=400)
+        except Exception:
+            logger.exception("Error inesperado al actualizar un puerto ODF")
+            return JsonResponse({"status": "error", "message": "No se pudo actualizar el puerto."}, status=500)
     return JsonResponse({"status": "error", "message": "Método no permitido"}, status=405)
 
 @login_required
@@ -1113,8 +1130,11 @@ def create_ruta_manual(request):
                         tramo.save(update_fields=['distancia_m'])
 
         return JsonResponse({'status': 'success', 'message': 'Ruta creada correctamente'})
-    except Exception as e:
-        return JsonResponse({'status': 'error', 'message': str(e)})
+    except ERRORES_DATOS_ENTRADA:
+        return JsonResponse({'status': 'error', 'message': 'Los datos de la ruta no son válidos.'}, status=400)
+    except Exception:
+        logger.exception("Error inesperado al crear una ruta")
+        return JsonResponse({'status': 'error', 'message': 'No se pudo crear la ruta.'}, status=500)
 
 @login_required
 @permission_required('mapas.add_inventarioodf', raise_exception=True)
@@ -1161,8 +1181,11 @@ def create_odf_manual(request):
         )
         
         return JsonResponse({'status': 'success', 'message': 'ODF creado correctamente'})
-    except Exception as e:
-        return JsonResponse({'status': 'error', 'message': str(e)})
+    except ERRORES_DATOS_ENTRADA:
+        return JsonResponse({'status': 'error', 'message': 'Los datos del ODF no son válidos.'}, status=400)
+    except Exception:
+        logger.exception("Error inesperado al crear un ODF")
+        return JsonResponse({'status': 'error', 'message': 'No se pudo crear el ODF.'}, status=500)
 
 @login_required
 @permission_required('mapas.add_detallepuertoodf', raise_exception=True)
@@ -1258,8 +1281,12 @@ def vaciar_inventario_odf(request):
         DetallePuertoODF.objects.all().delete()
         InventarioODF.objects.all().delete()
         return JsonResponse({"status": "success", "message": "Todo el inventario de ODFs ha sido eliminado correctamente."})
-    except Exception as e:
-        return JsonResponse({"status": "error", "message": str(e)}, status=400)
+    except Exception:
+        logger.exception("Error inesperado al vaciar el inventario ODF")
+        return JsonResponse(
+            {"status": "error", "message": "No se pudo vaciar el inventario ODF."},
+            status=500,
+        )
 
 @login_required
 @permission_required('mapas.change_ruta', raise_exception=True)
@@ -1378,8 +1405,11 @@ def update_ruta_manual(request):
                         tramo.save(update_fields=['distancia_m'])
 
         return JsonResponse({'status': 'success', 'message': 'Ruta actualizada correctamente'})
-    except Exception as e:
-        return JsonResponse({'status': 'error', 'message': str(e)})
+    except ERRORES_DATOS_ENTRADA:
+        return JsonResponse({'status': 'error', 'message': 'Los datos de la ruta no son válidos.'}, status=400)
+    except Exception:
+        logger.exception("Error inesperado al actualizar una ruta")
+        return JsonResponse({'status': 'error', 'message': 'No se pudo actualizar la ruta.'}, status=500)
 
 @login_required
 @permission_required('mapas.delete_ruta', raise_exception=True)
@@ -1421,8 +1451,11 @@ def delete_ruta_manual(request):
             # Si no tiene nada de geo, es una ruta creada 100% manual sin mapa. Borrado total.
             ruta.delete()
             return JsonResponse({'status': 'success', 'message': 'Ruta eliminada correctamente'})
-    except Exception as e:
-        return JsonResponse({'status': 'error', 'message': str(e)})
+    except ERRORES_DATOS_ENTRADA:
+        return JsonResponse({'status': 'error', 'message': 'La solicitud para eliminar la ruta no es válida.'}, status=400)
+    except Exception:
+        logger.exception("Error inesperado al eliminar una ruta")
+        return JsonResponse({'status': 'error', 'message': 'No se pudo eliminar la ruta.'}, status=500)
 
 @login_required
 @permission_required('mapas.change_inventarioodf', raise_exception=True)
@@ -1477,8 +1510,11 @@ def update_odf_manual(request):
         odf.save()
         
         return JsonResponse({'status': 'success', 'message': 'ODF actualizado correctamente'})
-    except Exception as e:
-        return JsonResponse({'status': 'error', 'message': str(e)})
+    except ERRORES_DATOS_ENTRADA:
+        return JsonResponse({'status': 'error', 'message': 'Los datos del ODF no son válidos.'}, status=400)
+    except Exception:
+        logger.exception("Error inesperado al actualizar un ODF")
+        return JsonResponse({'status': 'error', 'message': 'No se pudo actualizar el ODF.'}, status=500)
 
 @login_required
 @permission_required('mapas.delete_inventarioodf', raise_exception=True)
@@ -1500,8 +1536,11 @@ def delete_odf_manual(request):
             
         odf.delete() # Elimina en cascada DetallePuertoODF
         return JsonResponse({'status': 'success', 'message': 'ODF eliminado correctamente'})
-    except Exception as e:
-        return JsonResponse({'status': 'error', 'message': str(e)})
+    except ERRORES_DATOS_ENTRADA:
+        return JsonResponse({'status': 'error', 'message': 'La solicitud para eliminar el ODF no es válida.'}, status=400)
+    except Exception:
+        logger.exception("Error inesperado al eliminar un ODF")
+        return JsonResponse({'status': 'error', 'message': 'No se pudo eliminar el ODF.'}, status=500)
 
 @login_required
 @permission_required('mapas.view_detallepuertoodf', raise_exception=True)
@@ -1750,9 +1789,20 @@ def import_reservas_archivo(request):
             'rechazadas': rechazadas,
         })
 
-    except Exception as e:
+    except ERRORES_DATOS_ENTRADA:
         transaction.set_rollback(True)
-        return JsonResponse({'status': 'error', 'message': f'Error al procesar el archivo: {str(e)}'})
+        logger.info("Archivo de reservas inválido", exc_info=True)
+        return JsonResponse(
+            {'status': 'error', 'message': 'El archivo de reservas contiene datos inválidos.'},
+            status=400,
+        )
+    except Exception:
+        transaction.set_rollback(True)
+        logger.exception("Error inesperado al importar reservas")
+        return JsonResponse(
+            {'status': 'error', 'message': 'No se pudo procesar el archivo de reservas.'},
+            status=500,
+        )
 
 @login_required
 @permission_required('mapas.add_detallepuertoodf', raise_exception=True)
@@ -1861,9 +1911,20 @@ def import_puertos_archivo(request):
             'actualizados': actualizados
         })
 
-    except Exception as e:
+    except ERRORES_DATOS_ENTRADA:
         transaction.set_rollback(True)
-        return JsonResponse({'status': 'error', 'message': f'Error al procesar el archivo: {str(e)}'})
+        logger.info("Archivo de puertos ODF inválido", exc_info=True)
+        return JsonResponse(
+            {'status': 'error', 'message': 'El archivo de puertos contiene datos inválidos.'},
+            status=400,
+        )
+    except Exception:
+        transaction.set_rollback(True)
+        logger.exception("Error inesperado al importar puertos ODF")
+        return JsonResponse(
+            {'status': 'error', 'message': 'No se pudo procesar el archivo de puertos.'},
+            status=500,
+        )
 
 @login_required
 @permission_required('mapas.view_detallepuertoodf', raise_exception=True)

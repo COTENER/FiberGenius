@@ -80,6 +80,7 @@ urlpatterns = [
     path('mapa/traza-en-vivo/', views.visor_ondemand, name='visor_ondemand'),
     path('api/traza-en-vivo/iniciar/', views.iniciar_traza_ondemand, name='iniciar_traza_ondemand'),
     path('api/traza-en-vivo/status/<int:traza_id>/', views.get_on_demand_status, name='get_on_demand_status'),
+    path('api/traza-en-vivo/descargar/<int:traza_id>/', views.descargar_traza_ondemand, name='descargar_traza_ondemand'),
     
     # Umbrales
     path('configuracion/umbrales/', views.configuracion_umbrales, name='configuracion_umbrales'),

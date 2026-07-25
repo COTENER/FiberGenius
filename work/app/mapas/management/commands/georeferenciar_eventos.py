@@ -1,6 +1,6 @@
 # mapas/management/commands/georeferenciar_eventos.py
 from django.core.management.base import BaseCommand
-from django.db import connection
+from django.db import DatabaseError, connection
 import os
 import math
 import glob
@@ -196,8 +196,12 @@ def ensure_output_table_exists():
                 # Nota: IF NOT EXISTS en ALTER TABLE requiere MySQL 8.0.1+ o MariaDB 10.2.12+
                 # Usamos try-except para mayor compatibilidad si ya existe
                 cur.execute(f"ALTER TABLE mon_otdr_eventos_geo ADD COLUMN {col} {col_type}")
-            except:
-                pass
+            except DatabaseError:
+                logger.debug(
+                    "No se añadió la columna %s; probablemente ya existe",
+                    col,
+                    exc_info=True,
+                )
 
 def replace_measurement_for_enlace(Node: str, df: pd.DataFrame):
     ensure_output_table_exists()

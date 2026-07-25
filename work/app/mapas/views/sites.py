@@ -1,4 +1,6 @@
 import io
+import logging
+
 import pandas as pd
 from django.shortcuts import render, redirect
 from django.contrib.auth.decorators import login_required, permission_required
@@ -6,6 +8,9 @@ from django.contrib import messages
 from django.db import transaction
 from django.views.decorators.http import require_POST
 from ..models import HubSite
+
+logger = logging.getLogger('mapas')
+
 
 @login_required
 @permission_required('mapas.view_hubsite', raise_exception=True)
@@ -39,8 +44,11 @@ def crear_site_manual(request):
                 }
             )
             messages.success(request, f"Site '{nombre}' guardado exitosamente.")
-        except Exception as e:
-            messages.error(request, f"Error al guardar el Site: {e}")
+        except (TypeError, ValueError):
+            messages.error(request, "Las coordenadas del Site no son válidas.")
+        except Exception:
+            logger.exception("Error inesperado al guardar el Site %r", nombre)
+            messages.error(request, "No se pudo guardar el Site.")
 
     return redirect('gestion_sites')
 
@@ -94,7 +102,10 @@ def importar_sites_csv(request):
                         actualizados += 1
 
             messages.success(request, f"Importación exitosa: {creados} Sites creados, {actualizados} actualizados.")
-        except Exception as e:
-            messages.error(request, f"Ocurrió un error al procesar el CSV: {e}")
+        except (UnicodeDecodeError, TypeError, ValueError):
+            messages.error(request, "El CSV contiene datos o una codificación no válidos.")
+        except Exception:
+            logger.exception("Error inesperado al importar Sites")
+            messages.error(request, "No se pudo procesar el CSV de Sites.")
             
     return redirect('gestion_sites')

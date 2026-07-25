@@ -30,7 +30,7 @@ DATABASES = {
     }
 }
 
-ROOT_URLCONF = "onmsi_mapas.urls_production"
+ROOT_URLCONF = "fibergenius.urls_production"
 STATIC_URL = "/static/"
 STATIC_ROOT = Path(os.environ.get("FIBERGENIUS_STATIC_ROOT", "/data/static"))
 MEDIA_ROOT = Path(os.environ.get("FIBERGENIUS_MEDIA_ROOT", "/data/media"))
@@ -38,7 +38,9 @@ RUTA_CARPETAS_ENLACES = os.environ.get("RUTA_CARPETAS_ENLACES", "/data/enlaces")
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 USE_X_FORWARDED_HOST = True
-SESSION_COOKIE_SECURE = os.environ.get("FIBERGENIUS_SECURE_COOKIES", "true").lower() in {
+# La demo documentada arranca en HTTP local. Las cookies Secure deben activarse
+# explícitamente cuando la instancia se publique detrás de HTTPS.
+SESSION_COOKIE_SECURE = os.environ.get("FIBERGENIUS_SECURE_COOKIES", "false").lower() in {
     "1",
     "true",
     "yes",

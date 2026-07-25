@@ -254,6 +254,109 @@ class AdministracionCoverageTests(TestCase):
         self.assertEqual(self.client.post(reverse('eliminar_usuario', args=[usuario.pk])).status_code, 302)
 
 
+class PermisosTrazaOnDemandTests(TestCase):
+    def setUp(self):
+        self.media_dir = tempfile.TemporaryDirectory()
+        self.media_override = override_settings(MEDIA_ROOT=self.media_dir.name)
+        self.media_override.enable()
+        self.addCleanup(self.media_dir.cleanup)
+        self.addCleanup(self.media_override.disable)
+
+        self.ruta = Ruta.objects.create(nombre='RUTA-PERMISOS-ONDEMAND')
+        self.traza = TrazaOnDemand.objects.create(
+            route_name=self.ruta.nombre,
+            ruta_obj=self.ruta,
+            status='Completed',
+            archivo_sor=SimpleUploadedFile('ondemand-permisos.sor', b'SOR-ONDEMAND'),
+        )
+
+    def _usuario_con_permisos(self, nombre, *codenames):
+        usuario = User.objects.create_user(nombre, password='clave-segura')
+        if codenames:
+            usuario.user_permissions.add(
+                *Permission.objects.filter(
+                    content_type__app_label='mapas',
+                    codename__in=codenames,
+                )
+            )
+        return usuario
+
+    def test_usuario_sin_permiso_no_puede_consultar_la_traza(self):
+        usuario = self._usuario_con_permisos('sin-permiso')
+        self.client.force_login(usuario)
+
+        self.assertEqual(self.client.get(reverse('visor_ondemand')).status_code, 403)
+        self.assertEqual(
+            self.client.get(reverse('get_on_demand_status', args=[self.traza.pk])).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.get(reverse('api_get_ondemand_data', args=[self.traza.pk])).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.get(reverse('descargar_traza_ondemand', args=[self.traza.pk])).status_code,
+            403,
+        )
+
+    def test_permiso_de_traza_permite_visualizar_y_descargar(self):
+        usuario = self._usuario_con_permisos('lector-ondemand', 'view_trazaondemand')
+        self.client.force_login(usuario)
+
+        visor = self.client.get(
+            reverse('visor_ondemand'),
+            {'route_name': self.ruta.nombre, 'traza_id': self.traza.pk},
+        )
+        self.assertEqual(visor.status_code, 200)
+        self.assertNotContains(visor, 'id="btn-request"')
+        self.assertEqual(
+            self.client.get(reverse('get_on_demand_status', args=[self.traza.pk])).status_code,
+            200,
+        )
+        self.assertEqual(
+            self.client.post(
+                reverse('iniciar_traza_ondemand'),
+                data=json.dumps({'route_name': self.ruta.nombre}),
+                content_type='application/json',
+            ).status_code,
+            403,
+        )
+
+        descarga = self.client.get(
+            reverse('descargar_traza_ondemand', args=[self.traza.pk])
+        )
+        self.assertEqual(descarga.status_code, 200)
+        self.assertEqual(b''.join(descarga.streaming_content), b'SOR-ONDEMAND')
+
+    @override_settings(VEEX_ENABLED=False)
+    def test_permiso_de_creacion_controla_el_disparo(self):
+        usuario = self._usuario_con_permisos(
+            'operador-ondemand',
+            'add_trazaondemand',
+            'view_trazaondemand',
+        )
+        self.client.force_login(usuario)
+
+        visor = self.client.get(reverse('visor_ondemand'))
+        self.assertEqual(visor.status_code, 200)
+        self.assertContains(visor, 'id="btn-request"')
+        respuesta = self.client.post(
+            reverse('iniciar_traza_ondemand'),
+            data=json.dumps({'route_name': self.ruta.nombre}),
+            content_type='application/json',
+        )
+        self.assertEqual(respuesta.status_code, 503)
+
+    def test_permiso_de_alarmas_no_autoriza_descarga_ondemand(self):
+        usuario = self._usuario_con_permisos('lector-alarmas', 'view_alarmaveex')
+        self.client.force_login(usuario)
+
+        self.assertEqual(
+            self.client.get(reverse('descargar_traza_ondemand', args=[self.traza.pk])).status_code,
+            403,
+        )
+
+
 @override_settings(MEDIA_ROOT=tempfile.gettempdir())
 class IntegracionesCoverageTests(TestCase):
     def setUp(self):
@@ -745,16 +848,16 @@ class InfraestructuraCoverageTests(TestCase):
         MAP_TILE_URL_SATELLITE='satellite', MAP_TILE_ATTRIBUTION='atribucion',
     )
     def test_context_processor_de_despliegue(self):
-        from onmsi_mapas.context_processors import deployment
+        from fibergenius.context_processors import deployment
         datos = deployment(RequestFactory().get('/'))
         self.assertEqual(datos['MAP_TILE_URL_LIGHT'], 'light')
         self.assertEqual(datos['MAP_TILE_ATTRIBUTION'], 'atribucion')
 
     def test_health_verifica_base_y_reporta_indisponibilidad(self):
-        from onmsi_mapas.health import health
+        from fibergenius.health import health
         request = RequestFactory().get('/health/')
         self.assertEqual(health(request).status_code, 200)
-        with patch('onmsi_mapas.health.connection.cursor', side_effect=RuntimeError('db caída')):
+        with patch('fibergenius.health.connection.cursor', side_effect=RuntimeError('db caída')):
             self.assertEqual(health(request).status_code, 503)
 
 

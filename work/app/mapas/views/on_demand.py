@@ -2,10 +2,12 @@ import json
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from django.conf import settings
+from django.db import DatabaseError
 from django.shortcuts import render, get_object_or_404
-from django.http import JsonResponse
+from django.http import FileResponse, JsonResponse
 from django.views.decorators.http import require_POST
 from django.contrib.auth.decorators import login_required, permission_required
 from mapas.models import Ruta, TrazaOnDemand
@@ -23,6 +25,7 @@ logger = logging.getLogger('mapas')
 _ON_DEMAND_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix='fibergenius-ondemand')
 
 @login_required
+@permission_required('mapas.view_trazaondemand', raise_exception=True)
 def visor_ondemand(request):
     """Renderiza la vista principal para trazas bajo demanda."""
     route_name = request.GET.get('route_name', '')
@@ -78,9 +81,12 @@ def iniciar_traza_ondemand(request):
             'traza_id': traza.id,
             'message': 'Proceso de traza bajo demanda iniciado'
         })
-    except Exception as e:
-        logger.error(f"Error iniciando traza on-demand: {e}")
-        return JsonResponse({'status': 'error', 'message': str(e)})
+    except Exception:
+        logger.exception("Error inesperado al iniciar una traza on-demand")
+        return JsonResponse(
+            {'status': 'error', 'message': 'No se pudo iniciar la traza bajo demanda.'},
+            status=500,
+        )
 
 
 def process_on_demand_flow(traza_id):
@@ -157,15 +163,20 @@ def process_on_demand_flow(traza_id):
         traza.status = 'Completed'
         traza.save()
         
-    except Exception as e:
-        logger.error(f"Error en flujo on-demand para traza {traza_id}: {e}")
+    except Exception as exc:
+        logger.exception("Error en flujo on-demand para traza %s", traza_id)
         try:
-            traza = TrazaOnDemand.objects.get(id=traza_id)
-            traza.status = 'Failed'
-            traza.error_message = str(e)
-            traza.save()
-        except:
-            pass
+            updated = TrazaOnDemand.objects.filter(id=traza_id).update(
+                status='Failed',
+                error_message=str(exc),
+            )
+            if not updated:
+                logger.warning("No existe la traza on-demand %s para marcarla como fallida", traza_id)
+        except DatabaseError:
+            logger.exception(
+                "No se pudo marcar como fallida la traza on-demand %s",
+                traza_id,
+            )
 
 
 @login_required
@@ -180,3 +191,35 @@ def get_on_demand_status(request, traza_id):
         'error_message': traza.error_message,
         'has_file': bool(traza.archivo_sor)
     })
+
+
+@login_required
+@permission_required('mapas.view_trazaondemand', raise_exception=True)
+def descargar_traza_ondemand(request, traza_id):
+    """Descarga un SOR bajo demanda sin reutilizar permisos de alarmas."""
+    traza = get_object_or_404(TrazaOnDemand, id=traza_id)
+    if not traza.archivo_sor:
+        return JsonResponse(
+            {'status': 'error', 'message': 'La traza no tiene un archivo SOR asociado.'},
+            status=404,
+        )
+
+    try:
+        archivo = traza.archivo_sor.open('rb')
+    except (OSError, ValueError):
+        logger.warning(
+            'No se pudo abrir el archivo SOR de la traza bajo demanda %s',
+            traza.id,
+            exc_info=True,
+        )
+        return JsonResponse(
+            {'status': 'error', 'message': 'No se pudo leer el archivo SOR.'},
+            status=404,
+        )
+
+    return FileResponse(
+        archivo,
+        as_attachment=True,
+        filename=Path(traza.archivo_sor.name).name,
+        content_type='application/octet-stream',
+    )

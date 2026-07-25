@@ -17,6 +17,15 @@ from ..models import IDRuta
 logger = logging.getLogger('mapas')
 
 
+def _leer_sor_local(archivo, origen):
+    """Lee un SOR almacenado localmente y permite usar VeEX como respaldo."""
+    try:
+        return archivo.read()
+    except (OSError, ValueError):
+        logger.warning("No se pudo leer el SOR local de %s", origen, exc_info=True)
+        return None
+
+
 @login_required
 @permission_required('mapas.change_ruta', raise_exception=True)
 @require_POST
@@ -58,12 +67,11 @@ def ejecutar_script_actualizacion(request):
                 'output': output_str
             })
 
-        except Exception as e:
-            logger.error(f"Error durante actualización: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Error durante la actualización manual")
             return JsonResponse({
                 'status': 'error',
-                'message': 'Ocurrió un error crítico durante la actualización.',
-                'error_details': str(e)
+                'message': 'Ocurrió un error crítico durante la actualización.'
             }, status=500)
 
     return JsonResponse({'status': 'error', 'message': 'Método no permitido.'}, status=405)
@@ -89,12 +97,11 @@ def ejecutar_alarmas(request):
                 'output': output_str
             })
 
-        except Exception as e:
-            logger.error(f"Error al actualizar alarmas: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Error durante la actualización de alarmas")
             return JsonResponse({
                 'status': 'error',
-                'message': 'Error al actualizar alarmas.',
-                'error_details': str(e)
+                'message': 'Error al actualizar alarmas.'
             }, status=500)
 
     return JsonResponse({'status': 'error', 'message': 'Método no permitido.'}, status=405)
@@ -168,36 +175,27 @@ def descargar_sor(request, alarm_id):
     """
     from ..veex_api import get_sor_file
     from django.http import HttpResponse, Http404
-    from mapas.models import AlarmaVeex, EventLog, TrazaOnDemand
+    from mapas.models import AlarmaVeex, EventLog
 
     incident_id = request.GET.get('incident_id')
     log_id = request.GET.get('log_id')
-    ondemand_id = request.GET.get('ondemand_id')
     sor_content = None
-
-    if ondemand_id:
-        traza = TrazaOnDemand.objects.filter(id=ondemand_id).first()
-        if traza and traza.archivo_sor:
-            try:
-                sor_content = traza.archivo_sor.read()
-            except Exception:
-                pass
 
     if log_id:
         log_historico = EventLog.objects.filter(id=log_id).first()
         if log_historico and log_historico.archivo_sor:
-            try:
-                sor_content = log_historico.archivo_sor.read()
-            except Exception:
-                pass
+            sor_content = _leer_sor_local(
+                log_historico.archivo_sor,
+                f"evento histórico {log_historico.id}",
+            )
 
     if not sor_content and incident_id:
         alarma_padre = AlarmaVeex.objects.filter(id=incident_id).first()
         if alarma_padre and alarma_padre.archivo_sor:
-            try:
-                sor_content = alarma_padre.archivo_sor.read()
-            except Exception:
-                pass
+            sor_content = _leer_sor_local(
+                alarma_padre.archivo_sor,
+                f"alarma {alarma_padre.id}",
+            )
 
     if not sor_content:
         sor_content = get_sor_file(alarm_id)
@@ -222,42 +220,32 @@ def get_traza_data(request, alarm_id):
     Retorna la lista de coordenadas (X, Y) y eventos detectados en formato JSON para graficar.
     """
     from ..veex_api import get_sor_file
-    from mapas.models import AlarmaVeex, EventLog, TrazaOnDemand
+    from mapas.models import AlarmaVeex, EventLog
     import tempfile
     import pyotdr.read
     import os
 
     incident_id = request.GET.get('incident_id')
     log_id = request.GET.get('log_id')
-    ondemand_id = request.GET.get('ondemand_id')
     sor_content = None
-
-    # 0. Intentar cargar desde TrazaOnDemand
-    if ondemand_id:
-        traza = TrazaOnDemand.objects.filter(id=ondemand_id).first()
-        if traza and traza.archivo_sor:
-            try:
-                sor_content = traza.archivo_sor.read()
-            except Exception:
-                pass
 
     # 1. Intentar cargar desde EventLog local
     if log_id:
         log_historico = EventLog.objects.filter(id=log_id).first()
         if log_historico and log_historico.archivo_sor:
-            try:
-                sor_content = log_historico.archivo_sor.read()
-            except Exception as e:
-                pass # Fallback a VeEX si hay error leyendo disco
+            sor_content = _leer_sor_local(
+                log_historico.archivo_sor,
+                f"evento histórico {log_historico.id}",
+            )
 
     # 2. Intentar cargar desde AlarmaVeex local
     if not sor_content and incident_id:
         alarma_padre = AlarmaVeex.objects.filter(id=incident_id).first()
         if alarma_padre and alarma_padre.archivo_sor:
-            try:
-                sor_content = alarma_padre.archivo_sor.read()
-            except Exception as e:
-                pass
+            sor_content = _leer_sor_local(
+                alarma_padre.archivo_sor,
+                f"alarma {alarma_padre.id}",
+            )
 
     # 3. Fallback: Descargar desde VeEX API
     if not sor_content:
@@ -336,5 +324,3 @@ def get_traza_data(request, alarm_id):
                 os.remove(tmp_path)
             except OSError:
                 logger.warning('No se pudo eliminar el temporal SOR %s', tmp_path)
-
-

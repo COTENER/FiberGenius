@@ -482,7 +482,14 @@
                             let now = new Date();
                             const ultimaDiv = document.getElementById('ui-ultima-medicion');
                             if(ultimaDiv) {
-                                ultimaDiv.innerHTML = `Última medición:<br><strong style="color:var(--text-primary);">${now.toLocaleDateString()} ${now.toLocaleTimeString()}</strong>`;
+                                const ultimaFecha = document.createElement('strong');
+                                ultimaFecha.style.color = 'var(--text-primary)';
+                                ultimaFecha.textContent = `${now.toLocaleDateString()} ${now.toLocaleTimeString()}`;
+                                ultimaDiv.replaceChildren(
+                                    document.createTextNode('Última medición:'),
+                                    document.createElement('br'),
+                                    ultimaFecha
+                                );
                             }
                         } else {
                             alert('Error leyendo traza resultante.');
@@ -688,13 +695,19 @@
         else if (globalSeverity === 'Minor') estadoClass = 'status-minor';
 
         if (actualData) {
-            document.getElementById('ui-estado').innerHTML = `<span class="status-badge ${estadoClass}">${globalSeverity}</span>`;
+            const estadoBadge = document.createElement('span');
+            estadoBadge.className = `status-badge ${estadoClass}`;
+            estadoBadge.textContent = globalSeverity;
+            document.getElementById('ui-estado').replaceChildren(estadoBadge);
             
             const listContainer = document.getElementById('ui-eventos-list');
-            listContainer.innerHTML = '';
+            listContainer.replaceChildren();
             
             if (eventos.length === 0) {
-                listContainer.innerHTML = '<div style="color: #22c55e; font-size: 13px; font-weight: 600;">Traza Normal (Sin eventos)</div>';
+                const emptyState = document.createElement('div');
+                emptyState.style.cssText = 'color: #22c55e; font-size: 13px; font-weight: 600;';
+                emptyState.textContent = 'Traza Normal (Sin eventos)';
+                listContainer.appendChild(emptyState);
             } else {
                 // Agregar cabecera de columnas
                 listContainer.innerHTML = `
@@ -712,18 +725,31 @@
                     else if (ev.severidad === 'Major') evColor = '#f97316';
                     
                     let atenuacionText = ev.tipo === 'Corte de Fibra' ? '--' : ev.atenuacion.toFixed(2) + ' dB';
-                    
-                    listContainer.innerHTML += `
-                        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 13px; margin-bottom: 6px;">
-                            <span style="color: ${evColor}; font-weight: 600; min-width: 140px;">
-                                <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:${evColor}; margin-right:6px;"></span>
-                                ${ev.tipo}
-                            </span>
-                            <span style="color: var(--text-secondary); width: 60px; text-align: right; font-weight: 500;">${atenuacionText}</span>
-                            <span style="color: var(--text-primary); font-family: monospace; width: 90px; text-align: right;">${ev.distancia.toFixed(2)} m</span>
-                            <span id="coord-ev-${idx}" style="color: var(--text-secondary); width: 150px; text-align: right; font-family: monospace; font-size: 11px;">Calculando...</span>
-                        </div>
-                    `;
+
+                    const eventRow = document.createElement('div');
+                    eventRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; font-size: 13px; margin-bottom: 6px;';
+
+                    const eventType = document.createElement('span');
+                    eventType.style.cssText = `color: ${evColor}; font-weight: 600; min-width: 140px;`;
+                    const eventDot = document.createElement('span');
+                    eventDot.style.cssText = `display:inline-block; width:8px; height:8px; border-radius:50%; background:${evColor}; margin-right:6px;`;
+                    eventType.append(eventDot, document.createTextNode(String(ev.tipo || 'Evento desconocido')));
+
+                    const attenuation = document.createElement('span');
+                    attenuation.style.cssText = 'color: var(--text-secondary); width: 60px; text-align: right; font-weight: 500;';
+                    attenuation.textContent = atenuacionText;
+
+                    const distance = document.createElement('span');
+                    distance.style.cssText = 'color: var(--text-primary); font-family: monospace; width: 90px; text-align: right;';
+                    distance.textContent = `${ev.distancia.toFixed(2)} m`;
+
+                    const coordinates = document.createElement('span');
+                    coordinates.id = `coord-ev-${idx}`;
+                    coordinates.style.cssText = 'color: var(--text-secondary); width: 150px; text-align: right; font-family: monospace; font-size: 11px;';
+                    coordinates.textContent = 'Calculando...';
+
+                    eventRow.append(eventType, attenuation, distance, coordinates);
+                    listContainer.appendChild(eventRow);
                 });
 
                 // Obtener coordenadas de los eventos en background
@@ -736,7 +762,7 @@
                             res.coordenadas.forEach((coord, idx) => {
                                 const coordSpan = document.getElementById(`coord-ev-${idx}`);
                                 if (coordSpan) {
-                                    coordSpan.innerHTML = `${coord.lat.toFixed(5)}, ${coord.lng.toFixed(5)}`;
+                                    coordSpan.textContent = `${coord.lat.toFixed(5)}, ${coord.lng.toFixed(5)}`;
                                 }
                             });
                         }

@@ -18,7 +18,7 @@ FROM python:3.12-slim
 ENV PATH="/venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    DJANGO_SETTINGS_MODULE=onmsi_mapas.settings_demo \
+    DJANGO_SETTINGS_MODULE=fibergenius.settings_demo \
     FIBERGENIUS_DEMO_DB=/data/fibergenius.sqlite3
 
 COPY --from=builder /venv /venv

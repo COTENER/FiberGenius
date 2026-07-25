@@ -1,16 +1,16 @@
 """
-WSGI config for onmsi_mapas project.
+WSGI config for FiberGenius.
 
 It exposes the WSGI callable as a module-level variable named ``application``.
 
 For more information on this file, see
-https://docs.djangoproject.com/en/5.2/howto/deployment/wsgi/
+https://docs.djangoproject.com/en/6.0/howto/deployment/wsgi/
 """
 
 import os
 
 from django.core.wsgi import get_wsgi_application
 
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'onmsi_mapas.settings_production')
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'fibergenius.settings_production')
 
 application = get_wsgi_application()

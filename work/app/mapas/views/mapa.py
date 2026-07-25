@@ -9,10 +9,9 @@ from collections import defaultdict
 from django.shortcuts import render
 from django.http import JsonResponse, HttpResponse
 from django.contrib.auth.decorators import login_required, permission_required
+from django.contrib.staticfiles import finders
 from django.db import connection
-from django.conf import settings as django_settings
 from django.templatetags.static import static
-import os
 import csv
 
 from ..models import OTU, Ruta, Reserva, CoordenadaRuta
@@ -47,9 +46,9 @@ def obtener_equipos_desde_db():
                 libres += 1
 
         nombre_otu_sin_espacios = equipo.nombre.replace(" ", "_")
-        ruta_fisica_imagen = os.path.join(django_settings.STATICFILES_DIRS[0], 'img', 'imagenes-OTUs', f"{nombre_otu_sin_espacios}.png")
-        if os.path.exists(ruta_fisica_imagen):
-            url_imagen_final = static(f"img/imagenes-OTUs/{nombre_otu_sin_espacios}.png")
+        ruta_estatica_imagen = f"img/imagenes-OTUs/{nombre_otu_sin_espacios}.png"
+        if finders.find(ruta_estatica_imagen):
+            url_imagen_final = static(ruta_estatica_imagen)
         else:
             url_imagen_final = static('img/default.png')
 

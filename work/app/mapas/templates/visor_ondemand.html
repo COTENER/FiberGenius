@@ -244,10 +244,12 @@
             </div>
         </div>
         <div class="header-right" style="display: flex; gap: 12px;">
+            {% if perms.mapas.add_trazaondemand %}
             <button id="btn-request" class="btn-primary" onclick="requestOnDemandTrace()" style="background-color: #3b82f6; color: white; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; font-size: 13px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; transition: all 0.2s; box-shadow: 0 2px 4px rgba(59, 130, 246, 0.2);" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                 Solicitar Traza en Vivo
             </button>
+            {% endif %}
             <a id="btn-download" href="#" style="display: none; background-color: var(--accent); color: white; padding: 8px 16px; border-radius: 6px; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; text-decoration: none; transition: opacity 0.2s; box-shadow: 0 2px 4px rgba(14, 165, 233, 0.2);" onmouseover="this.style.opacity=0.9" onmouseout="this.style.opacity=1">
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
                 Descargar traza
@@ -295,7 +297,11 @@
                 <div class="initial-state" id="initial-state">
                     <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="color: var(--text-tertiary); margin-bottom: 16px;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
                     <h3 style="color: var(--text-primary); margin: 0 0 8px 0;">No hay traza cargada</h3>
+                    {% if perms.mapas.add_trazaondemand %}
                     <p style="color: var(--text-secondary); margin: 0;">Presiona "Solicitar Traza en Vivo" para realizar una medición ahora mismo.</p>
+                    {% else %}
+                    <p style="color: var(--text-secondary); margin: 0;">No tienes permiso para solicitar una nueva medición.</p>
+                    {% endif %}
                 </div>
                 {% endif %}
             </div>
@@ -404,12 +410,15 @@
     }
 
     function loadTraceData() {
-        fetch(`/api/traza-datos/0/?ondemand_id=${currentTrazaId}`)
+        fetch(`/api/proactivo/ondemand-datos/${currentTrazaId}/`)
         .then(res => res.json())
         .then(res => {
             document.getElementById('chart-loader').style.display = 'none';
-            document.getElementById('btn-request').disabled = false;
-            document.getElementById('btn-request').style.opacity = '1';
+            const btnReq = document.getElementById('btn-request');
+            if (btnReq) {
+                btnReq.disabled = false;
+                btnReq.style.opacity = '1';
+            }
             
             if (res.status === 'success') {
                 renderChart(res.data);
@@ -425,7 +434,7 @@
     function setupDownloadButton() {
         const btn = document.getElementById('btn-download');
         btn.style.display = 'inline-flex';
-        btn.href = `/api/descargar-sor/0/?ondemand_id=${currentTrazaId}`;
+        btn.href = `/api/traza-en-vivo/descargar/${currentTrazaId}/`;
     }
 
     function updateStatusUI(status, error_msg = '') {
@@ -448,8 +457,10 @@
     function resetUI() {
         document.getElementById('chart-loader').style.display = 'none';
         const btnReq = document.getElementById('btn-request');
-        btnReq.disabled = false;
-        btnReq.style.opacity = '1';
+        if (btnReq) {
+            btnReq.disabled = false;
+            btnReq.style.opacity = '1';
+        }
     }
 
     function renderChart(rawData) {

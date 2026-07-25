@@ -12,6 +12,11 @@ cp .env.demo.example .env.demo
 Edite `.env.demo` y sustituya `FIBERGENIUS_SECRET_KEY` por un valor aleatorio largo.
 No publique ese archivo ni credenciales de usuarios.
 
+Para el acceso local documentado por HTTP, mantenga
+`FIBERGENIUS_SECURE_COOKIES=false`. Si publica la demo detrás de Caddy con HTTPS,
+cambie el valor a `true` y agregue el origen HTTPS a
+`FIBERGENIUS_CSRF_TRUSTED_ORIGINS`.
+
 ## Arranque
 
 ```bash
@@ -45,4 +50,3 @@ contenedor. Ajuste los hosts y orígenes confiables en `.env.demo` al dominio re
 La base activa queda en `data_demo/fibergenius.sqlite3`. Al reconstruir el contenedor
 se actualizan el código y la interfaz sin borrar esa base. Elimine `data_demo` solo si
 quiere reiniciar deliberadamente la demo.
-

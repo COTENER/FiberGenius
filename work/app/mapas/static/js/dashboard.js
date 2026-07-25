@@ -468,26 +468,34 @@
         const tipoEvento = document.getElementById('input-tipo_evento').value;
         const container = document.getElementById('active-filters');
         const resetBtn = document.getElementById('btn-reset-filters');
-        
-        let html = '';
-        let hasFilters = false;
-        
-        if (severidad) {
-            hasFilters = true;
-            html += `<div class="filter-badge">
-                        <span>Severidad: <strong>${severidad}</strong></span>
-                        <span class="filter-badge__clear" onclick="window.removeFilter('severidad')"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></span>
-                     </div>`;
+
+        function createFilterBadge(label, value, filterKey) {
+            const badge = document.createElement('div');
+            badge.className = 'filter-badge';
+
+            const description = document.createElement('span');
+            description.append(`${label}: `);
+            const strong = document.createElement('strong');
+            strong.textContent = value;
+            description.appendChild(strong);
+
+            const clear = document.createElement('button');
+            clear.type = 'button';
+            clear.className = 'filter-badge__clear';
+            clear.setAttribute('aria-label', `Quitar filtro ${label}`);
+            clear.textContent = '×';
+            clear.addEventListener('click', () => window.removeFilter(filterKey));
+
+            badge.append(description, clear);
+            return badge;
         }
-        if (tipoEvento) {
-            hasFilters = true;
-            html += `<div class="filter-badge">
-                        <span>Evento: <strong>${tipoEvento}</strong></span>
-                        <span class="filter-badge__clear" onclick="window.removeFilter('tipo_evento')"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg></span>
-                     </div>`;
-        }
-        
-        container.innerHTML = html;
+
+        const badges = [];
+        if (severidad) badges.push(createFilterBadge('Severidad', severidad, 'severidad'));
+        if (tipoEvento) badges.push(createFilterBadge('Evento', tipoEvento, 'tipo_evento'));
+
+        container.replaceChildren(...badges);
+        const hasFilters = badges.length > 0;
         resetBtn.style.display = hasFilters ? 'flex' : 'none';
         
         // Soft opacity indicator for loading
@@ -519,10 +527,11 @@
         // Update route select keeping state
         const rutaSelect = document.getElementById('ruta');
         const rutaSeleccionada = rutaSelect.value;
-        rutaSelect.innerHTML = '<option value="">Todas</option>';
+        const routeOptions = [new Option('Todas', '')];
         data.rutas_disponibles.forEach(r => {
-            rutaSelect.innerHTML += `<option value="${r}">${r}</option>`;
+            routeOptions.push(new Option(String(r), String(r)));
         });
+        rutaSelect.replaceChildren(...routeOptions);
         if (data.rutas_disponibles.includes(rutaSeleccionada)) {
             rutaSelect.value = rutaSeleccionada;
         }

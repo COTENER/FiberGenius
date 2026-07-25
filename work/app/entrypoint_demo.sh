@@ -21,4 +21,4 @@ fi
 
 python manage.py collectstatic --noinput --verbosity 0
 
-exec waitress-serve --listen=0.0.0.0:8000 onmsi_mapas.wsgi:application
+exec waitress-serve --listen=0.0.0.0:8000 fibergenius.wsgi:application

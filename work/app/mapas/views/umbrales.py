@@ -1,3 +1,5 @@
+import logging
+
 from django.shortcuts import render, get_object_or_404
 from django.contrib.auth.decorators import login_required, permission_required
 from django.core.exceptions import PermissionDenied
@@ -5,6 +7,9 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 import json
 from ..models import PerfilUmbral, Ruta
+
+logger = logging.getLogger('mapas')
+
 
 @login_required
 @permission_required('mapas.view_perfilumbral', raise_exception=True)
@@ -85,7 +90,23 @@ def api_perfiles_umbral(request):
                     Ruta.objects.filter(id__in=ruta_ids).update(perfil_umbral=perfil)
                     return JsonResponse({'status': 'success', 'message': f'Perfil asignado a {len(ruta_ids)} rutas.'})
                 
-        except Exception as e:
-            return JsonResponse({'status': 'error', 'message': str(e)}, status=400)
+        except PermissionDenied:
+            raise
+        except PerfilUmbral.DoesNotExist:
+            return JsonResponse(
+                {'status': 'error', 'message': 'Perfil de umbral no encontrado.'},
+                status=404,
+            )
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return JsonResponse(
+                {'status': 'error', 'message': 'Los datos del perfil no son válidos.'},
+                status=400,
+            )
+        except Exception:
+            logger.exception("Error inesperado al gestionar perfiles de umbral")
+            return JsonResponse(
+                {'status': 'error', 'message': 'No se pudo completar la operación.'},
+                status=500,
+            )
             
     return JsonResponse({'status': 'error', 'message': 'Método no permitido'}, status=405)

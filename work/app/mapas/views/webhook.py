@@ -4,9 +4,10 @@ import hmac
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from django.conf import settings
 from django.contrib.auth.decorators import login_required, permission_required
+from django.db import DatabaseError
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
@@ -76,8 +77,8 @@ def sync_veex_id_in_background(incident_id, distance, timestamp, event_log_id=No
                 logger.info(f"Archivo SOR descargado y guardado permanentemente para Incidente {incident_id} (Log {event_log_id})")
             else:
                 logger.warning(f"No se pudo descargar el archivo SOR de VeEX para veex_alarm_id={veex_id}")
-    except Exception as e:
-        logger.error(f"Error en sync_veex_id_in_background: {e}")
+    except Exception:
+        logger.exception("Error en sync_veex_id_in_background")
 
 
 logger = logging.getLogger('mapas')
@@ -123,7 +124,7 @@ def webhook_alarma(request):
             try:
                 latitude = Decimal(latitude_str)
                 longitude = Decimal(longitude_str)
-            except Exception:
+            except (InvalidOperation, TypeError, ValueError):
                 return JsonResponse({'status': 'error', 'message': 'Formato de coordenadas inválido'}, status=400)
 
         # Parsear distancia
@@ -143,8 +144,8 @@ def webhook_alarma(request):
                 ruta_inv = Ruta.objects.filter(nombre__iexact=route_name).first()
                 if ruta_inv and ruta_inv.otu:
                     resolved_otu_name = ruta_inv.otu.nombre
-            except Exception as e:
-                logger.error(f"Error resolviendo OTU del inventario para '{route_name}': {str(e)}")
+            except DatabaseError:
+                logger.exception("Error resolviendo la OTU del inventario para %r", route_name)
 
         alarma_timestamp = data.get('timestamp') or localtime(now()).strftime('%Y-%m-%d %H:%M:%S')
         timestamp_evento = _parsear_timestamp_evento(alarma_timestamp)
@@ -335,9 +336,12 @@ def webhook_alarma(request):
     except json.JSONDecodeError:
         logger.error("Error al decodificar JSON en webhook de alarmas")
         return JsonResponse({'status': 'error', 'message': 'JSON inválido'}, status=400)
-    except Exception as e:
-        logger.error(f"Error inesperado en webhook_alarma: {str(e)}")
-        return JsonResponse({'status': 'error', 'message': f'Error interno: {str(e)}'}, status=500)
+    except Exception:
+        logger.exception("Error inesperado en webhook_alarma")
+        return JsonResponse(
+            {'status': 'error', 'message': 'Error interno al procesar la alarma.'},
+            status=500,
+        )
 
 
 @login_required

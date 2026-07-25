@@ -1,3 +1,5 @@
+"""Contexto global específico del despliegue de FiberGenius."""
+
 from django.conf import settings
 
 def deployment(request):

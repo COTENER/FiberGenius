@@ -45,7 +45,7 @@ STORAGES = {
     "staticfiles": {"BACKEND": "whitenoise.storage.CompressedStaticFilesStorage"},
 }
 
-ROOT_URLCONF = "onmsi_mapas.urls_production"
+ROOT_URLCONF = "fibergenius.urls_production"
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 USE_X_FORWARDED_HOST = True
 SESSION_COOKIE_SECURE = fg("SESSION_COOKIE_SECURE", default=True, cast=bool)
@@ -75,7 +75,7 @@ MAP_TILE_URL_DARK = fg("MAP_TILE_URL_DARK", default="https://{s}.basemaps.cartoc
 MAP_TILE_URL_SATELLITE = fg("MAP_TILE_URL_SATELLITE", default="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}")
 MAP_TILE_ATTRIBUTION = fg("MAP_TILE_ATTRIBUTION", default="OpenStreetMap contributors / CARTO / Esri")
 
-TEMPLATES[0]["OPTIONS"]["context_processors"].append("onmsi_mapas.context_processors.deployment")
+TEMPLATES[0]["OPTIONS"]["context_processors"].append("fibergenius.context_processors.deployment")
 
 LOGGING = {
     "version": 1,

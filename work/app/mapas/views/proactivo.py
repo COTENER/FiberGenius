@@ -5,7 +5,7 @@ from django.contrib.auth.decorators import login_required, permission_required
 from django.db import transaction
 from django.utils.text import get_valid_filename
 from django.views.decorators.http import require_GET, require_POST
-from django.http import JsonResponse
+from django.http import Http404, JsonResponse
 import json
 from ..models import Ruta, TrazaReferencia, DiagnosticoProactivo, PerfilUmbral, CoordenadaRuta
 from ..veex_api import create_on_demand_task # Reutilizaremos esta API
@@ -95,8 +95,17 @@ def api_asignar_perfil_ruta(request):
             ruta.save()
 
             return JsonResponse({'status': 'success', 'message': 'Perfil asignado correctamente a la ruta'})
-        except Exception as e:
-            return JsonResponse({'status': 'error', 'message': str(e)})
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return JsonResponse(
+                {'status': 'error', 'message': 'Los datos de asignación no son válidos.'},
+                status=400,
+            )
+        except Exception:
+            logger.exception("Error inesperado al asignar un perfil a una ruta")
+            return JsonResponse(
+                {'status': 'error', 'message': 'No se pudo asignar el perfil.'},
+                status=500,
+            )
     return JsonResponse({'status': 'error', 'message': 'Método no permitido'})
 
 @login_required
@@ -155,8 +164,19 @@ def promover_referencia(request):
                 'message': 'Traza guardada exitosamente como Referencia Oficial.'
             })
 
-        except Exception as e:
-            return JsonResponse({'status': 'error', 'message': str(e)}, status=400)
+        except Http404:
+            raise
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return JsonResponse(
+                {'status': 'error', 'message': 'Los datos de la referencia no son válidos.'},
+                status=400,
+            )
+        except Exception:
+            logger.exception("Error inesperado al promover una traza de referencia")
+            return JsonResponse(
+                {'status': 'error', 'message': 'No se pudo guardar la referencia.'},
+                status=500,
+            )
 
     return JsonResponse({'status': 'error', 'message': 'Método no permitido'}, status=405)
 
@@ -296,8 +316,12 @@ def api_calcular_coordenadas(request, ruta_id):
 
     except Ruta.DoesNotExist:
         return JsonResponse({'error': 'Ruta no encontrada'}, status=404)
-    except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+    except Exception:
+        logger.exception("Error calculando coordenadas para la ruta %s", ruta_id)
+        return JsonResponse(
+            {'error': 'No se pudieron calcular las coordenadas de la ruta.'},
+            status=500,
+        )
 @login_required
 @permission_required('mapas.view_trazaondemand', raise_exception=True)
 def api_get_ondemand_data(request, traza_id):
@@ -384,4 +408,3 @@ def api_get_ondemand_data(request, traza_id):
             {'status': 'error', 'message': 'No se pudo procesar la traza bajo demanda.'},
             status=500,
         )
-

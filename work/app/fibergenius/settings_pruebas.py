@@ -20,7 +20,7 @@ DATABASES = {
     }
 }
 
-ROOT_URLCONF = "onmsi_mapas.urls"
+ROOT_URLCONF = "fibergenius.urls"
 MEDIA_ROOT = Path(BASE_DIR) / "media_pruebas"
 STATIC_ROOT = Path(BASE_DIR) / "staticfiles_pruebas"
 PASSWORD_HASHERS = [

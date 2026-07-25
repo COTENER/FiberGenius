@@ -37,8 +37,8 @@ def get_veex_token():
             # Cacheamos el token por 1 hora (o menos según expire)
             cache.set('veex_jwt_token', token, 3600)
             return token
-    except Exception as e:
-        logger.error(f"Error obteniendo token de VeEX: {e}")
+    except Exception:
+        logger.warning("Error obteniendo token de VeEX", exc_info=True)
     return None
 
 
@@ -76,8 +76,8 @@ def fetch_veex_alarm_id(distance, timestamp, alarm_type=None):
                 return item.get('id')
                 
         return None
-    except Exception as e:
-        logger.error(f"Error buscando ID de alarma en VeEX: {e}")
+    except Exception:
+        logger.warning("Error buscando ID de alarma en VeEX", exc_info=True)
         return None
 
 
@@ -95,8 +95,12 @@ def get_sor_file(veex_alarm_id):
         response.raise_for_status()
         
         return response.content
-    except Exception as e:
-        logger.error(f"Error descargando SOR para alarma {veex_alarm_id}: {e}")
+    except Exception:
+        logger.warning(
+            "Error descargando SOR para alarma %s",
+            veex_alarm_id,
+            exc_info=True,
+        )
         return None
 
 
@@ -116,8 +120,8 @@ def get_veex_device_lasers():
         # Los láseres están en supportedMeasurementParameters -> laserUnits -> keys
         lasers = list(data.get('supportedMeasurementParameters', {}).get('laserUnits', {}).keys())
         return lasers
-    except Exception as e:
-        logger.error(f"Error obteniendo láseres: {e}")
+    except Exception:
+        logger.warning("Error obteniendo láseres de VeEX", exc_info=True)
         return []
 
 
@@ -140,8 +144,12 @@ def get_monitoring_port_id(route_name):
                 return port.get('id')
                 
         return None
-    except Exception as e:
-        logger.error(f"Error obteniendo puerto para ruta {route_name}: {e}")
+    except Exception:
+        logger.warning(
+            "Error obteniendo puerto de VeEX para la ruta %r",
+            route_name,
+            exc_info=True,
+        )
         return None
 
 
@@ -167,8 +175,12 @@ def create_on_demand_task(port_id, laser):
         # Asumimos que retorna el ID de la tarea creada, ej {"onDemandId": "123-abc"}
         data = response.json()
         return data.get('onDemandId', data.get('id'))
-    except Exception as e:
-        logger.error(f"Error creando tarea on-demand en puerto {port_id}: {e}")
+    except Exception:
+        logger.warning(
+            "Error creando tarea on-demand en el puerto %s",
+            port_id,
+            exc_info=True,
+        )
         return None
 
 
@@ -186,8 +198,12 @@ def check_on_demand_status(task_id):
         
         data = response.json()
         return data.get('status') # puede ser "pending", "running", "completed", "failed", etc.
-    except Exception as e:
-        logger.error(f"Error consultando estado de on-demand {task_id}: {e}")
+    except Exception:
+        logger.warning(
+            "Error consultando el estado on-demand %s",
+            task_id,
+            exc_info=True,
+        )
         return "Failed"
 
 
@@ -206,6 +222,10 @@ def download_on_demand_sor(task_id):
         response.raise_for_status()
         
         return response.content
-    except Exception as e:
-        logger.error(f"Error descargando SOR para on-demand {task_id}: {e}")
+    except Exception:
+        logger.warning(
+            "Error descargando SOR para on-demand %s",
+            task_id,
+            exc_info=True,
+        )
         return None

@@ -122,6 +122,7 @@ from .on_demand import (
     visor_ondemand,
     iniciar_traza_ondemand,
     get_on_demand_status,
+    descargar_traza_ondemand,
 )
 
 # Configuracion de Umbrales
