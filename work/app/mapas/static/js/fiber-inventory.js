@@ -46,13 +46,17 @@
         inspectorToggle.addEventListener('click', () => {
             setInspectorCollapsed(!inspector.classList.contains('is-collapsed'));
         });
-        setInspectorCollapsed(window.innerWidth < 1700);
+        setInspectorCollapsed(window.innerWidth <= 1180);
     }
 
     function switchInspectorContext(name) {
         root.querySelectorAll('[data-inspector-context]').forEach((section) => {
             section.hidden = section.dataset.inspectorContext !== name;
         });
+        const title = document.getElementById('fiber-inspector-title');
+        if (title) {
+            title.textContent = name === 'reservas' ? 'Análisis de reservas' : 'Análisis de fibras';
+        }
     }
 
     function renderFiberSummary(summary) {
@@ -151,26 +155,51 @@
         });
     }
 
+    function renderMapEmpty(target, title, detail) {
+        target.classList.add('is-empty');
+        const empty = document.createElement('div');
+        empty.className = 'network-map-empty';
+        const icon = document.createElement('span');
+        icon.textContent = '⌁';
+        const heading = document.createElement('strong');
+        heading.textContent = title;
+        const description = document.createElement('small');
+        description.textContent = detail;
+        empty.append(icon, heading, description);
+        target.replaceChildren(empty);
+    }
+
     function drawRouteMap(payload) {
         const target = document.getElementById('network-route-map');
-        if (!target || !window.L) return;
+        if (!target) return;
         if (routeMap) {
             routeMap.remove();
             routeMap = null;
         }
         target.replaceChildren();
+        target.classList.remove('is-empty');
         const coordinates = (payload.coordenadas || [])
             .map((point) => [Number(point[0]), Number(point[1])])
             .filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1]));
         const markers = (payload.puntos || [])
             .map((point) => ({ ...point, latitud: Number(point.latitud), longitud: Number(point.longitud) }))
             .filter((point) => Number.isFinite(point.latitud) && Number.isFinite(point.longitud));
-        if (coordinates.length < 2 && !markers.length) {
-            target.classList.add('is-empty');
-            target.textContent = 'La troncal no tiene geometría disponible.';
+        if (!window.L) {
+            renderMapEmpty(
+                target,
+                'Mapa no disponible',
+                'No se pudo iniciar el visor cartográfico. Recarga la página e inténtalo nuevamente.',
+            );
             return;
         }
-        target.classList.remove('is-empty');
+        if (coordinates.length < 2 && !markers.length) {
+            renderMapEmpty(
+                target,
+                'Sin trazado georreferenciado',
+                'La ruta no tiene suficientes coordenadas para dibujar su recorrido.',
+            );
+            return;
+        }
         routeMap = L.map(target, {
             zoomControl: true,
             attributionControl: true,

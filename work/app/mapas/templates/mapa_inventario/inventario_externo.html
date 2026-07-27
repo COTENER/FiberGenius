@@ -5,8 +5,8 @@
 {% block page_title %}Inventario / Troncales y tramos{% endblock %}
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/odf-inventory.css' %}?v=20260721-1">
-<link rel="stylesheet" href="{% static 'vendor/leaflet/leaflet.css' %}">
-<link rel="stylesheet" href="{% static 'css/network-inventory.css' %}?v=20260723-panel-alignment-1">
+<link rel="stylesheet" href="{% static 'vendor/leaflet/leaflet-1.9.4.css' %}">
+<link rel="stylesheet" href="{% static 'css/network-inventory.css' %}?v=20260727-panel-fixes-1">
 <link rel="stylesheet" href="{% static 'css/inventory-filters.css' %}?v=20260723-1">
 {% endblock %}
 
@@ -43,11 +43,12 @@
             <article class="odf-kpi odf-kpi--cyan"><span class="odf-kpi__icon">≋</span><div><span>Fibras</span><strong id="troncales-stat-fibers">0</strong><small>Hilos inventariados</small></div></article>
             <article class="odf-kpi odf-kpi--orange"><span class="odf-kpi__icon">⌖</span><div><span>Reservas</span><strong id="troncales-stat-reserves">0</strong><small>Elementos georreferenciados</small></div></article>
         </section>
-        <section class="odf-filter-card inventory-filter-card"><form id="troncales-filters" class="odf-filters inventory-filter-grid inventory-filter-grid--five" role="search">
+        <section class="odf-filter-card inventory-filter-card"><form id="troncales-filters" class="odf-filters inventory-filter-grid inventory-filter-grid--six" role="search">
             <label class="odf-search"><span class="sr-only">Buscar</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input data-filter="q" type="search" placeholder="Troncal, origen, destino, ODF o serial" autocomplete="off"></label>
             <label class="odf-filter-field"><span>Tipo</span><select data-filter="tipo"><option value="">Todos</option>{% for value in tipos_trazado %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
             <label class="odf-filter-field"><span>Estado</span><select data-filter="estado"><option value="">Todos</option>{% for value in estados_tramo %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
             <label class="odf-filter-field"><span>Site origen</span><select data-filter="site"><option value="">Todos</option>{% for value in sites_troncal %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
+            <label class="odf-filter-field"><span>Disponibilidad</span><select data-filter="capacidad"><option value="">Todas</option><option value="disponible">Con fibras disponibles</option><option value="atencion">Entre 80% y 99,9%</option></select></label>
             <label class="odf-filter-field"><span>Filas</span><select data-filter="page_size"><option>10</option><option selected>25</option><option>50</option><option>100</option><option>200</option></select></label>
             <div class="odf-filter-actions"><button class="odf-btn odf-btn--primary" type="submit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16l-6 7v5l-4 2v-7Z"/></svg>Aplicar filtros</button><button class="odf-btn" type="button" data-clear><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 1 0 2-5.3L4 9M4 4v5h5"/></svg>Limpiar</button><button class="odf-btn" type="button" data-export><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>Exportar Excel</button></div><p class="odf-export-status" data-export-status role="status"></p>
         </form></section>
@@ -75,15 +76,19 @@
 
     <aside id="network-inspector" class="network-inspector" aria-label="Resumen contextual de planta externa">
         <header class="network-inspector__header">
-            <div class="network-inspector__title"><strong id="network-inspector-title">Resumen de troncales</strong><span id="network-inspector-subtitle">Selecciona una fila para ver su trazado</span></div>
+            <div class="network-inspector__title"><strong id="network-inspector-title">Análisis de troncales</strong><span id="network-inspector-subtitle">Resumen filtrado y detalle seleccionado</span></div>
             <button id="network-inspector-toggle" type="button" aria-label="Contraer panel" aria-expanded="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg></button>
         </header>
         <div class="network-inspector__body">
-            <section class="network-inspector-card">
+            <section class="network-inspector-card network-inspector-card--summary">
                 <header><div><strong id="routes-context-title">Capacidad consolidada</strong><span id="routes-context-caption">Según los filtros activos</span></div></header>
                 <div id="routes-context-summary" class="network-state-summary"></div>
             </section>
-            <section class="network-inspector-card">
+            <section class="network-inspector-card network-inspector-card--ranking">
+                <header><div><strong id="routes-ranking-title">Troncales con mayor ocupación</strong><span>Top 5 del inventario filtrado</span></div></header>
+                <div id="routes-occupancy-ranking" class="network-ranking"></div>
+            </section>
+            <section class="network-inspector-card network-inspector-card--detail">
                 <header><div><strong>Ruta seleccionada</strong><span>Geometría y capacidad técnica</span></div></header>
                 <div id="network-route-empty" class="network-route-empty"><span>⌁</span><strong>Ninguna ruta seleccionada</strong><p>Haz clic en una troncal o tramo para verla sin abandonar el inventario.</p></div>
                 <div id="network-route-detail" hidden>
@@ -102,6 +107,6 @@
 </div>
 {% endblock %}
 {% block extra_js %}
-<script src="{% static 'vendor/leaflet/leaflet.js' %}"></script>
-<script src="{% static 'js/routes-inventory.js' %}?v=20260723-contextual-1"></script>
+<script src="{% static 'vendor/leaflet/leaflet-1.9.4.js' %}"></script>
+<script src="{% static 'js/routes-inventory.js' %}?v=20260727-route-map-1"></script>
 {% endblock %}

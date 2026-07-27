@@ -1,12 +1,16 @@
 import json
 import logging
+from urllib.parse import urlencode
+
 from django.conf import settings
 from django.shortcuts import render
 from django.http import JsonResponse
 from django.contrib.auth.decorators import login_required, permission_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.views.decorators.http import require_http_methods, require_POST
+from django.views.decorators.gzip import gzip_page
 from django.db import IntegrityError, transaction
+from django.urls import reverse
 from ..models import (
     Ruta, CoordenadaRuta, InventarioTramo, normalizar_estado_puerto_odf,
     normalizar_estado_puerto_odf_con_destino,
@@ -484,6 +488,40 @@ def dashboard_inventario(request):
         ],
         'odf_list': [{'odf': odf['odf'], 'hub_site': odf['hub_site']} for odf in odfs_data],
         'hub_sites': [site['nombre'] for site in sites_disponibles],
+        'capacity_links': {
+            'odfs_disponibles': (
+                f"{reverse('inventario_interno')}?"
+                f"{urlencode({
+                    'capacidad': 'disponible',
+                    **({'site': site_seleccionado} if site_seleccionado else {}),
+                })}"
+            ),
+            'odfs_sin_disponibilidad': (
+                f"{reverse('inventario_interno')}?"
+                f"{urlencode({
+                    'capacidad': 'sin_disponibilidad',
+                    **({'site': site_seleccionado} if site_seleccionado else {}),
+                })}"
+            ),
+            'rutas_disponibles': (
+                f"{reverse('inventario_externo')}?"
+                f"{urlencode({
+                    'tab': 'troncales',
+                    'capacidad': 'disponible',
+                    **({'site': site_seleccionado} if site_seleccionado else {}),
+                    **({'tipo': trazado_seleccionado} if trazado_seleccionado else {}),
+                })}"
+            ),
+            'rutas_atencion': (
+                f"{reverse('inventario_externo')}?"
+                f"{urlencode({
+                    'tab': 'troncales',
+                    'capacidad': 'atencion',
+                    **({'site': site_seleccionado} if site_seleccionado else {}),
+                    **({'tipo': trazado_seleccionado} if trazado_seleccionado else {}),
+                })}"
+            ),
+        },
     }
     return render(request, 'mapa_inventario/dashboard_inventario.html', context)
 
@@ -538,36 +576,87 @@ def inventario_interno(request):
         'estados_odf': opciones('estado'),
     }
     return render(request, 'mapa_inventario/inventario_interno.html', context)
+@gzip_page
 @login_required
 @permission_required('mapas.view_ruta', raise_exception=True)
 def get_datos_inventario(request):
     """
     Retorna JSON con la estructura de rutas segmentadas y su metadata.
     """
-    rutas_db = Ruta.objects.select_related('otu').prefetch_related(
-        'coordenadas', 'tramos_inventario', 'reservas'
-    ).filter(tramos_inventario__isnull=False).distinct()
-    from ..models import HubSite
+    from collections import defaultdict
+    from ..models import HubSite, Reserva
+
+    # El mapa necesita miles de coordenadas, pero no las instancias completas de
+    # Django. Consultar solo las columnas utilizadas evita construir más de
+    # 10 000 modelos en memoria y mantiene exactamente el mismo contrato JSON.
+    rutas = list(
+        Ruta.objects.filter(tramos_inventario__isnull=False)
+        .order_by('nombre')
+        .values('id', 'nombre', 'otu__nombre', 'olt', 'pon')
+        .distinct()
+    )
+    rutas_ids = [ruta['id'] for ruta in rutas]
+
+    coordenadas_por_ruta = defaultdict(list)
+    for coordenada in (
+        CoordenadaRuta.objects.filter(ruta_id__in=rutas_ids)
+        .order_by('ruta_id', 'orden')
+        .values('ruta_id', 'tramo_secuencia', 'latitud', 'longitud')
+    ):
+        coordenadas_por_ruta[coordenada['ruta_id']].append(coordenada)
+
+    campos_tramo = (
+        'ruta_id', 'tramo_secuencia', 'tipo_trazado', 'estado', 'distancia_m',
+        'mufas', 'splitters', 'reservas_m', 'capacidad', 'tipo_fibra',
+        'origen', 'destino', 'hub_site', 'marca_modelo', 'serial', 'odf_nombre',
+    )
+    tramos_por_ruta = defaultdict(list)
+    for tramo in (
+        InventarioTramo.objects.filter(ruta_id__in=rutas_ids)
+        .order_by('ruta_id', 'tramo_secuencia')
+        .values(*campos_tramo)
+    ):
+        tramos_por_ruta[tramo['ruta_id']].append(tramo)
+
+    reservas_por_ruta = defaultdict(list)
+    for reserva in (
+        Reserva.objects.filter(ruta_id__in=rutas_ids)
+        .order_by('ruta_id', 'pk')
+        .values('ruta_id', 'nombre', 'tipo', 'reserva_m', 'latitud', 'longitud')
+    ):
+        reservas_por_ruta[reserva['ruta_id']].append(reserva)
+
+    sites = list(
+        HubSite.objects.filter(latitud__isnull=False, longitud__isnull=False)
+        .order_by('nombre')
+        .values('id', 'nombre', 'latitud', 'longitud')
+    )
     sites_por_nombre = {
-        site.nombre.casefold(): site
-        for site in HubSite.objects.filter(latitud__isnull=False, longitud__isnull=False)
+        site['nombre'].casefold(): site
+        for site in sites
     }
     resultado = []
 
-    for r in rutas_db:
+    for ruta in rutas:
         # Agrupar coordenadas por tramo_secuencia
         tramos_coords = {}
-        for c in r.coordenadas.all():
-            sec = c.tramo_secuencia or 1
+        for coordenada in coordenadas_por_ruta[ruta['id']]:
+            sec = coordenada['tramo_secuencia'] or 1
             if sec not in tramos_coords:
                 tramos_coords[sec] = []
-            tramos_coords[sec].append([float(c.latitud), float(c.longitud)])
+            tramos_coords[sec].append([
+                float(coordenada['latitud']),
+                float(coordenada['longitud']),
+            ])
             
         if not tramos_coords:
             continue # Si no tiene coordenadas, la saltamos
             
         # Generar metadata mapping
-        tramos_metadata = {t.tramo_secuencia: t for t in r.tramos_inventario.all()}
+        tramos_metadata = {
+            tramo['tramo_secuencia']: tramo
+            for tramo in tramos_por_ruta[ruta['id']]
+        }
         tramo_principal = tramos_metadata.get(1)
         
         tramos_list = []
@@ -575,9 +664,9 @@ def get_datos_inventario(request):
             meta = tramos_metadata.get(sec)
             
             def get_val(field):
-                val = getattr(meta, field, None) if meta else None
+                val = meta.get(field) if meta else None
                 if val in [None, '', 'N/A'] and tramo_principal:
-                    val = getattr(tramo_principal, field, None)
+                    val = tramo_principal.get(field)
                 return val
             
             hub_site_name = get_val('hub_site')
@@ -586,14 +675,16 @@ def get_datos_inventario(request):
             hub_site_id = None
             if hub_site_name:
                 hs = sites_por_nombre.get(hub_site_name.casefold())
-                if hs and hs.latitud and hs.longitud:
-                    hub_site_id = hs.pk
-                    hub_site_lat = float(hs.latitud)
-                    hub_site_lon = float(hs.longitud)
+                if hs and hs['latitud'] and hs['longitud']:
+                    hub_site_id = hs['id']
+                    hub_site_lat = float(hs['latitud'])
+                    hub_site_lon = float(hs['longitud'])
 
             tramo_obj = {
                 "tramo_secuencia": sec,
-                "tipo_trazado": (meta.tipo_trazado if meta else "SIN CLASIFICAR") or "SIN CLASIFICAR",
+                "tipo_trazado": (
+                    meta.get('tipo_trazado') if meta else "SIN CLASIFICAR"
+                ) or "SIN CLASIFICAR",
                 "estado": get_val('estado') or "Desconocido",
                 "distancia_m": get_val('distancia_m'),
                 "mufas": get_val('mufas') or 0,
@@ -615,30 +706,30 @@ def get_datos_inventario(request):
             tramos_list.append(tramo_obj)
             
         reservas_list = []
-        for res in r.reservas.all():
+        for reserva in reservas_por_ruta[ruta['id']]:
             reservas_list.append({
-                "nombre": res.nombre,
-                "tipo": res.tipo if res.tipo else "Desconocido",
-                "reserva_m": res.reserva_m if res.reserva_m else 0.0,
-                "lat": float(res.latitud),
-                "lon": float(res.longitud)
+                "nombre": reserva['nombre'],
+                "tipo": reserva['tipo'] if reserva['tipo'] else "Desconocido",
+                "reserva_m": reserva['reserva_m'] if reserva['reserva_m'] else 0.0,
+                "lat": float(reserva['latitud']),
+                "lon": float(reserva['longitud'])
             })
             
         resultado.append({
-            "nombre": r.nombre,
-            "otu": r.otu.nombre if r.otu else "N/A",
-            "olt": r.olt if r.olt else "N/A",
-            "pon": r.pon if r.pon else "N/A",
+            "nombre": ruta['nombre'],
+            "otu": ruta['otu__nombre'] if ruta['otu__nombre'] else "N/A",
+            "olt": ruta['olt'] if ruta['olt'] else "N/A",
+            "pon": ruta['pon'] if ruta['pon'] else "N/A",
             "tramos": tramos_list,
             "reservas_nodos": reservas_list
         })
 
     sites_data = [
         {
-            "id": site.pk,
-            "nombre": site.nombre,
-            "lat": float(site.latitud),
-            "lon": float(site.longitud),
+            "id": site['id'],
+            "nombre": site['nombre'],
+            "lat": float(site['latitud']),
+            "lon": float(site['longitud']),
         }
         for site in sites_por_nombre.values()
     ]

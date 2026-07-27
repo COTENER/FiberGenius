@@ -20,11 +20,24 @@
         return getComputedStyle(document.body).fontFamily;
     }
 
+    function formatDashboardCounts() {
+        const formatter = new Intl.NumberFormat('en-US', {
+            maximumFractionDigits: 0,
+        });
+        document.querySelectorAll('.inv-kpi__body > strong').forEach((node) => {
+            node.textContent = node.textContent.replace(/\d+/g, (value) =>
+                formatter.format(Number(value))
+            );
+        });
+    }
+
     function chartColors() {
         const dark = document.documentElement.getAttribute('data-theme') === 'dark';
         return {
             dark,
-            text: dark ? '#9fb0c7' : '#68778d',
+            primary: dark ? '#f1f5f9' : '#111827',
+            secondary: dark ? '#94a3b8' : '#64748b',
+            text: dark ? '#cbd5e1' : '#68778d',
             border: dark ? '#152238' : '#ffffff',
         };
     }
@@ -36,18 +49,16 @@
             if (!arc) return;
             const rawTotal = Number(chart.canvas.dataset.total || 0);
             const total = Number.isFinite(rawTotal) ? rawTotal : 0;
-            const styles = getComputedStyle(document.documentElement);
-            const primary = styles.getPropertyValue('--fg-text').trim() || '#111827';
-            const secondary = styles.getPropertyValue('--fg-muted').trim() || '#64748b';
+            const colors = chartColors();
             const ctx = chart.ctx;
 
             ctx.save();
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillStyle = primary;
+            ctx.fillStyle = colors.primary;
             ctx.font = `800 17px ${chartFont()}`;
             ctx.fillText(new Intl.NumberFormat('es-PE').format(total), arc.x, arc.y - 5);
-            ctx.fillStyle = secondary;
+            ctx.fillStyle = colors.secondary;
             ctx.font = `600 10px ${chartFont()}`;
             ctx.fillText('Total', arc.x, arc.y + 12);
             ctx.restore();
@@ -645,6 +656,7 @@
     }
 
     function init() {
+        formatDashboardCounts();
         renderCharts();
         initDashboardCustomization();
         const loadMap = () => initDashboardMap();

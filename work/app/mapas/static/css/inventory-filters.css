@@ -20,6 +20,13 @@
         minmax(82px, .42fr);
 }
 
+.inventory-filter-grid--seven {
+    grid-template-columns:
+        minmax(250px, 1.7fr)
+        repeat(5, minmax(112px, .72fr))
+        minmax(82px, .42fr);
+}
+
 .inventory-filter-grid--five,
 .network-panel .inventory-filter-grid--five {
     grid-template-columns:
@@ -104,6 +111,7 @@
 }
 
 @media (max-width: 1180px) {
+    .inventory-filter-grid--seven,
     .inventory-filter-grid--six,
     .inventory-filter-grid--five,
     .network-panel .inventory-filter-grid--five {
@@ -117,6 +125,7 @@
 }
 
 @media (max-width: 860px) {
+    .inventory-filter-grid--seven,
     .inventory-filter-grid--six,
     .inventory-filter-grid--five,
     .network-panel .inventory-filter-grid--five,
@@ -135,6 +144,7 @@
         padding: 13px;
     }
 
+    .inventory-filter-grid--seven,
     .inventory-filter-grid--six,
     .inventory-filter-grid--five,
     .network-panel .inventory-filter-grid--five,

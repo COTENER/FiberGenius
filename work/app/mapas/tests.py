@@ -1,5 +1,6 @@
 import hashlib
 import hmac
+import gzip
 import io
 import json
 import tempfile
@@ -715,6 +716,8 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(payload['data'][0]['puerto'], '1')
         self.assertEqual(payload['summary']['total'], 1)
         self.assertEqual(payload['summary']['ocupados'], 1)
+        self.assertEqual(payload['summary']['top_odfs'][0]['nombre'], 'ODF-GUI')
+        self.assertEqual(payload['summary']['top_odfs'][0]['utilizacion'], 100)
         self.assertIn('/api/inventario/360/puerto/', payload['data'][0]['detail_url'])
 
     def test_puertos_se_filtran_por_ubicacion_fisica(self):
@@ -784,6 +787,33 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(payload['summary']['top_ocupacion'][0]['porcentaje'], 33.3)
         self.assertIn('/api/inventario/360/odf/', payload['data'][0]['detail_url'])
 
+    def test_odfs_se_filtran_por_disponibilidad_calculada(self):
+        _, _, _, odf_sin_disponibilidad = crear_jerarquia_odf(
+            nombre='ODF-SIN-DISPONIBILIDAD',
+            capacidad=2,
+        )
+        odf_sin_disponibilidad.puertos_ocupados = 1
+        odf_sin_disponibilidad.puertos_reservados = 1
+        odf_sin_disponibilidad.puertos_libres = 0
+        odf_sin_disponibilidad.save()
+
+        disponibles = self.client.get(
+            reverse('api_odfs_paginados'),
+            {'capacidad': 'disponible'},
+        ).json()
+        sin_disponibilidad = self.client.get(
+            reverse('api_odfs_paginados'),
+            {'capacidad': 'sin_disponibilidad'},
+        ).json()
+
+        self.assertEqual(disponibles['pagination']['total'], 1)
+        self.assertEqual(disponibles['data'][0]['odf'], 'ODF-GUI')
+        self.assertEqual(sin_disponibilidad['pagination']['total'], 1)
+        self.assertEqual(
+            sin_disponibilidad['data'][0]['odf'],
+            'ODF-SIN-DISPONIBILIDAD',
+        )
+
     def test_mapa_entrega_navegacion_site_odf_con_datos_reales(self):
         response = self.client.get(
             reverse('api_mapa_site_navigation', args=[self.site.pk]),
@@ -811,6 +841,22 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(payload['data'][0]['reservas_nodos'][0]['tipo'], 'MUFA')
         self.assertEqual(payload['data'][0]['reservas_nodos'][0]['nombre'], 'MUFA-GUI')
 
+    def test_json_del_mapa_admite_compresion_sin_cambiar_el_contrato(self):
+        response = self.client.get(
+            reverse('api_datos_inventario'),
+            HTTP_ACCEPT_ENCODING='gzip',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Encoding'], 'gzip')
+        payload = json.loads(gzip.decompress(response.content))
+        self.assertEqual(payload['status'], 'success')
+        self.assertEqual(payload['data'][0]['nombre'], 'TRONCAL-GUI')
+        self.assertEqual(
+            payload['data'][0]['tramos'][0]['coordenadas'],
+            [[-12.046374, -77.042793]],
+        )
+
     def test_troncales_y_tramos_se_entregan_paginados_con_indicadores(self):
         troncales = self.client.get(reverse('api_troncales_paginadas'), {
             'q': 'TRONCAL-GUI',
@@ -823,6 +869,8 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(payload['summary']['total'], 1)
         self.assertEqual(payload['summary']['tramos'], 1)
         self.assertEqual(payload['summary']['fibras'], 1)
+        self.assertEqual(payload['summary']['top_ocupacion'][0]['nombre'], 'TRONCAL-GUI')
+        self.assertEqual(payload['summary']['top_ocupacion'][0]['utilizacion'], 100)
 
         tramos = self.client.get(reverse('api_tramos_paginados'), {
             'ruta': 'TRONCAL-GUI',
@@ -833,6 +881,42 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(payload['pagination']['total'], 1)
         self.assertEqual(payload['data'][0]['secuencia'], 1)
         self.assertEqual(payload['summary']['total'], 1)
+
+    def test_troncales_se_filtran_por_disponibilidad_y_umbral(self):
+        ruta_disponible = Ruta.objects.create(nombre='TRONCAL-DISPONIBLE')
+        InventarioTramo.objects.create(
+            ruta=ruta_disponible,
+            tramo_secuencia=1,
+            hilos_ocupados=8,
+            hilos_libres=2,
+        )
+        ruta_atencion = Ruta.objects.create(nombre='TRONCAL-ATENCION')
+        InventarioTramo.objects.create(
+            ruta=ruta_atencion,
+            tramo_secuencia=1,
+            hilos_ocupados=9,
+            hilos_libres=1,
+        )
+
+        disponibles = self.client.get(
+            reverse('api_troncales_paginadas'),
+            {'capacidad': 'disponible'},
+        ).json()
+        atencion = self.client.get(
+            reverse('api_troncales_paginadas'),
+            {'capacidad': 'atencion'},
+        ).json()
+
+        self.assertEqual(disponibles['pagination']['total'], 2)
+        self.assertEqual(
+            {fila['nombre'] for fila in disponibles['data']},
+            {'TRONCAL-DISPONIBLE', 'TRONCAL-ATENCION'},
+        )
+        self.assertEqual(atencion['pagination']['total'], 2)
+        self.assertEqual(
+            {fila['nombre'] for fila in atencion['data']},
+            {'TRONCAL-DISPONIBLE', 'TRONCAL-ATENCION'},
+        )
 
     def test_fibras_y_reservas_incluyen_indicadores_filtrados(self):
         fibras = self.client.get(reverse('api_fibras_paginadas'), {
@@ -889,9 +973,27 @@ class GuiOperativaTests(TestCase):
         self.assertContains(fibras, 'Reservas')
         self.assertContains(rutas, 'network-inventory.css')
         self.assertContains(fibras, 'network-inventory.css')
+        self.assertContains(rutas, 'leaflet-1.9.4.css')
+        self.assertContains(rutas, 'leaflet-1.9.4.js')
         self.assertContains(fibras, reverse('api_panel_troncal'))
         self.assertContains(fibras, 'id="network-inspector"')
         self.assertContains(fibras, 'id="network-route-map"')
+        for response in (rutas, fibras):
+            self.assertContains(response, 'network-inspector-card--summary')
+            self.assertContains(response, 'network-inspector-card--ranking')
+            self.assertContains(response, 'network-inspector-card--detail')
+
+        odfs = self.client.get(reverse('inventario_interno'))
+        puertos = self.client.get(reverse('planta_interna'))
+        for response in (odfs, puertos):
+            self.assertContains(response, 'network-inspector-card--summary')
+            self.assertContains(response, 'network-inspector-card--ranking')
+            self.assertContains(response, 'network-inspector-card--detail')
+
+        script_odf = (
+            Path(__file__).resolve().parent / 'static' / 'js' / 'odf-inventory.js'
+        ).read_text(encoding='utf-8')
+        self.assertNotIn('!pendingOdfId && index === 0', script_odf)
 
         estilos = (
             Path(__file__).resolve().parent / 'static' / 'css' / 'network-inventory.css'
@@ -900,6 +1002,8 @@ class GuiOperativaTests(TestCase):
             '.network-panel .odf-kpis { grid-template-columns: repeat(5, minmax(0, 1fr)); }',
             estilos,
         )
+        self.assertIn('--odf-line: var(--ports-line', estilos)
+        self.assertIn('.network-map-empty', estilos)
 
         exportacion = self.client.get(
             reverse('exportar_inventario', args=['troncales', 'xlsx']),
@@ -935,9 +1039,9 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, reverse('api_odfs_paginados'))
         self.assertContains(response, reverse('exportar_inventario', args=['odfs', 'xlsx']))
-        self.assertContains(response, 'odf-analysis-layout')
+        self.assertContains(response, 'odf-analysis-main')
         self.assertContains(response, 'odf-occupancy-ranking')
-        self.assertContains(response, 'odf-analysis-toggle')
+        self.assertContains(response, 'network-inspector-toggle')
         self.assertNotContains(response, 'odf-utilization-card')
         self.assertNotContains(response, 'odf_list')
 
@@ -1028,8 +1132,19 @@ class GuiOperativaTests(TestCase):
         self.assertContains(response, 'data-dashboard-widget="fibers"')
         self.assertContains(
             response,
-            f'href="{reverse("planta_externa")}?tab=fibras"',
-            count=2,
+            f'href="{reverse("inventario_interno")}?capacidad=disponible"',
+        )
+        self.assertContains(
+            response,
+            f'href="{reverse("inventario_interno")}?capacidad=sin_disponibilidad"',
+        )
+        self.assertContains(
+            response,
+            f'href="{reverse("inventario_externo")}?tab=troncales&amp;capacidad=disponible"',
+        )
+        self.assertContains(
+            response,
+            f'href="{reverse("inventario_externo")}?tab=troncales&amp;capacidad=atencion"',
         )
         self.assertContains(
             response,
@@ -1054,7 +1169,7 @@ class GuiOperativaTests(TestCase):
 
     def test_filtros_de_inventario_comparten_patron_visual(self):
         casos = (
-            (reverse('inventario_interno'), 'inventory-filter-grid--six'),
+            (reverse('inventario_interno'), 'inventory-filter-grid--seven'),
             (reverse('planta_interna'), 'inventory-filter-grid--six'),
             (reverse('inventario_externo'), 'inventory-filter-grid--five'),
             (reverse('planta_externa'), 'inventory-filter-grid--four'),
@@ -1191,6 +1306,10 @@ class SeguridadYRendimientoTests(TestCase):
         self.assertIn('.slice(0, 8)', script)
         self.assertIn('aria-activedescendant', script)
         self.assertIn('selectRoute(item.ruta)', script)
+        self.assertIn('preferCanvas: true', script)
+        self.assertIn('function syncTramosVisibility()', script)
+        self.assertIn('state.routeLayerEntries.forEach', script)
+        self.assertEqual(script.count('renderTramos();'), 1)
         self.assertIn('updateRouteSelectionOverlay', script)
         self.assertIn("const selectionHaloColor", script)
         self.assertIn("color: polyline._routeBaseColor", script)

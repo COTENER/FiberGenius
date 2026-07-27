@@ -122,7 +122,7 @@ def _resumen_puertos(queryset):
         & ~Q(patchcord__exact="")
         & ~Q(patchcord__iexact="No")
     )
-    return queryset.aggregate(
+    resumen = queryset.aggregate(
         total=Count("id"),
         ocupados=Count("id", filter=Q(estado_puerto="Ocupado")),
         libres=Count("id", filter=Q(estado_puerto="Libre")),
@@ -130,6 +130,29 @@ def _resumen_puertos(queryset):
         con_patchcord=Count("id", filter=con_patchcord),
         sin_destino=Count("id", filter=sin_destino),
     )
+    ranking = []
+    for fila in queryset.order_by().values("odf_obj_id", "odf_obj__odf").annotate(
+        total=Count("id"),
+        ocupados=Count("id", filter=Q(estado_puerto="Ocupado")),
+        reservados=Count("id", filter=Q(estado_puerto="Reservado")),
+    ):
+        utilizados = fila["ocupados"] + fila["reservados"]
+        ranking.append({
+            "id": fila["odf_obj_id"],
+            "nombre": fila["odf_obj__odf"],
+            "total": fila["total"],
+            "utilizados": utilizados,
+            "utilizacion": round(
+                utilizados / fila["total"] * 100,
+                1,
+            ) if fila["total"] else 0,
+        })
+    ranking.sort(
+        key=lambda fila: (fila["utilizacion"], fila["utilizados"], fila["nombre"]),
+        reverse=True,
+    )
+    resumen["top_odfs"] = ranking[:5]
+    return resumen
 
 
 def _serializar_puertos(puertos):
@@ -161,6 +184,7 @@ def _filtro_odfs(request):
     sala = request.GET.get("sala", "").strip()[:100]
     rack = request.GET.get("rack", "").strip()[:100]
     estado = request.GET.get("estado", "").strip()[:50]
+    capacidad = request.GET.get("capacidad", "").strip().lower()
     if termino:
         queryset = queryset.filter(
             Q(odf__icontains=termino)
@@ -177,6 +201,29 @@ def _filtro_odfs(request):
         queryset = queryset.filter(rack=rack)
     if estado:
         queryset = queryset.filter(estado=estado)
+    if capacidad in {"disponible", "sin_disponibilidad"}:
+        ids = []
+        for odf in queryset.values(
+            "id",
+            "capacidad_puertos",
+            "puertos_ocupados",
+            "puertos_libres",
+            "puertos_reservados",
+        ):
+            declarada = odf["capacidad_puertos"] or 0
+            ocupados = odf["puertos_ocupados"] or 0
+            libres_declarados = odf["puertos_libres"] or 0
+            reservados = odf["puertos_reservados"] or 0
+            total = max(declarada, ocupados + libres_declarados + reservados)
+            if not total:
+                continue
+            libres = max(total - ocupados - reservados, 0)
+            if (
+                capacidad == "disponible" and libres > 0
+                or capacidad == "sin_disponibilidad" and libres == 0
+            ):
+                ids.append(odf["id"])
+        queryset = queryset.filter(pk__in=ids)
     return queryset.order_by("hub_site", "sala", "rack", "odf", "id")
 
 
@@ -242,12 +289,54 @@ def _serializar_odfs(odfs):
     ]
 
 
+def _estadisticas_capacidad_rutas(ids_ruta):
+    ids_ruta = set(ids_ruta)
+    estadisticas = {
+        ruta_id: {"registros": 0, "ocupados": 0, "reservados": 0, "libres": 0}
+        for ruta_id in ids_ruta
+    }
+    if not ids_ruta:
+        return estadisticas
+
+    for ruta_id, estado_fibra in InventarioFibra.objects.filter(
+        ruta_id__in=ids_ruta
+    ).values_list("ruta_id", "estado"):
+        datos = estadisticas[ruta_id]
+        datos["registros"] += 1
+        normalizado = (estado_fibra or "").lower()
+        if normalizado in {"ocupado", "ocupada"}:
+            datos["ocupados"] += 1
+        elif normalizado in {"reservado", "reservada"}:
+            datos["reservados"] += 1
+        elif normalizado == "libre":
+            datos["libres"] += 1
+
+    ids_sin_fibras = [
+        ruta_id
+        for ruta_id, datos in estadisticas.items()
+        if not datos["registros"]
+    ]
+    for fila in (
+        InventarioTramo.objects.filter(ruta_id__in=ids_sin_fibras)
+        .values("ruta_id")
+        .annotate(
+            ocupados=Sum("hilos_ocupados"),
+            libres=Sum("hilos_libres"),
+        )
+    ):
+        datos = estadisticas[fila["ruta_id"]]
+        datos["ocupados"] = fila["ocupados"] or 0
+        datos["libres"] = fila["libres"] or 0
+    return estadisticas
+
+
 def _filtro_troncales(request):
     queryset = Ruta.objects.filter(tramos_inventario__isnull=False)
     termino = request.GET.get("q", "").strip()[:150]
     tipo = request.GET.get("tipo", "").strip()[:50]
     estado = request.GET.get("estado", "").strip()[:50]
     site = request.GET.get("site", "").strip()[:150]
+    capacidad = request.GET.get("capacidad", "").strip().lower()
     if termino:
         queryset = queryset.filter(
             Q(nombre__icontains=termino)
@@ -265,7 +354,27 @@ def _filtro_troncales(request):
         queryset = queryset.filter(
             Q(tramos_inventario__hub_site__iexact=site)
             | Q(tramos_inventario__origen__iexact=site)
+            | Q(tramos_inventario__destino__iexact=site)
         )
+    if capacidad in {"disponible", "atencion"}:
+        ids_ruta = set(queryset.values_list("pk", flat=True).distinct())
+        estadisticas = _estadisticas_capacidad_rutas(ids_ruta)
+
+        ids_capacidad = []
+        for ruta_id, datos in estadisticas.items():
+            total = datos["ocupados"] + datos["reservados"] + datos["libres"]
+            if not total:
+                continue
+            utilizacion = round(
+                (datos["ocupados"] + datos["reservados"]) / total * 100,
+                1,
+            )
+            if (
+                capacidad == "disponible" and datos["libres"] > 0
+                or capacidad == "atencion" and 80 <= utilizacion < 100
+            ):
+                ids_capacidad.append(ruta_id)
+        queryset = queryset.filter(pk__in=ids_capacidad)
     return (
         queryset.distinct()
         .prefetch_related("tramos_inventario")
@@ -334,14 +443,35 @@ def _serializar_troncales(troncales):
 
 def _resumen_troncales(queryset):
     base = Ruta.objects.filter(pk__in=queryset.values("pk"))
+    ids_ruta = list(base.values_list("pk", flat=True))
     distancia = base.aggregate(total=Sum("distancia_m"))["total"] or 0
-    return {
+    resumen = {
         "total": base.count(),
         "distancia_km": round(distancia / 1000, 2),
         "tramos": InventarioTramo.objects.filter(ruta__in=base).count(),
         "fibras": InventarioFibra.objects.filter(ruta__in=base).count(),
         "reservas": Reserva.objects.filter(ruta__in=base).count(),
     }
+    nombres = dict(base.values_list("pk", "nombre"))
+    ranking = []
+    for ruta_id, datos in _estadisticas_capacidad_rutas(ids_ruta).items():
+        total = datos["ocupados"] + datos["reservados"] + datos["libres"]
+        utilizados = datos["ocupados"] + datos["reservados"]
+        if not total:
+            continue
+        ranking.append({
+            "id": ruta_id,
+            "nombre": nombres.get(ruta_id, "Ruta"),
+            "total": total,
+            "utilizados": utilizados,
+            "utilizacion": round(utilizados / total * 100, 1),
+        })
+    ranking.sort(
+        key=lambda fila: (fila["utilizacion"], fila["utilizados"], fila["nombre"]),
+        reverse=True,
+    )
+    resumen["top_ocupacion"] = ranking[:5]
+    return resumen
 
 
 def _filtro_tramos(request):
@@ -398,13 +528,41 @@ def _resumen_tramos(queryset):
         soterrados=Count("id", filter=Q(tipo_trazado__iexact="SOTERRADO")),
         reservas_m=Sum("reservas_m"),
     )
-    return {
+    resultado = {
         "total": resumen["total"] or 0,
         "distancia_km": round((resumen["distancia_m"] or 0) / 1000, 2),
         "aereos": resumen["aereos"] or 0,
         "soterrados": resumen["soterrados"] or 0,
         "reservas_m": round(resumen["reservas_m"] or 0, 2),
     }
+    ranking = []
+    for fila in queryset.values(
+        "ruta_id",
+        "ruta__nombre",
+        "tramo_secuencia",
+        "hilos_ocupados",
+        "hilos_libres",
+    ):
+        ocupados = fila["hilos_ocupados"] or 0
+        libres = fila["hilos_libres"] or 0
+        total = ocupados + libres
+        if not total:
+            continue
+        ranking.append({
+            "id": fila["ruta_id"],
+            "nombre": (
+                f'{fila["ruta__nombre"]} · Tramo {fila["tramo_secuencia"]}'
+            ),
+            "total": total,
+            "utilizados": ocupados,
+            "utilizacion": round(ocupados / total * 100, 1),
+        })
+    ranking.sort(
+        key=lambda fila: (fila["utilizacion"], fila["utilizados"], fila["nombre"]),
+        reverse=True,
+    )
+    resultado["top_ocupacion"] = ranking[:5]
+    return resultado
 
 
 def _filtro_fibras(request):

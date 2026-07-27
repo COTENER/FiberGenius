@@ -50,6 +50,10 @@
     --network-inspector-width: 286px;
     transition: padding-right .22s ease;
 }
+#ports-workbench {
+    --odf-line: var(--ports-line, #dbe3ee);
+    --odf-blue: var(--ports-blue, #0f67df);
+}
 .network-inspector {
     position: fixed;
     z-index: 35;
@@ -148,6 +152,27 @@
     font-size: 8px;
     font-weight: 750;
     text-decoration: none;
+}
+.network-inspector-card--summary .network-state-summary,
+.network-inspector-card--summary .network-reserve-summary {
+    min-height: 112px;
+    box-sizing: border-box;
+}
+.network-inspector-card--summary .network-reserve-summary {
+    align-content: center;
+}
+.network-inspector-card--ranking > :is(.network-ranking, .network-type-list) {
+    min-height: 174px;
+    box-sizing: border-box;
+    align-content: start;
+}
+.network-inspector-card--detail {
+    min-height: 194px;
+}
+.network-inspector-card--detail > .network-route-empty {
+    min-height: 153px;
+    box-sizing: border-box;
+    align-content: center;
 }
 .network-state-summary {
     display: grid;
@@ -357,6 +382,37 @@
     border-radius: 9px;
     background: var(--bg-muted, #eef2f7);
 }
+.network-route-map.is-empty {
+    display: grid;
+    place-items: center;
+    padding: 18px;
+}
+.network-map-empty {
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    max-width: 210px;
+    color: var(--text-tertiary);
+    text-align: center;
+}
+.network-map-empty > span {
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    color: var(--odf-blue);
+    background: rgba(15, 103, 223, .08);
+    font-size: 17px;
+}
+.network-map-empty strong {
+    color: var(--text-secondary);
+    font-size: 9px;
+}
+.network-map-empty small {
+    font-size: 8px;
+    line-height: 1.45;
+}
 .network-route-map .leaflet-control-attribution { font-size: 6px; }
 .network-route-meta {
     display: grid;
@@ -520,6 +576,7 @@
 @media (min-width: 1181px) {
     #fiber-workbench,
     #routes-workbench,
+    #odf-workbench,
     #ports-workbench {
         grid-template-columns: minmax(0, 1fr) var(--network-inspector-width);
         column-gap: 15px;
@@ -528,6 +585,7 @@
 
     #fiber-workbench:has(.network-inspector.is-collapsed),
     #routes-workbench:has(.network-inspector.is-collapsed),
+    #odf-workbench:has(.network-inspector.is-collapsed),
     #ports-workbench:has(.network-inspector.is-collapsed) {
         grid-template-columns: minmax(0, 1fr) 46px;
         padding-right: 0;
@@ -538,6 +596,30 @@
     #fiber-workbench > .network-tabs,
     #routes-workbench > .network-tabs {
         grid-column: 1 / -1;
+    }
+
+    #odf-workbench > .odf-heading,
+    #odf-workbench > .odf-kpis {
+        grid-column: 1 / -1;
+    }
+
+    #odf-workbench > .odf-analysis-main {
+        display: contents;
+    }
+
+    #odf-workbench > .odf-analysis-main > .odf-filter-card {
+        grid-column: 1;
+        grid-row: 3;
+    }
+
+    #odf-workbench > .odf-analysis-main > .odf-table-card {
+        grid-column: 1;
+        grid-row: 4;
+    }
+
+    #odf-workbench > .network-inspector {
+        grid-column: 2;
+        grid-row: 3 / span 2;
     }
 
     #fiber-workbench > .network-panel,
@@ -595,12 +677,14 @@
 
     #fiber-workbench > .network-inspector,
     #routes-workbench > .network-inspector,
+    #odf-workbench > .network-inspector,
     #ports-workbench > .network-inspector {
         position: sticky;
         top: calc(var(--topbar-height) + 15px);
         right: auto;
         bottom: auto;
         width: 100%;
+        height: calc(100vh - var(--topbar-height) - 30px);
         max-height: calc(100vh - var(--topbar-height) - 30px);
         align-self: start;
     }

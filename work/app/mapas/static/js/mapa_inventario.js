@@ -23,6 +23,7 @@
         mostrarTodasRutas: true,
         rutasPolylines: {}, // { 'Nombre Ruta': [polyline1, polyline2, ...] }
         rutasHalos: {},     // { 'Nombre Ruta': [halo1, halo2, ...] }
+        routeLayerEntries: [],
         selectedRuta: null,
         renderedSelectionRuta: null,
         siteMarkers: {},
@@ -96,7 +97,8 @@
         const mapElement = document.getElementById('map');
         state.map = L.map('map', {
             zoomControl: false,
-            attributionControl: false
+            attributionControl: false,
+            preferCanvas: true
         }).setView([-12.046374, -77.042793], 6); // Centro general de Perú como default
 
         L.control.zoom({ position: 'bottomright' }).addTo(state.map);
@@ -342,7 +344,7 @@
             state.filters['SOTERRADO'] = document.getElementById('chk-soterrado').checked;
             state.filters['HIBRIDO'] = document.getElementById('chk-hibrido') ? document.getElementById('chk-hibrido').checked : true;
             state.filters['DESCONOCIDO'] = document.getElementById('chk-desconocido').checked;
-            renderTramos();
+            syncTramosVisibility();
         };
 
         $('#chk-aereo, #chk-soterrado, #chk-hibrido, #chk-desconocido').on('change', updateFilters);
@@ -359,7 +361,7 @@
                 resetRouteSearchInput();
                 closeRoutePanel();
             }
-            renderTramos();
+            syncTramosVisibility();
         });
     }
 
@@ -578,7 +580,7 @@
         const allRoutes = document.getElementById('chk-rutas-global');
         if (allRoutes) allRoutes.checked = true;
         closeRoutePanel();
-        if (needsRender) renderTramos();
+        if (needsRender) syncTramosVisibility();
         else applyRouteFocusStyles();
         if (settings.fit !== false) fitBoundsToData();
     }
@@ -617,7 +619,7 @@
         if (clear) clear.style.display = 'flex';
         setRouteSearchOpen(false);
 
-        if (needsRender) renderTramos();
+        if (needsRender) syncTramosVisibility();
         else applyRouteFocusStyles();
         if (settings.fit !== false) fitRouteBounds(ruta.nombre);
 
@@ -1047,6 +1049,15 @@
                 : { color: '#0ea5e9', weight: 11, opacity: 0 };
 
             (state.rutasHalos[nombreRuta] || []).forEach((halo) => {
+                const routeIsVisible = halo._routePolyline &&
+                    state.layerGroups.tramos.hasLayer(halo._routePolyline);
+                if (isSelected && routeIsVisible) {
+                    if (!state.layerGroups.tramos.hasLayer(halo)) {
+                        halo.addTo(state.layerGroups.tramos);
+                    }
+                } else if (state.layerGroups.tramos.hasLayer(halo)) {
+                    state.layerGroups.tramos.removeLayer(halo);
+                }
                 halo.setStyle(haloStyle);
                 if (isSelected && halo.bringToBack) halo.bringToBack();
             });
@@ -1139,6 +1150,26 @@
         }).addTo(state.layerGroups.routeSelection);
     }
 
+    function syncTramosVisibility() {
+        state.routeLayerEntries.forEach((entry) => {
+            const routeIsVisible = state.mostrarTodasRutas ||
+                state.selectedRuta === entry.rutaNombre;
+            const shouldShow = Boolean(state.filters[entry.category]) && routeIsVisible;
+            const hasPolyline = state.layerGroups.tramos.hasLayer(entry.polyline);
+
+            if (shouldShow && !hasPolyline) {
+                entry.polyline.addTo(state.layerGroups.tramos);
+            } else if (!shouldShow && hasPolyline) {
+                state.layerGroups.tramos.removeLayer(entry.polyline);
+            }
+            if (!shouldShow && state.layerGroups.tramos.hasLayer(entry.halo)) {
+                state.layerGroups.tramos.removeLayer(entry.halo);
+            }
+        });
+        applyRouteFocusStyles();
+        renderReservasVisibilidad();
+    }
+
     function renderTramos() {
         state.layerGroups.tramos.clearLayers();
         
@@ -1152,25 +1183,18 @@
         state.selectedExternalMarker = null;
         state.rutasPolylines = {};
         state.rutasHalos = {};
+        state.routeLayerEntries = [];
 
         state.data.forEach(ruta => {
-            // Lógica de visibilidad: 
-            // Mostramos la ruta si:
-            // 1. Es la ruta seleccionada específicamente por el buscador.
-            // 2. No hay ninguna ruta seleccionada y el toggle de "Mostrar Todas las Rutas" está activado.
-            const debeMostrarRuta = state.mostrarTodasRutas || state.selectedRuta === ruta.nombre;
-
             state.rutasPolylines[ruta.nombre] = [];
             state.rutasHalos[ruta.nombre] = [];
 
             ruta.tramos.forEach(tramo => {
                 const cat = getFilterCat(tramo.tipo_trazado);
-                
-                // Si la categoría está filtrada por los checkboxes de trazado, no la procesamos
-                if (!state.filters[cat]) return;
-                
+
                 if (tramo.coordenadas && tramo.coordenadas.length > 0) {
-                    // Contorno/Perímetro (Halo) invisible inicialmente
+                    // El halo conserva el mismo efecto, pero solo se renderiza
+                    // durante hover o cuando la ruta está seleccionada.
                     const halo = L.polyline(tramo.coordenadas, {
                         color: '#0ea5e9', // Light blue halo
                         weight: 11,
@@ -1185,6 +1209,7 @@
                         lineJoin: 'round'
                     });
                     polyline._routeBaseColor = getColorForTrazado(tramo.tipo_trazado);
+                    halo._routePolyline = polyline;
 
                     polyline.on('click', function(e) {
                         L.DomEvent.stopPropagation(e);
@@ -1193,22 +1218,25 @@
                     
                     polyline.on('mouseover', function() {
                         const isDimmed = state.selectedRuta && state.selectedRuta !== ruta.nombre;
+                        if (!state.layerGroups.tramos.hasLayer(halo)) {
+                            halo.addTo(state.layerGroups.tramos);
+                        }
                         halo.setStyle({ opacity: isDimmed ? 0.22 : 0.45 });
+                        if (halo.bringToBack) halo.bringToBack();
                         this.setStyle({ weight: 7, opacity: 1 });
                     });
                     polyline.on('mouseout', function() {
                         applyRouteFocusStyles();
                     });
 
-                    // SOLO añadimos al mapa si cumple la condición de visibilidad
-                    if (debeMostrarRuta) {
-                        halo.addTo(state.layerGroups.tramos);
-                        polyline.addTo(state.layerGroups.tramos);
-                    }
-
                     state.rutasPolylines[ruta.nombre].push(polyline);
                     state.rutasHalos[ruta.nombre].push(halo);
-                    
+                    state.routeLayerEntries.push({
+                        rutaNombre: ruta.nombre,
+                        category: cat,
+                        polyline,
+                        halo
+                    });
                 }
             });
 
@@ -1267,10 +1295,7 @@
         });
         
         renderSiteMarkers();
-        applyRouteFocusStyles();
-
-        // Evaluar qué reservas mostrar luego de cargar todas
-        renderReservasVisibilidad();
+        syncTramosVisibility();
     }
 
     function renderSiteMarkers() {

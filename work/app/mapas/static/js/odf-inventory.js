@@ -11,6 +11,7 @@
         room: document.getElementById('odf-room-filter'),
         rack: document.getElementById('odf-rack-filter'),
         status: document.getElementById('odf-status-filter'),
+        capacity: document.getElementById('odf-capacity-filter'),
         pageSize: document.getElementById('odf-page-size'),
         clear: document.getElementById('odf-clear'),
         body: document.getElementById('odf-body'),
@@ -43,14 +44,14 @@
     const inspectorSummary = document.getElementById('odf-inspector-summary');
     const inspectorEmpty = document.getElementById('odf-inspector-empty');
     const inspectorDetail = document.getElementById('odf-inspector-detail');
-    const analysisToggle = document.getElementById('odf-analysis-toggle');
-    const analysisReopen = document.getElementById('odf-analysis-reopen');
+    const inspector = document.getElementById('network-inspector');
+    const inspectorToggle = document.getElementById('network-inspector-toggle');
 
-    function setAnalysisCollapsed(collapsed) {
-        root.classList.toggle('is-analysis-collapsed', collapsed);
-        analysisToggle?.setAttribute('aria-expanded', String(!collapsed));
-        analysisToggle?.setAttribute('aria-label', collapsed ? 'Mostrar análisis lateral' : 'Ocultar análisis lateral');
-        if (analysisReopen) analysisReopen.hidden = !collapsed;
+    function setInspectorCollapsed(collapsed) {
+        if (!inspector || !inspectorToggle) return;
+        inspector.classList.toggle('is-collapsed', collapsed);
+        inspectorToggle.setAttribute('aria-expanded', String(!collapsed));
+        inspectorToggle.setAttribute('aria-label', collapsed ? 'Expandir panel' : 'Contraer panel');
     }
 
     function putText(id, value) {
@@ -69,32 +70,40 @@
             target.appendChild(empty);
             return;
         }
-        items.forEach((item, index) => {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = `odf-ranking-item ${item.porcentaje >= 90 ? 'is-critical' : (item.porcentaje >= 75 ? 'is-warning' : '')}`.trim();
-            button.title = `Filtrar ${item.odf}`;
-            const position = document.createElement('b');
-            position.textContent = String(index + 1);
-            const description = document.createElement('span');
+        items.forEach((item) => {
+            const rankingItem = document.createElement('div');
+            rankingItem.className = 'network-ranking__item';
+            rankingItem.tabIndex = 0;
+            rankingItem.setAttribute('role', 'button');
+            rankingItem.setAttribute('aria-label', `Filtrar ${item.odf}`);
+            const description = document.createElement('div');
+            description.className = 'network-ranking__label';
             const name = document.createElement('em');
             name.textContent = item.odf;
-            const bar = document.createElement('span');
-            bar.className = 'odf-ranking-bar';
+            name.title = item.odf;
+            const percent = document.createElement('b');
+            percent.textContent = `${percentFormat.format(item.porcentaje || 0)}%`;
+            description.append(name, percent);
+            const bar = document.createElement('div');
+            bar.className = 'network-ranking__bar';
             const fill = document.createElement('i');
             fill.style.width = `${Math.max(0, Math.min(100, Number(item.porcentaje || 0)))}%`;
             bar.appendChild(fill);
-            description.append(name, bar);
-            const percent = document.createElement('strong');
-            percent.textContent = `${percentFormat.format(item.porcentaje || 0)}%`;
-            button.append(position, description, percent);
-            button.addEventListener('click', () => {
+            rankingItem.append(description, bar);
+            const select = () => {
                 pendingOdfId = Number(item.id);
                 elements.query.value = item.odf;
                 page = 1;
                 load();
+            };
+            rankingItem.addEventListener('click', select);
+            rankingItem.addEventListener('keydown', event => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    select();
+                }
             });
-            target.appendChild(button);
+            target.appendChild(rankingItem);
         });
     }
 
@@ -155,6 +164,7 @@
         row?.classList.add('is-selected');
         inspectorEmpty.hidden = true;
         inspectorDetail.hidden = false;
+        setInspectorCollapsed(false);
         const title = document.createElement('h3');
         title.textContent = odf.odf;
         const status = document.createElement('span');
@@ -205,6 +215,7 @@
             ['sala', elements.room.value],
             ['rack', elements.rack.value],
             ['estado', elements.status.value],
+            ['capacidad', elements.capacity.value],
         ].forEach(([name, value]) => { if (value) params.set(name, value); });
         params.set('page_size', elements.pageSize.value);
         if (includePage) params.set('page', String(page));
@@ -265,7 +276,7 @@
             elements.body.appendChild(row);
             return;
         }
-        rows.forEach((odf, index) => {
+        rows.forEach((odf) => {
             const row = document.createElement('tr');
             row.dataset.odfId = String(odf.id);
             row.tabIndex = 0;
@@ -310,7 +321,7 @@
             actionsCell.appendChild(actions);
             row.appendChild(actionsCell);
             elements.body.appendChild(row);
-            if ((pendingOdfId && Number(odf.id) === pendingOdfId) || (!pendingOdfId && index === 0)) {
+            if (pendingOdfId && Number(odf.id) === pendingOdfId) {
                 selectOdf(odf, row);
                 pendingOdfId = null;
             }
@@ -553,8 +564,9 @@
     elements.editorForm?.addEventListener('submit', saveEditor);
     document.getElementById('odf-editor-close')?.addEventListener('click', closeEditor);
     document.getElementById('odf-editor-cancel')?.addEventListener('click', closeEditor);
-    analysisToggle?.addEventListener('click', () => setAnalysisCollapsed(true));
-    analysisReopen?.addEventListener('click', () => setAnalysisCollapsed(false));
+    inspectorToggle?.addEventListener('click', () => {
+        setInspectorCollapsed(!inspector.classList.contains('is-collapsed'));
+    });
 
     const incoming = new URLSearchParams(window.location.search);
     elements.query.value = incoming.get('q') || '';
@@ -562,7 +574,8 @@
     elements.room.value = incoming.get('sala') || '';
     elements.rack.value = incoming.get('rack') || '';
     elements.status.value = incoming.get('estado') || '';
+    elements.capacity.value = incoming.get('capacidad') || '';
     if (['10', '25', '50', '100', '200'].includes(incoming.get('page_size'))) elements.pageSize.value = incoming.get('page_size');
-    setAnalysisCollapsed(window.innerWidth <= 1700);
+    setInspectorCollapsed(window.innerWidth <= 1180);
     load();
 })();

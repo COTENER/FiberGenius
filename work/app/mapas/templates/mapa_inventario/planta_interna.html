@@ -6,7 +6,7 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/puertos-odf.css' %}?v=20260721-2">
-<link rel="stylesheet" href="{% static 'css/network-inventory.css' %}?v=20260723-panel-alignment-1">
+<link rel="stylesheet" href="{% static 'css/network-inventory.css' %}?v=20260727-panel-fixes-1">
 <link rel="stylesheet" href="{% static 'css/inventory-filters.css' %}?v=20260723-1">
 {% endblock %}
 
@@ -101,15 +101,19 @@
 
     <aside id="network-inspector" class="network-inspector" aria-label="Resumen contextual de puertos ODF">
         <header class="network-inspector__header">
-            <div class="network-inspector__title"><strong>Puertos ODF</strong><span>Disponibilidad y conexión seleccionada</span></div>
+            <div class="network-inspector__title"><strong>Análisis de puertos</strong><span>Resumen filtrado y detalle seleccionado</span></div>
             <button id="network-inspector-toggle" type="button" aria-label="Contraer panel" aria-expanded="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg></button>
         </header>
         <div class="network-inspector__body">
-            <section class="network-inspector-card">
+            <section class="network-inspector-card network-inspector-card--summary">
                 <header><div><strong>Distribución por estado</strong><span>Según los filtros activos</span></div></header>
                 <div id="ports-inspector-summary" class="network-state-summary"></div>
             </section>
-            <section class="network-inspector-card">
+            <section class="network-inspector-card network-inspector-card--ranking">
+                <header><div><strong>ODF con mayor ocupación</strong><span>Top 5 del inventario filtrado</span></div></header>
+                <div id="ports-occupancy-ranking" class="network-ranking"></div>
+            </section>
+            <section class="network-inspector-card network-inspector-card--detail">
                 <header><div><strong>Puerto seleccionado</strong><span>Jerarquía y conexión óptica</span></div></header>
                 <div id="ports-inspector-empty" class="network-route-empty"><span>▦</span><strong>Ningún puerto seleccionado</strong><p>Haz clic en una fila para ver la conexión sin abrir otra ventana.</p></div>
                 <div id="ports-inspector-detail" class="network-asset-detail" hidden></div>
@@ -162,5 +166,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/planta-interna-paginada.js' %}?v=20260723-contextual-1"></script>
+<script src="{% static 'js/planta-interna-paginada.js' %}?v=20260727-unified-inspector-1"></script>
 {% endblock %}

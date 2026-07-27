@@ -5,8 +5,8 @@
 {% block page_title %}Inventario / ODF{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/odf-inventory.css' %}?v=20260723-analysis-4">
-<link rel="stylesheet" href="{% static 'css/network-inventory.css' %}?v=20260723-analysis-2">
+<link rel="stylesheet" href="{% static 'css/odf-inventory.css' %}?v=20260727-unified-inspector-1">
+<link rel="stylesheet" href="{% static 'css/network-inventory.css' %}?v=20260727-panel-fixes-1">
 <link rel="stylesheet" href="{% static 'css/inventory-filters.css' %}?v=20260723-1">
 {% endblock %}
 
@@ -52,15 +52,15 @@
         <article class="odf-kpi odf-kpi--orange"><span class="odf-kpi__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21V8l8-4v17M12 10h8v11M8 10v.01M8 14v.01M8 18v.01M16 14v.01M16 18v.01"/></svg></span><div><span>Sites con ODF</span><strong id="odf-stat-sites">0</strong><small>Ubicaciones cubiertas</small></div></article>
     </section>
 
-    <div class="odf-analysis-layout">
     <main class="odf-analysis-main">
     <section class="odf-filter-card inventory-filter-card" aria-label="Filtros de ODF">
-        <form id="odf-filters" class="odf-filters inventory-filter-grid inventory-filter-grid--six" role="search">
+        <form id="odf-filters" class="odf-filters inventory-filter-grid inventory-filter-grid--seven" role="search">
             <label class="odf-search"><span class="sr-only">Buscar</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="odf-query" name="q" type="search" placeholder="Buscar ODF, rack, sala o conector" autocomplete="off"></label>
             <label class="odf-filter-field"><span>Site</span><select id="odf-site-filter" name="site"><option value="">Todos</option>{% for value in sites_odf %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
             <label class="odf-filter-field"><span>Sala</span><select id="odf-room-filter" name="sala"><option value="">Todas</option>{% for value in salas_odf %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
             <label class="odf-filter-field"><span>Rack</span><select id="odf-rack-filter" name="rack"><option value="">Todos</option>{% for value in racks_odf %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
             <label class="odf-filter-field"><span>Estado</span><select id="odf-status-filter" name="estado"><option value="">Todos</option>{% for value in estados_odf %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
+            <label class="odf-filter-field"><span>Disponibilidad</span><select id="odf-capacity-filter" name="capacidad"><option value="">Todas</option><option value="disponible">Con puertos disponibles</option><option value="sin_disponibilidad">Sin puertos disponibles</option></select></label>
             <label class="odf-filter-field odf-filter-field--size"><span>Filas</span><select id="odf-page-size" name="page_size"><option value="10">10</option><option value="25" selected>25</option><option value="50">50</option><option value="100">100</option><option value="200">200</option></select></label>
             <div class="odf-filter-actions"><button class="odf-btn odf-btn--primary" type="submit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16l-6 7v5l-4 2v-7Z"/></svg>Aplicar filtros</button><button id="odf-clear" class="odf-btn" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 1 0 2-5.3L4 9M4 4v5h5"/></svg>Limpiar</button></div>
             <p id="odf-export-status" class="odf-export-status" role="status" aria-live="polite"></p>
@@ -74,27 +74,27 @@
     </section>
 
     </main>
-    <aside class="odf-analysis-rail" aria-label="Análisis contextual de ODF">
-        <header class="odf-analysis-rail__toolbar">
-            <div><strong>Análisis ODF</strong><span>Ocupación y detalle seleccionado</span></div>
-            <button id="odf-analysis-toggle" type="button" aria-label="Ocultar análisis lateral" aria-expanded="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg></button>
+    <aside id="network-inspector" class="network-inspector" aria-label="Análisis contextual de ODF">
+        <header class="network-inspector__header">
+            <div class="network-inspector__title"><strong>Análisis de ODF</strong><span>Resumen filtrado y detalle seleccionado</span></div>
+            <button id="network-inspector-toggle" type="button" aria-label="Contraer panel" aria-expanded="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg></button>
         </header>
-        <section class="odf-rail-card">
-            <header><strong>Análisis de ocupación</strong><span>Distribución global filtrada</span></header>
-            <div id="odf-inspector-summary" class="network-state-summary"></div>
-        </section>
-        <section class="odf-rail-card">
-            <header><strong>ODF con mayor ocupación</strong><span>Porcentaje de capacidad utilizada</span></header>
-            <div id="odf-occupancy-ranking" class="odf-occupancy-ranking"></div>
-        </section>
-        <section class="odf-rail-card odf-rail-card--detail">
-            <header><strong>Detalle del ODF seleccionado</strong><span>Ubicación y capacidad</span></header>
-            <div id="odf-inspector-empty" class="network-route-empty"><span>▦</span><strong>Ningún ODF seleccionado</strong><p>Haz clic en una fila para revisar su capacidad y abrir sus puertos.</p></div>
-            <div id="odf-inspector-detail" class="network-asset-detail" hidden></div>
-        </section>
+        <div class="network-inspector__body">
+            <section class="network-inspector-card network-inspector-card--summary">
+                <header><div><strong>Distribución por estado</strong><span>Según los filtros activos</span></div></header>
+                <div id="odf-inspector-summary" class="network-state-summary"></div>
+            </section>
+            <section class="network-inspector-card network-inspector-card--ranking">
+                <header><div><strong>ODF con mayor ocupación</strong><span>Top 5 del inventario filtrado</span></div></header>
+                <div id="odf-occupancy-ranking" class="network-ranking"></div>
+            </section>
+            <section class="network-inspector-card network-inspector-card--detail">
+                <header><div><strong>ODF seleccionado</strong><span>Ubicación y capacidad</span></div></header>
+                <div id="odf-inspector-empty" class="network-route-empty"><span>▦</span><strong>Ningún ODF seleccionado</strong><p>Haz clic en una fila para revisar su capacidad y abrir sus puertos.</p></div>
+                <div id="odf-inspector-detail" class="network-asset-detail" hidden></div>
+            </section>
+        </div>
     </aside>
-    <button id="odf-analysis-reopen" class="odf-analysis-reopen" type="button" aria-label="Mostrar análisis lateral" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></button>
-    </div>
 
     {% if perms.mapas.add_inventarioodf or perms.mapas.change_inventarioodf %}
     <dialog id="odf-editor" class="odf-dialog">
@@ -134,5 +134,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/odf-inventory.js' %}?v=20260723-analysis-3"></script>
+<script src="{% static 'js/odf-inventory.js' %}?v=20260727-unified-inspector-1"></script>
 {% endblock %}

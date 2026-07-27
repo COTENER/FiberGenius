@@ -50,19 +50,90 @@
             list.appendChild(item);
         });
         target.replaceChildren(donut, list);
+        renderRouteRanking(summary?.top_ocupacion || []);
+    }
+
+    function renderRouteRanking(items) {
+        const target = document.getElementById('routes-occupancy-ranking');
+        if (!target) return;
+        target.replaceChildren();
+        if (!Array.isArray(items) || !items.length) {
+            const empty = document.createElement('p');
+            empty.className = 'network-inspector-empty';
+            empty.textContent = 'No hay capacidad registrada con los filtros actuales.';
+            target.appendChild(empty);
+            return;
+        }
+        items.forEach((route) => {
+            const item = document.createElement('div');
+            item.className = 'network-ranking__item';
+            item.tabIndex = 0;
+            item.setAttribute('role', 'button');
+            item.setAttribute('aria-label', `Ver ${route.nombre}`);
+            const label = document.createElement('div');
+            label.className = 'network-ranking__label';
+            const name = document.createElement('span');
+            name.textContent = route.nombre;
+            name.title = route.nombre;
+            const value = document.createElement('b');
+            value.textContent = `${number.format(route.utilizacion || 0)}%`;
+            label.append(name, value);
+            const bar = document.createElement('div');
+            bar.className = 'network-ranking__bar';
+            const fill = document.createElement('i');
+            fill.style.width = `${Math.min(100, Number(route.utilizacion || 0))}%`;
+            bar.appendChild(fill);
+            item.append(label, bar);
+            const select = () => selectRoute(route.id);
+            item.addEventListener('click', select);
+            item.addEventListener('keydown', event => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    select();
+                }
+            });
+            target.appendChild(item);
+        });
+    }
+
+    function renderMapEmpty(target, title, detail) {
+        target.classList.add('is-empty');
+        const empty = document.createElement('div');
+        empty.className = 'network-map-empty';
+        const icon = document.createElement('span');
+        icon.textContent = '⌁';
+        const heading = document.createElement('strong');
+        heading.textContent = title;
+        const description = document.createElement('small');
+        description.textContent = detail;
+        empty.append(icon, heading, description);
+        target.replaceChildren(empty);
     }
 
     function drawRouteMap(payload) {
         const target = document.getElementById('network-route-map');
-        if (!target || !window.L) return;
+        if (!target) return;
         if (routeMap) routeMap.remove();
         routeMap = null;
         target.replaceChildren();
+        target.classList.remove('is-empty');
         const coordinates = (payload.coordenadas || [])
             .map(point => [Number(point[0]), Number(point[1])])
             .filter(point => Number.isFinite(point[0]) && Number.isFinite(point[1]));
+        if (!window.L) {
+            renderMapEmpty(
+                target,
+                'Mapa no disponible',
+                'No se pudo iniciar el visor cartográfico. Recarga la página e inténtalo nuevamente.',
+            );
+            return;
+        }
         if (coordinates.length < 2) {
-            target.textContent = 'La troncal no tiene geometría disponible.';
+            renderMapEmpty(
+                target,
+                'Sin trazado georreferenciado',
+                'La ruta no tiene suficientes coordenadas para dibujar su recorrido.',
+            );
             return;
         }
         routeMap = L.map(target, { zoomControl: true, attributionControl: true, scrollWheelZoom: false, preferCanvas: true });
@@ -352,13 +423,22 @@
     function selectTab(name) {
         const tab = tabs.find((item) => item.dataset.tab === name) || tabs[0];
         tabs.forEach((item) => { const active = item === tab; item.setAttribute('aria-selected', active); document.getElementById(item.getAttribute('aria-controls')).hidden = !active; });
-        document.getElementById('network-inspector-title').textContent = tab.dataset.tab === 'tramos' ? 'Resumen de tramos' : 'Resumen de troncales';
+        document.getElementById('network-inspector-title').textContent = tab.dataset.tab === 'tramos' ? 'Análisis de tramos' : 'Análisis de troncales';
         document.getElementById('routes-context-title').textContent = tab.dataset.tab === 'tramos' ? 'Tipos de trazado' : 'Capacidad consolidada';
+        document.getElementById('routes-ranking-title').textContent = tab.dataset.tab === 'tramos' ? 'Tramos con mayor ocupación' : 'Troncales con mayor ocupación';
         if (!tables[tab.dataset.tab].loaded) tables[tab.dataset.tab].load(); const url = new URL(location.href); url.searchParams.set('tab', tab.dataset.tab); history.replaceState({}, '', url);
     }
     tabs.forEach((tab) => tab.addEventListener('click', () => selectTab(tab.dataset.tab)));
-    const incoming = new URLSearchParams(location.search); const query = incoming.get('q'); if (query) root.querySelectorAll('[data-filter="q"]').forEach((input) => { input.value = query; });
+    const incoming = new URLSearchParams(location.search);
+    root.querySelectorAll('[data-filter]').forEach((input) => {
+        const value = incoming.get(input.dataset.filter);
+        if (value !== null && [...input.options || []].some((option) => option.value === value)) {
+            input.value = value;
+        } else if (value !== null && input.matches('input')) {
+            input.value = value;
+        }
+    });
     inspectorToggle?.addEventListener('click', () => setInspectorCollapsed(!inspector.classList.contains('is-collapsed')));
-    if (window.innerWidth <= 1700) setInspectorCollapsed(true);
+    setInspectorCollapsed(window.innerWidth <= 1180);
     selectTab(incoming.get('tab') || 'troncales');
 })();

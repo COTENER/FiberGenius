@@ -34,6 +34,7 @@
         review: document.getElementById('ports-stat-review'),
     };
     const numberFormat = new Intl.NumberFormat('es-PE');
+    const percentFormat = new Intl.NumberFormat('es-PE', { maximumFractionDigits: 1 });
     let page = 1;
     let abortController = null;
     let debounceTimer = null;
@@ -82,6 +83,54 @@
                 list.appendChild(item);
             });
         inspectorSummary.replaceChildren(donut, list);
+        renderPortRanking(summary?.top_odfs || []);
+    }
+
+    function renderPortRanking(items) {
+        const target = document.getElementById('ports-occupancy-ranking');
+        if (!target) return;
+        target.replaceChildren();
+        if (!Array.isArray(items) || !items.length) {
+            const empty = document.createElement('p');
+            empty.className = 'network-inspector-empty';
+            empty.textContent = 'No hay ODF con los filtros actuales.';
+            target.appendChild(empty);
+            return;
+        }
+        items.forEach((odf) => {
+            const item = document.createElement('div');
+            item.className = 'network-ranking__item';
+            item.tabIndex = 0;
+            item.setAttribute('role', 'button');
+            item.setAttribute('aria-label', `Filtrar ${odf.nombre}`);
+            const label = document.createElement('div');
+            label.className = 'network-ranking__label';
+            const name = document.createElement('span');
+            name.textContent = odf.nombre;
+            name.title = odf.nombre;
+            const value = document.createElement('b');
+            value.textContent = `${percentFormat.format(odf.utilizacion || 0)}%`;
+            label.append(name, value);
+            const bar = document.createElement('div');
+            bar.className = 'network-ranking__bar';
+            const fill = document.createElement('i');
+            fill.style.width = `${Math.min(100, Number(odf.utilizacion || 0))}%`;
+            bar.appendChild(fill);
+            item.append(label, bar);
+            const select = () => {
+                elements.query.value = odf.nombre;
+                page = 1;
+                load();
+            };
+            item.addEventListener('click', select);
+            item.addEventListener('keydown', event => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    select();
+                }
+            });
+            target.appendChild(item);
+        });
     }
 
     function detailField(label, value) {
@@ -100,6 +149,7 @@
         row?.classList.add('is-selected');
         inspectorEmpty.hidden = true;
         inspectorDetail.hidden = false;
+        setInspectorCollapsed(false);
         const title = document.createElement('h3');
         title.textContent = `${port.odf} · Puerto ${port.puerto}`;
         const status = document.createElement('span');
@@ -136,7 +186,6 @@
         });
         actions.append(asset, edit);
         inspectorDetail.replaceChildren(title, status, grid, actions);
-        if (window.innerWidth <= 1700) setInspectorCollapsed(false);
     }
 
     function exportFilename(response) {
@@ -496,6 +545,6 @@
     elements.rack.value = incoming.get('rack') || '';
     if (['10', '25', '50', '100', '200'].includes(incoming.get('page_size'))) elements.pageSize.value = incoming.get('page_size');
     inspectorToggle?.addEventListener('click', () => setInspectorCollapsed(!inspector.classList.contains('is-collapsed')));
-    if (window.innerWidth <= 1700) setInspectorCollapsed(true);
+    setInspectorCollapsed(window.innerWidth <= 1180);
     load();
 })();
