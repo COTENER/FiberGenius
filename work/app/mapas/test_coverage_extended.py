@@ -13,6 +13,7 @@ from django.contrib.auth.models import Group, Permission, User
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.cache import cache
+from django.db import DatabaseError
 from django.http import HttpResponse
 from django.test import RequestFactory, TestCase, override_settings
 from django.urls import reverse
@@ -882,7 +883,7 @@ class _CursorAnaliticoFalso:
         elif 'FROM mon_otdr_eventos_geo' in texto:
             if self.fallar_opticos and 'event_test_status' in texto and not self.fallo_consumido:
                 self.fallo_consumido = True
-                raise RuntimeError('columna opcional ausente')
+                raise DatabaseError('columna opcional ausente')
             self.resultado = [('RUTA-A', None, 2, 1, 2, 3, 4, 5, 15)]
         elif 'SELECT DISTINCT COALESCE(r.nombre, a.route_name)' in texto:
             self.resultado = [('RUTA-ANALITICA',)]
@@ -998,7 +999,7 @@ class _CursorGeograficoFalso:
     def execute(self, consulta, parametros=None):
         self.executadas.append((consulta, parametros))
         if self.fallar_alter and str(consulta).strip().startswith('ALTER TABLE'):
-            raise RuntimeError('columna existente')
+            raise DatabaseError('columna existente')
 
     def executemany(self, consulta, datos):
         self.multiples.extend(datos)
