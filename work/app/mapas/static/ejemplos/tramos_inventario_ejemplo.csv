@@ -1,0 +1,4 @@
+ruta,tramo_secuencia,codigo_tramo,origen,destino,tipo_trazado,estado_tramo,distancia_documentada_m
+RUTA-DEMO-01,1,T001,Hub Independencia,Camara 01,AEREO,ACTIVO,680
+RUTA-DEMO-01,2,T002,Camara 01,Hub Colina,SOTERRADO,ACTIVO,520
+RUTA-DEMO-02,1,T001,Hub Recoleta,ER-200,AEREO,ACTIVO,940

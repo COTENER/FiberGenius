@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Grupos{% endblock %}
+{% block page_title %}Grupos{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <h1 class="page-header__title">Gestión de Grupos y Roles</h1>
+        <p class="page-header__subtitle">{{ grupos|length }} grupos configurados</p>
+    </div>
+    <a class="btn btn--primary btn-modal-form" data-titulo="Nuevo Rol Operativo" href="{% url 'crear_grupo' %}">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><path d="m9 12 2 2 4-4"/></svg>
+        Nuevo Grupo
+    </a>
+</div>
+
+<div class="table-wrapper">
+    <table class="table">
+        <thead>
+            <tr><th>Grupo</th><th>Permisos</th><th>Usuarios</th><th>Acciones</th></tr>
+        </thead>
+        <tbody>
+            {% for grupo in grupos %}
+            <tr>
+                <td><strong>{{ grupo.name }}</strong></td>
+                <td><span class="badge badge--info">{{ grupo.permissions.count }} permisos</span></td>
+                <td><span class="badge badge--accent">{{ grupo.user_set.count }} usuarios</span></td>
+                <td>
+                    <div style="display:flex;gap:var(--space-1);">
+                        <a href="{% url 'editar_grupo' grupo.pk %}" class="btn btn--ghost btn--icon btn-modal-form" data-titulo="Editar Rol: {{ grupo.name }}" title="Editar" style="background:var(--bg-hover); padding:6px; border-radius:6px;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+                        </a>
+                        <form method="post" action="{% url 'eliminar_grupo' grupo.pk %}" style="display:inline;" onsubmit="return confirm('¿Seguro que quieres borrar este grupo?');">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn--ghost btn--icon" title="Eliminar" style="color:#ef4444; background:var(--bg-hover); padding:6px; border-radius:6px;">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+                            </button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="4" class="empty-state" style="padding:var(--space-8);">No hay grupos creados.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{# ─── Dynamic Form Modal ─── #}
+<div id="modal-dinamico" class="modal-overlay" style="display:none; z-index: 1050; background: rgba(15,23,42,0.85);">
+    <div class="modal-dialog" style="max-width: 900px; width: 95%; padding: 0; background: var(--bg-surface);">
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 20px 24px; border-bottom: 1px solid var(--border-color);">
+            <h3 class="modal-dialog__title" id="modal-titulo" style="margin:0; font-size: 1.15rem; color: var(--text-primary); font-weight: 600;">Formulario</h3>
+            <button id="cerrar-modal-dinamico" style="background:none; border:none; font-size:1.5rem; cursor:pointer; color:var(--text-secondary); display:flex; align-items:center; transition: color 0.2s;">&times;</button>
+        </div>
+        <div id="modal-contenido" style="padding: 24px; max-height: 75vh; overflow-y: auto; text-align: left;">
+            <!-- Contenido AJAX irá aquí -->
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'vendor/jquery/jquery-3.6.0.min.js' %}"></script>
+<script>
+    $(document).ready(function() {
+        // ─── Dynamic Modal Logic (jQuery Delegation) ───
+        $(document).on('click', '.btn-modal-form', function(e) {
+            e.preventDefault();
+            const btn = $(this);
+            const url = btn.attr('href');
+            const titulo = btn.data('titulo') || 'Formulario';
+            
+            $('#modal-titulo').text(titulo);
+            $('#modal-contenido').html('<div style="text-align:center; padding: 3rem; color: var(--text-secondary);"><div style="width: 30px; height: 30px; border: 3px solid var(--border-color); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 1rem;"></div>Cargando panel de roles...</div>');
+            $('#modal-dinamico').css('display', 'flex');
+            
+            cargarFormularioGrupos(url);
+        });
+
+        $('#cerrar-modal-dinamico').on('click', function() {
+            $('#modal-dinamico').hide();
+            $('#modal-contenido').empty();
+        });
+
+        $(document).on('click', '.modal-overlay', function(e) {
+            if ($(e.target).closest('.modal-dialog').length === 0) {
+                $('#cerrar-modal-dinamico').click();
+            }
+        });
+    });
+
+    function cargarFormularioGrupos(url) {
+        fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(res => res.text())
+            .then(html => {
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = html;
+                const modalContent = tempDiv.querySelector('#modal-ajax-content') || tempDiv;
+                
+                $('#modal-contenido').html(modalContent.innerHTML);
+
+                // Manejo de envío de formulario vía AJAX
+                $('#modal-contenido form').on('submit', function(e) {
+                    e.preventDefault();
+                    let $form = $(this);
+                    let $btnSubmit = $form.find('.btn-submit-form');
+                    
+                    if ($btnSubmit.length) {
+                        $btnSubmit.prop('disabled', true).html('<span style="opacity:0.7">Guardando...</span>');
+                    }
+
+                    $.ajax({
+                        url: url,
+                        type: 'POST',
+                        data: $form.serialize(),
+                        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                        success: function(response) {
+                            if (response.success) {
+                                window.location.reload(); // Recargar para ver el nuevo rol
+                            } else if (response.html) {
+                                // Fallo de validación u renderizado parcial retornado
+                                $('#modal-contenido').html(response.html);
+                                bindFormSubmit(url); // Re-bind eventos
+                            } else {
+                                // Default fallback: Recargar todo el documento si no hay flag AJAX en la vista, aunque idealmente sí debería haber si enviamos ajax post
+                                const htmlResp = $(response).find('#modal-ajax-content').html();
+                                if(htmlResp) {
+                                    $('#modal-contenido').html(htmlResp);
+                                } else {
+                                    window.location.reload();
+                                }
+                            }
+                        },
+                        error: function() {
+                            alert("Ha ocurrido un error al procesar el formulario.");
+                            if ($btnSubmit.length) $btnSubmit.prop('disabled', false).text('Guardar Grupo');
+                        }
+                    });
+                });
+            })
+            .catch(error => {
+                $('#modal-contenido').html('<div style="text-align:center; padding: 2rem; color: #ef4444;">Error de red. No se pudo cargar el formulario.</div>');
+                console.error("Error cargando formulario:", error);
+            });
+    }
+
+    // Helper re-binder
+    function bindFormSubmit(url) {
+        $('#modal-contenido form').on('submit', function(e) { /* misma logica */ });
+    }
+</script>
+<style>
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+</style>
+{% endblock %}

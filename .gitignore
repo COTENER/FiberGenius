@@ -28,10 +28,11 @@ staticfiles_pruebas/
 # Operational exports and internal validation artifacts
 datos_v5/
 reportes_validacion/
+**/imagenes-OTUs/
+work/app/mapas/static/img/01*.png
 
 # Editors and OS
 .idea/
 .vscode/
 .DS_Store
 Thumbs.db
-

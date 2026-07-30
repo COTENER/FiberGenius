@@ -1,0 +1,2920 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Monitoreo de Alarmas en Vivo{% endblock %}
+{% block content_class %}main-content--full{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'vendor/leaflet/leaflet-1.9.4.css' %}" crossorigin="" />
+<link rel="stylesheet" href="{% static 'vendor/leaflet-measure/leaflet-measure-3.1.0.css' %}" />
+<link rel="stylesheet" href="{% static 'css/mapa-components.css' %}">
+<style>
+    /* Ampliar ancho y centrar contenido del popup de ruta en mapa en vivo */
+    .ruta-popup-wrapper {
+        width: 360px !important;
+    }
+    .ruta-popup-wrapper .leaflet-popup-content {
+        width: 360px !important;
+        margin: 0 !important;
+    }
+
+    /* ── NOC Layout ── */
+    .mapa-wrapper {
+        display: flex;
+        flex-direction: column;
+        height: calc(100vh - var(--topbar-height));
+        overflow: hidden;
+    }
+
+    /* ── NOC Topbar Stats ── */
+    .noc-stats-bar {
+        display: flex;
+        align-items: stretch;
+        gap: var(--space-3);
+        padding: var(--space-3) var(--space-4);
+        background: var(--bg-surface);
+        border-bottom: 1px solid var(--border-color);
+        overflow-x: auto;
+        flex-shrink: 0;
+    }
+    .noc-card {
+        flex: 1;
+        min-width: 180px;
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        padding: var(--space-3) var(--space-4);
+        border-radius: var(--radius-lg);
+        border: 1px solid rgba(0,0,0,0.06);
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        background: var(--bg-surface);
+        transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+    }
+    .noc-card:hover {
+        transform: translateY(-1px);
+        box-shadow: var(--shadow-md);
+    }
+    .noc-card--routes   { background: rgba(59, 130, 246, 0.05); border-color: rgba(59, 130, 246, 0.2); }
+    .noc-card--critical { background: rgba(239, 68, 68, 0.05); border-color: rgba(239, 68, 68, 0.2); }
+    .noc-card--recent   { background: rgba(245, 158, 11, 0.05); border-color: rgba(245, 158, 11, 0.2); }
+    .noc-card--status   { background: rgba(16, 185, 129, 0.05); border-color: rgba(16, 185, 129, 0.2); }
+
+    .noc-card__icon {
+        width: 44px; height: 44px; border-radius: var(--radius-md);
+        display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .noc-card__icon svg { width: 22px; height: 22px; }
+    .noc-card--routes   .noc-card__icon { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
+    .noc-card--critical .noc-card__icon { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+    .noc-card--recent   .noc-card__icon { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+    .noc-card--status   .noc-card__icon { background: rgba(16, 185, 129, 0.15); color: #10b981; }
+
+    .noc-card__info { display: flex; flex-direction: column; gap: 2px; }
+    .noc-card__value { font-size: var(--text-xl); font-weight: 700; color: var(--text-primary); line-height: 1.1; }
+    .noc-card__label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-tertiary); font-weight: 600; }
+
+    /* ── Estilos para Buscador Flotante de Rutas (SaaS Moderno) ── */
+    .floating-search-control {
+        transition: all 0.25s ease-in-out;
+    }
+    .floating-search-control .search-input-group:focus-within {
+        border-color: #3b82f6 !important;
+        box-shadow: 0 4px 20px rgba(59, 130, 246, 0.15) !important;
+        transform: translateY(-1px);
+    }
+    .search-suggestion-item {
+        padding: 10px 14px;
+        font-size: 13px;
+        font-weight: 550;
+        color: #334155;
+        cursor: pointer;
+        transition: background 0.15s ease, color 0.15s ease;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        border-bottom: 1px solid #f1f5f9;
+    }
+    .search-suggestion-item:last-child {
+        border-bottom: none;
+    }
+    .search-suggestion-item:hover {
+        background: rgba(59, 130, 246, 0.05);
+        color: #3b82f6;
+    }
+    
+    [data-theme="dark"] .floating-search-control .search-input-group {
+        background: rgba(30, 41, 59, 0.95) !important;
+        border-color: #334155 !important;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4) !important;
+    }
+    [data-theme="dark"] .floating-search-control #route-search-input {
+        color: #f1f5f9 !important;
+    }
+    [data-theme="dark"] .floating-search-control #route-search-suggestions {
+        background: #1e293b !important;
+        border-color: #334155 !important;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5) !important;
+    }
+    [data-theme="dark"] .search-suggestion-item {
+        color: #cbd5e1;
+        border-color: #334155;
+    }
+    [data-theme="dark"] .search-suggestion-item:hover {
+        background: rgba(96, 165, 250, 0.08);
+        color: #60a5fa;
+    }
+
+    /* ── Estilos para el botón de maximizar flotante (SaaS Moderno) ── */
+    .map-maximize-btn:hover {
+        background: #ffffff !important;
+        color: #3b82f6 !important;
+        border-color: #3b82f6 !important;
+        box-shadow: 0 4px 20px rgba(59, 130, 246, 0.18) !important;
+        transform: translateY(-1px);
+    }
+    
+    [data-theme="dark"] .map-maximize-btn {
+        background: rgba(30, 41, 59, 0.95) !important;
+        border-color: #334155 !important;
+        color: #cbd5e1 !important;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4) !important;
+    }
+    
+    [data-theme="dark"] .map-maximize-btn:hover {
+        background: #1e293b !important;
+        color: #60a5fa !important;
+        border-color: #60a5fa !important;
+        box-shadow: 0 4px 20px rgba(96, 165, 250, 0.25) !important;
+    }
+
+    /* Estilos CSS para el modo fullscreen del mapa */
+    body.fullscreen-map-mode .sidebar {
+        display: none !important;
+    }
+    body.fullscreen-map-mode .main-wrapper {
+        margin-left: 0 !important;
+        padding-left: 0 !important;
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+    body.fullscreen-map-mode .topbar {
+        display: none !important;
+    }
+    body.fullscreen-map-mode .main-content {
+        padding: 0 !important;
+        margin: 0 !important;
+        height: 100vh !important;
+        max-height: 100vh !important;
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+    body.fullscreen-map-mode .mapa-wrapper {
+        height: 100vh !important;
+        width: 100% !important;
+        max-width: 100% !important;
+    }
+    body.fullscreen-map-mode .noc-stats-bar {
+        display: none !important;
+    }
+    body.fullscreen-map-mode .map-panel {
+        display: none !important;
+    }
+
+    /* ── NOC Body ── */
+    .noc-body {
+        display: flex;
+        flex: 1;
+        overflow: hidden;
+        position: relative;
+    }
+
+    /* ── Left Sidebar Panel ── */
+    .map-panel {
+        width: 320px;
+        background: var(--bg-surface);
+        border-right: 1px solid var(--border-color);
+        display: flex;
+        flex-direction: column;
+        flex-shrink: 0;
+        z-index: 10;
+        overflow: hidden;
+    }
+    .map-panel__header {
+        padding: var(--space-3) var(--space-4);
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: rgba(0,0,0,0.02);
+    }
+    .map-panel__title {
+        font-size: var(--text-sm);
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-primary);
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+    }
+    /* ── Map Panel Tabs ── */
+    .map-panel__tabs {
+        display: flex;
+        background: var(--bg-surface);
+        border-bottom: 1px solid var(--border-color);
+        padding: 4px;
+        gap: 4px;
+    }
+    .map-panel__tab {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 8px var(--space-2);
+        font-family: var(--font-family);
+        font-size: var(--text-xs);
+        font-weight: 600;
+        color: var(--text-secondary);
+        background: transparent;
+        border: none;
+        border-radius: var(--radius-sm);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+    }
+    .map-panel__tab:hover {
+        color: var(--text-primary);
+        background: rgba(0, 0, 0, 0.02);
+    }
+    .map-panel__tab--active {
+        color: #ef4444;
+        background: rgba(239, 68, 68, 0.06);
+    }
+    .map-panel__tab--history.map-panel__tab--active {
+        color: #10b981;
+        background: rgba(16, 185, 129, 0.06);
+    }
+    .map-panel__tab-badge {
+        font-size: 9px;
+        font-weight: 700;
+        padding: 1px 5px;
+        border-radius: 10px;
+        background: rgba(0, 0, 0, 0.06);
+        color: var(--text-secondary);
+        transition: all var(--transition-fast);
+    }
+    .map-panel__tab--active .map-panel__tab-badge {
+        background: #ef4444;
+        color: #fff;
+    }
+    .map-panel__tab--history.map-panel__tab--active .map-panel__tab-badge {
+        background: #10b981;
+        color: #fff;
+    }
+    .alarm-card--cleared {
+        border-left: 4px solid #10b981 !important;
+    }
+    .alarm-card__tag--cleared {
+        background: rgba(16, 185, 129, 0.12) !important;
+        color: #10b981 !important;
+    }
+    .map-panel__list {
+        flex: 1;
+        overflow-y: auto;
+        padding: var(--space-2);
+    }
+    .alarm-card {
+        padding: var(--space-3);
+        border-radius: var(--radius-md);
+        border: 1px solid var(--border-color);
+        background: var(--bg-surface);
+        margin-bottom: var(--space-2);
+        cursor: pointer;
+        transition: transform var(--transition-fast), border-color var(--transition-fast);
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        box-shadow: var(--shadow-sm);
+    }
+    .alarm-card:hover {
+        transform: translateX(2px);
+        border-color: #ef4444;
+        background: rgba(239, 68, 68, 0.02);
+    }
+    .alarm-card--critical { border-left: 4px solid #ef4444; }
+    .alarm-card--warning { border-left: 4px solid #f59e0b; }
+    .alarm-card--info { border-left: 4px solid #3b82f6; }
+    .alarm-card__header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-weight: 700;
+        font-size: var(--text-sm);
+        color: var(--text-primary);
+    }
+    .alarm-card__tag {
+        font-size: 9px;
+        padding: 2px 6px;
+        border-radius: var(--radius-sm);
+        text-transform: uppercase;
+        font-weight: 700;
+        background: rgba(239, 68, 68, 0.12);
+        color: #ef4444;
+    }
+    .alarm-card__tag--warning {
+        background: rgba(245, 158, 11, 0.12) !important;
+        color: #f59e0b !important;
+    }
+    .alarm-card__tag--info {
+        background: rgba(59, 130, 246, 0.12) !important;
+        color: #3b82f6 !important;
+    }
+    .alarm-card__details {
+        font-size: var(--text-xs);
+        color: var(--text-secondary);
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+    .alarm-card__time {
+        font-size: 10px;
+        color: var(--text-tertiary);
+        margin-top: 4px;
+        text-align: right;
+    }
+
+    /* Empty state */
+    .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        padding: var(--space-6) var(--space-4);
+        color: var(--text-tertiary);
+        gap: var(--space-3);
+        height: 100%;
+    }
+    .empty-state svg { width: 48px; height: 48px; opacity: 0.5; color: #10b981; }
+
+    /* ── collapsible SaaS Filter Panel ── */
+    .filter-panel {
+        position: relative;
+        width: 260px;
+        background: var(--bg-surface);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-right: 1px solid var(--border-color);
+        display: flex;
+        flex-direction: column;
+        flex-shrink: 0;
+        z-index: 1010; /* Aumentado a 1010 para estar siempre por encima de las capas del mapa de Leaflet */
+        transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s ease;
+        overflow: visible;
+        box-sizing: border-box;
+    }
+    
+    [data-theme="light"] .filter-panel {
+        background: rgba(255, 255, 255, 0.75) !important;
+    }
+    [data-theme="dark"] .filter-panel {
+        background: rgba(15, 23, 42, 0.75) !important;
+    }
+
+    .filter-panel--collapsed {
+        width: 0 !important;
+        border-right: none !important;
+    }
+
+    .filter-panel__toggle {
+        position: absolute;
+        left: 100%; /* Centered on the boundary line always! */
+        top: 50%;
+        transform: translate(-50%, -50%);
+        width: 28px;
+        height: 56px;
+        background: #ffffff; /* High contrast background */
+        border: 1px solid var(--border-color);
+        border-radius: 30px; /* Pill shape */
+        box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        z-index: 999; /* Ensure it stays above map and everything */
+        color: #475569;
+        transition: all var(--transition-fast);
+        outline: none;
+        padding: 0;
+    }
+    
+    [data-theme="dark"] .filter-panel__toggle {
+        background: #1e293b;
+        color: #cbd5e1;
+    }
+    
+    .filter-panel__toggle:hover {
+        color: #ffffff;
+        background: #3b82f6; /* Modern brand blue on hover */
+        border-color: #3b82f6;
+        box-shadow: 0 4px 20px rgba(59, 130, 246, 0.4);
+    }
+
+    .filter-panel__toggle svg {
+        width: 14px;
+        height: 14px;
+        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* Arrow icon behavior */
+    .filter-panel--collapsed .filter-panel__toggle svg {
+        transform: rotate(0deg);
+    }
+    .filter-panel:not(.filter-panel--collapsed) .filter-panel__toggle svg {
+        transform: rotate(180deg);
+    }
+
+    .filter-panel__content {
+        padding: var(--space-4);
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-4);
+        width: 260px; /* Ancho fijo interno para evitar saltos de línea en colapso */
+        box-sizing: border-box;
+        transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    
+    .filter-panel--collapsed .filter-panel__content {
+        opacity: 0;
+        pointer-events: none;
+    }
+
+    .filter-panel__header {
+        font-size: var(--text-sm);
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-primary);
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        padding-bottom: var(--space-2);
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .filter-panel__header svg {
+        width: 16px;
+        height: 16px;
+        color: var(--text-secondary);
+    }
+
+    .filter-group {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+    }
+
+    .filter-group__label {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-tertiary);
+        font-weight: 700;
+    }
+
+    .filter-buttons {
+        display: flex;
+        gap: var(--space-2);
+    }
+
+    .filter-btn {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 8px var(--space-2);
+        font-family: var(--font-family);
+        font-size: var(--text-xs);
+        font-weight: 600;
+        color: var(--text-secondary);
+        background: var(--bg-surface);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+    }
+
+    .filter-btn:hover {
+        color: var(--text-primary);
+        border-color: var(--text-secondary);
+    }
+
+    .filter-btn--active[data-status="Active"] {
+        color: #ef4444 !important;
+        background: rgba(239, 68, 68, 0.06) !important;
+        border-color: rgba(239, 68, 68, 0.4) !important;
+    }
+
+    .filter-btn--active[data-status="Resolved"] {
+        color: #10b981 !important;
+        background: rgba(16, 185, 129, 0.06) !important;
+        border-color: rgba(16, 185, 129, 0.4) !important;
+    }
+
+    .filter-btn__dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--text-tertiary);
+        transition: all var(--transition-fast);
+    }
+
+    .filter-btn--active[data-status="Active"] .filter-btn__dot {
+        background: #ef4444;
+        box-shadow: 0 0 4px #ef4444;
+    }
+
+    .filter-btn--active[data-status="Resolved"] .filter-btn__dot {
+        background: #10b981;
+        box-shadow: 0 0 4px #10b981;
+    }
+
+    /* Calendario e inputs de fecha */
+    .filter-date-input-wrapper {
+        position: relative;
+        display: flex;
+        align-items: center;
+    }
+
+    .filter-date-input {
+        width: 100%;
+        padding: 8px 12px;
+        font-family: var(--font-family);
+        font-size: var(--text-xs);
+        color: var(--text-primary);
+        background: var(--bg-surface);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        outline: none;
+        transition: border-color var(--transition-fast);
+        box-sizing: border-box;
+    }
+
+    .filter-date-input:focus {
+        border-color: #3b82f6;
+    }
+
+    .filter-date-actions {
+        display: flex;
+        justify-content: flex-end;
+    }
+
+    .filter-clear-btn {
+        font-family: var(--font-family);
+        font-size: 10px;
+        color: #ef4444;
+        background: transparent;
+        border: none;
+        cursor: pointer;
+        padding: 2px 4px;
+        font-weight: 600;
+        transition: opacity var(--transition-fast);
+    }
+
+    .filter-clear-btn:hover {
+        opacity: 0.8;
+    }
+
+    .filter-reset-all-btn {
+        margin-top: var(--space-2);
+        padding: 9px;
+        font-family: var(--font-family);
+        font-size: var(--text-xs);
+        font-weight: 600;
+        color: var(--text-secondary);
+        background: rgba(0, 0, 0, 0.03);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+    }
+
+    .filter-reset-all-btn:hover {
+        color: var(--text-primary);
+        background: rgba(0, 0, 0, 0.06);
+    }
+
+    [data-theme="dark"] .filter-reset-all-btn {
+        background: rgba(255, 255, 255, 0.03);
+    }
+
+    [data-theme="dark"] .filter-reset-all-btn:hover {
+        background: rgba(255, 255, 255, 0.06);
+    }
+
+    /* ── Live Map ── */
+    .map-container {
+        flex: 1;
+        height: 100%;
+        position: relative;
+    }
+    #map {
+        width: 100%;
+        height: 100%;
+    }
+
+    /* ── Blinking/Sonar Animation Effects ── */
+    @keyframes sonar-pulse {
+        0% {
+            transform: translate(-50%, -50%) scale(0.1);
+            opacity: 0;
+        }
+        50% {
+            opacity: 0.5;
+        }
+        100% {
+            transform: translate(-50%, -50%) scale(1.3);
+            opacity: 0;
+        }
+    }
+    .sonar-effect {
+        border-radius: 50%;
+        background: rgba(239, 68, 68, 0.5);
+        border: 2px solid #ef4444;
+        animation: sonar-pulse 1.8s infinite ease-out;
+        pointer-events: none;
+    }
+
+    /* Custom Leaflet pulse marker */
+    .pulse-marker-icon {
+        background: none;
+        border: none;
+    }
+    .pulse-core {
+        width: 16px;
+        height: 16px;
+        background-color: #ef4444;
+        border: 2px solid #ffffff;
+        border-radius: 50%;
+        box-shadow: 0 0 8px rgba(239, 68, 68, 0.8);
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 10;
+    }
+    .pulse-sonar {
+        width: 48px;
+        height: 48px;
+        border: 2px solid #ef4444;
+        border-radius: 50%;
+        background: rgba(239, 68, 68, 0.2);
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        animation: sonar-pulse 1.5s infinite ease-out;
+    }
+
+    /* Custom Leaflet resolved marker */
+    .resolved-marker-icon {
+        background: none;
+        border: none;
+    }
+    .resolved-core {
+        width: 16px;
+        height: 16px;
+        background-color: #10b981;
+        border: 2px solid #ffffff;
+        border-radius: 50%;
+        box-shadow: 0 0 8px rgba(16, 185, 129, 0.8);
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 10;
+    }
+
+    /* System Status Pulse dot in NOC Card */
+    @keyframes status-blink {
+        0% { opacity: 0.4; }
+        50% { opacity: 1; }
+        100% { opacity: 0.4; }
+    }
+    .status-dot-blink {
+        width: 10px;
+        height: 10px;
+        background-color: #10b981;
+        border-radius: 50%;
+        display: inline-block;
+        box-shadow: 0 0 8px #10b981;
+        animation: status-blink 1.2s infinite ease-in-out;
+    }
+
+    /* ── RFTS Right Info Panel (Sliding) ── */
+    .rfts-panel {
+        position: absolute;
+        top: 0;
+        right: -360px; /* Hidden by default */
+        width: 350px;
+        height: 100%;
+        background: var(--bg-surface);
+        border-left: 1px solid var(--border-color);
+        box-shadow: -4px 0 16px rgba(0, 0, 0, 0.08);
+        z-index: 1000;
+        transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+    .rfts-panel.active {
+        right: 0;
+    }
+    .rfts-panel__header {
+        padding: var(--space-4);
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        position: relative;
+    }
+    .rfts-panel__title-area {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-1);
+    }
+    .rfts-panel__title {
+        font-size: var(--text-md);
+        font-weight: 700;
+        color: var(--text-primary);
+        margin: 0;
+    }
+    .rfts-panel__subtitle {
+        font-size: var(--text-xs);
+        color: var(--text-secondary);
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        margin-top: 2px;
+    }
+    .rfts-panel__breadcrumb {
+        font-size: 11px;
+        color: var(--text-tertiary);
+        margin-top: 4px;
+        font-style: italic;
+    }
+    .rfts-panel__close {
+        background: none;
+        border: none;
+        color: var(--text-tertiary);
+        cursor: pointer;
+        padding: 4px;
+        border-radius: var(--radius-sm);
+        transition: background var(--transition-fast), color var(--transition-fast);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .rfts-panel__close:hover {
+        background: rgba(0, 0, 0, 0.05);
+        color: var(--text-primary);
+    }
+    .rfts-panel__content {
+        flex: 1;
+        overflow-y: auto;
+        padding: var(--space-4);
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-4);
+    }
+    
+    /* Stats grid */
+    .rfts-stats-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: var(--space-3);
+    }
+    .rfts-stat-box {
+        padding: var(--space-3);
+        border-radius: var(--radius-md);
+        border: 1px solid var(--border-color);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        gap: 4px;
+    }
+    .rfts-stat-box--occupied {
+        background: rgba(16, 185, 129, 0.05);
+        border-color: rgba(16, 185, 129, 0.15);
+    }
+    .rfts-stat-box--free {
+        background: rgba(107, 114, 128, 0.05);
+        border-color: rgba(107, 114, 128, 0.15);
+    }
+    .rfts-stat-box__value {
+        font-size: var(--text-lg);
+        font-weight: 700;
+        line-height: 1;
+    }
+    .rfts-stat-box--occupied .rfts-stat-box__value { color: #10b981; }
+    .rfts-stat-box--free .rfts-stat-box__value { color: var(--text-secondary); }
+    .rfts-stat-box__label {
+        font-size: 9px;
+        text-transform: uppercase;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        color: var(--text-tertiary);
+    }
+
+    /* Port Grid section */
+    .rfts-ports-section {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+    }
+    .rfts-ports-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: var(--space-1);
+    }
+    .rfts-ports-title {
+        font-size: var(--text-xs);
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--text-secondary);
+    }
+    .rfts-ports-total {
+        font-size: 10px;
+        color: var(--text-tertiary);
+    }
+    .rfts-ports-grid {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 6px;
+    }
+    .rfts-port-item {
+        aspect-ratio: 1;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--border-color);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: var(--text-xs);
+        font-weight: 600;
+        cursor: pointer;
+        transition: all var(--transition-fast);
+        background: var(--bg-surface);
+    }
+    .rfts-port-item--monitored {
+        border-color: #10b981;
+        color: #10b981;
+        background: rgba(16, 185, 129, 0.03);
+    }
+    .rfts-port-item--monitored:hover {
+        background: rgba(16, 185, 129, 0.1);
+        transform: scale(1.05);
+    }
+    .rfts-port-item--free {
+        border-color: var(--border-color);
+        color: var(--text-tertiary);
+    }
+    .rfts-port-item--free:hover {
+        background: rgba(0, 0, 0, 0.02);
+        color: var(--text-primary);
+        border-color: var(--text-secondary);
+        transform: scale(1.05);
+    }
+
+    /* ── Port Hover Tooltip ── */
+    .port-tooltip-box {
+        position: fixed;
+        display: none;
+        background: var(--bg-surface);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-lg);
+        padding: var(--space-3);
+        z-index: 1100;
+        pointer-events: none;
+        width: 220px;
+        font-family: var(--font-family);
+        line-height: 1.4;
+    }
+    .port-tooltip-box__title {
+        font-size: var(--text-xs);
+        font-weight: 700;
+        color: #3b82f6;
+        border-bottom: 1px solid var(--border-color);
+        padding-bottom: 4px;
+        margin-bottom: 6px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+    .port-tooltip-box__row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 10px;
+        margin-bottom: 3px;
+        gap: var(--space-2);
+    }
+    .port-tooltip-box__label {
+        font-weight: 600;
+        color: var(--text-secondary);
+    }
+    .port-tooltip-box__value {
+        color: var(--text-primary);
+        text-align: right;
+    }
+
+    /* Cards de Tipo de Evento en Filtros */
+    .filter-type-cards {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+        margin-top: 6px;
+    }
+    
+    .filter-type-card {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        padding: 8px 4px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        cursor: pointer;
+        transition: all var(--transition-fast);
+        box-shadow: var(--shadow-sm);
+        text-align: center;
+        user-select: none;
+    }
+    
+    .filter-type-card:hover {
+        transform: translateY(-1px);
+        border-color: var(--text-secondary);
+        box-shadow: var(--shadow-md);
+    }
+    
+    .filter-type-card__count {
+        font-size: 16px;
+        font-weight: 800;
+        color: var(--text-primary);
+        line-height: 1;
+    }
+    
+    .filter-type-card__label {
+        font-size: 8px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        font-weight: 700;
+        color: var(--text-tertiary);
+    }
+    
+    .filter-type-card__dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-bottom: 2px;
+    }
+    
+    /* Colores e indicadores específicos */
+    .filter-type-card--corte .filter-type-card__dot {
+        background-color: #ef4444;
+        box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+    }
+    
+    .filter-type-card--atenuacion .filter-type-card__dot {
+        background-color: #f59e0b;
+        box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+    }
+    
+    .filter-type-card--reflexion .filter-type-card__dot {
+        background-color: #3b82f6;
+        box-shadow: 0 0 6px rgba(59, 130, 246, 0.6);
+    }
+    
+    /* Estados activos con HSL premium y glassmorphism */
+    .filter-type-card--corte.filter-type-card--active {
+        background: rgba(239, 68, 68, 0.08) !important;
+        border-color: rgba(239, 68, 68, 0.5) !important;
+        box-shadow: 0 4px 14px rgba(239, 68, 68, 0.25) !important;
+    }
+    .filter-type-card--corte.filter-type-card--active .filter-type-card__count,
+    .filter-type-card--corte.filter-type-card--active .filter-type-card__label {
+        color: #ef4444 !important;
+    }
+    
+    .filter-type-card--atenuacion.filter-type-card--active {
+        background: rgba(245, 158, 11, 0.08) !important;
+        border-color: rgba(245, 158, 11, 0.5) !important;
+        box-shadow: 0 4px 14px rgba(245, 158, 11, 0.25) !important;
+    }
+    .filter-type-card--atenuacion.filter-type-card--active .filter-type-card__count,
+    .filter-type-card--atenuacion.filter-type-card--active .filter-type-card__label {
+        color: #f59e0b !important;
+    }
+    
+    .filter-type-card--reflexion.filter-type-card--active {
+        background: rgba(59, 130, 246, 0.08) !important;
+        border-color: rgba(59, 130, 246, 0.5) !important;
+        box-shadow: 0 4px 14px rgba(59, 130, 246, 0.25) !important;
+    }
+    .filter-type-card--reflexion.filter-type-card--active .filter-type-card__count,
+    .filter-type-card--reflexion.filter-type-card--active .filter-type-card__label {
+        color: #3b82f6 !important;
+    }
+
+    /* Cards de Severidad en Filtros */
+    .filter-severity-cards {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+        margin-top: 6px;
+    }
+    
+    .filter-severity-card {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-md);
+        padding: 8px 4px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        cursor: pointer;
+        transition: all var(--transition-fast);
+        box-shadow: var(--shadow-sm);
+        text-align: center;
+        user-select: none;
+    }
+    
+    .filter-severity-card:hover {
+        transform: translateY(-1px);
+        border-color: var(--text-secondary);
+        box-shadow: var(--shadow-md);
+    }
+    
+    .filter-severity-card__count {
+        font-size: 15px;
+        font-weight: 800;
+        color: var(--text-primary);
+        line-height: 1;
+    }
+    
+    .filter-severity-card__label {
+        font-size: 8px;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        font-weight: 700;
+        color: var(--text-tertiary);
+    }
+    
+    .filter-severity-card__dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-bottom: 2px;
+    }
+    
+    /* Colores e indicadores de severidad */
+    .filter-severity-card--critical .filter-severity-card__dot {
+        background-color: #ef4444;
+        box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+    }
+    
+    .filter-severity-card--major .filter-severity-card__dot {
+        background-color: #f59e0b;
+        box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+    }
+    
+    .filter-severity-card--minor .filter-severity-card__dot {
+        background-color: #3b82f6;
+        box-shadow: 0 0 6px rgba(59, 130, 246, 0.6);
+    }
+    
+    .filter-severity-card--warning .filter-severity-card__dot {
+        background-color: #64748b;
+        box-shadow: 0 0 6px rgba(100, 116, 139, 0.6);
+    }
+    
+    /* Estados activos con HSL premium y glassmorphism */
+    .filter-severity-card--critical.filter-severity-card--active {
+        background: rgba(239, 68, 68, 0.08) !important;
+        border-color: rgba(239, 68, 68, 0.5) !important;
+        box-shadow: 0 4px 14px rgba(239, 68, 68, 0.25) !important;
+    }
+    .filter-severity-card--critical.filter-severity-card--active .filter-severity-card__count,
+    .filter-severity-card--critical.filter-severity-card--active .filter-severity-card__label {
+        color: #ef4444 !important;
+    }
+    
+    .filter-severity-card--major.filter-severity-card--active {
+        background: rgba(245, 158, 11, 0.08) !important;
+        border-color: rgba(245, 158, 11, 0.5) !important;
+        box-shadow: 0 4px 14px rgba(245, 158, 11, 0.25) !important;
+    }
+    .filter-severity-card--major.filter-severity-card--active .filter-severity-card__count,
+    .filter-severity-card--major.filter-severity-card--active .filter-severity-card__label {
+        color: #f59e0b !important;
+    }
+    
+    .filter-severity-card--minor.filter-severity-card--active {
+        background: rgba(59, 130, 246, 0.08) !important;
+        border-color: rgba(59, 130, 246, 0.5) !important;
+        box-shadow: 0 4px 14px rgba(59, 130, 246, 0.25) !important;
+    }
+    .filter-severity-card--minor.filter-severity-card--active .filter-severity-card__count,
+    .filter-severity-card--minor.filter-severity-card--active .filter-severity-card__label {
+        color: #3b82f6 !important;
+    }
+    
+    .filter-severity-card--warning.filter-severity-card--active {
+        background: rgba(100, 116, 139, 0.08) !important;
+        border-color: rgba(100, 116, 139, 0.5) !important;
+        box-shadow: 0 4px 14px rgba(100, 116, 139, 0.25) !important;
+    }
+    .filter-severity-card--warning.filter-severity-card--active .filter-severity-card__count,
+    .filter-severity-card--warning.filter-severity-card--active .filter-severity-card__label {
+        color: #64748b !important;
+    }
+
+    /* ── Estilos de Paginación SaaS en Panel Lateral ── */
+    .map-panel__pagination {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 16px;
+        border-top: 1px solid var(--border-color);
+        background: var(--bg-surface);
+        box-sizing: border-box;
+        gap: 12px;
+        user-select: none;
+    }
+    
+    .pagination-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: var(--radius-md);
+        border: 1px solid var(--border-color);
+        background: var(--bg-surface);
+        color: var(--text-secondary);
+        cursor: pointer;
+        transition: all var(--transition-fast);
+        outline: none;
+        padding: 0;
+    }
+    
+    .pagination-btn:hover:not(:disabled) {
+        color: var(--text-primary);
+        border-color: var(--text-secondary);
+        background: rgba(0, 0, 0, 0.03);
+    }
+    
+    [data-theme="dark"] .pagination-btn:hover:not(:disabled) {
+        background: rgba(255, 255, 255, 0.03);
+    }
+    
+    .pagination-btn:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+    
+    .pagination-info {
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--text-secondary);
+        font-family: var(--font-family);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="mapa-wrapper">
+    <!-- NOC Stats Bar -->
+    <div class="noc-stats-bar">
+        <!-- 1er: Rutas Cargadas -->
+        <div class="noc-card noc-card--routes">
+            <div class="noc-card__icon">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>
+            </div>
+            <div class="noc-card__info">
+                <div class="noc-card__value" id="stat-routes-count">{{ cantidad_csv }}</div>
+                <div class="noc-card__label">Troncales Cargadas</div>
+            </div>
+        </div>
+
+        <!-- 2do: RFTS Monitoreados -->
+        <div class="noc-card noc-card--routes">
+            <div class="noc-card__icon">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+            </div>
+            <div class="noc-card__info">
+                <div class="noc-card__value" id="stat-rfts-count">{{ cantidad_otu }}</div>
+                <div class="noc-card__label">RFTS Monitoreados</div>
+            </div>
+        </div>
+
+        <!-- 3er: Total de Eventos -->
+        <div class="noc-card noc-card--recent">
+            <div class="noc-card__icon">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg>
+            </div>
+            <div class="noc-card__info">
+                <div class="noc-card__value" id="stat-total-events">0</div>
+                <div class="noc-card__label">Total de Eventos</div>
+            </div>
+        </div>
+
+        <!-- 4to: Eventos Corregidos -->
+        <div class="noc-card noc-card--status">
+            <div class="noc-card__icon">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+            </div>
+            <div class="noc-card__info">
+                <div class="noc-card__value" id="stat-corrected-events" style="color: #10b981;">0</div>
+                <div class="noc-card__label">Eventos Corregidos</div>
+            </div>
+        </div>
+
+        <!-- 5to: Eventos Activos -->
+        <div class="noc-card noc-card--critical">
+            <div class="noc-card__icon">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+            </div>
+            <div class="noc-card__info">
+                <div class="noc-card__value" id="stat-active-events" style="color: #ef4444;">0</div>
+                <div class="noc-card__label">Eventos Activos</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- NOC Body Container -->
+    <div class="noc-body">
+        <!-- Left Side Alarms Panel -->
+        <div class="map-panel">
+            <div class="map-panel__header">
+                <div class="map-panel__title">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="color: #ef4444;"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
+                    Fallas en Tiempo Real
+                </div>
+            </div>
+            <!-- Tabs dinámicas de alarmas -->
+            <div class="map-panel__tabs">
+                <button class="map-panel__tab map-panel__tab--active" id="tab-active-alarms">
+                    Activos <span class="map-panel__tab-badge" id="badge-active-count">0</span>
+                </button>
+                <button class="map-panel__tab map-panel__tab--history" id="tab-history-alarms">
+                    Corregidos <span class="map-panel__tab-badge" id="badge-history-count">0</span>
+                </button>
+            </div>
+            <div class="map-panel__list" id="alarms-list-container">
+                <!-- Fallback empty state -->
+                <div class="empty-state" id="alarms-empty-state">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    <div>
+                        <p style="font-weight: 700; color: var(--text-primary);">NOC Limpio</p>
+                        <p style="font-size: 11px; margin-top: 4px;">Monitoreando sin alarmas activas en la red en este momento.</p>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Controles de Paginación minimalista SaaS -->
+            <div class="map-panel__pagination" id="alarms-pagination-container">
+                <button class="pagination-btn" id="pagination-prev-btn" title="Página Anterior">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M15 19l-7-7 7-7" /></svg>
+                </button>
+                <span class="pagination-info" id="pagination-info-text">Pág. 1 de 1</span>
+                <button class="pagination-btn" id="pagination-next-btn" title="Siguiente Página">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7" /></svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Filter Panel (Collapsible) -->
+        <div class="filter-panel filter-panel--collapsed" id="filter-sidebar-panel">
+            <!-- Toggle Button in the middle vertical line -->
+            <button class="filter-panel__toggle" id="filter-sidebar-toggle-btn" title="Filtros de Eventos">
+                <svg id="filter-toggle-arrow" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7" /></svg>
+            </button>
+
+            <!-- Panel Content -->
+            <div class="filter-panel__content">
+                <div class="filter-panel__header">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" /></svg>
+                    <span>Filtros de Eventos</span>
+                </div>
+
+                <!-- 1ero: Filtro por Estado (Botones) -->
+                <div class="filter-group">
+                    <label class="filter-group__label">Estado del Evento</label>
+                    <div class="filter-buttons">
+                        <button class="filter-btn" id="filter-btn-active" data-status="Active" title="Mostrar sólo eventos activos">
+                            <span class="filter-btn__dot"></span>
+                            Activos
+                        </button>
+                        <button class="filter-btn" id="filter-btn-resolved" data-status="Resolved" title="Mostrar sólo eventos corregidos">
+                            <span class="filter-btn__dot"></span>
+                            Corregidos
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Cards de Tipo de Evento (Modern SaaS) -->
+                <div class="filter-group">
+                    <label class="filter-group__label">Tipo de Evento</label>
+                    <div class="filter-type-cards">
+                        <div class="filter-type-card filter-type-card--corte" id="type-card-corte" data-type="corte" title="Filtrar por Corte de Fibra">
+                            <span class="filter-type-card__dot"></span>
+                            <span class="filter-type-card__count" id="count-type-corte">0</span>
+                            <span class="filter-type-card__label">Cortes</span>
+                        </div>
+                        <div class="filter-type-card filter-type-card--atenuacion" id="type-card-atenuacion" data-type="atenuacion" title="Filtrar por Atenuación">
+                            <span class="filter-type-card__dot"></span>
+                            <span class="filter-type-card__count" id="count-type-atenuacion">0</span>
+                            <span class="filter-type-card__label">Atenuac.</span>
+                        </div>
+                        <div class="filter-type-card filter-type-card--reflexion" id="type-card-reflexion" data-type="reflexion" title="Filtrar por Reflexión">
+                            <span class="filter-type-card__dot"></span>
+                            <span class="filter-type-card__count" id="count-type-reflexion">0</span>
+                            <span class="filter-type-card__label">Reflex.</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Cards de Severidad del Evento (Modern SaaS 2x2 Grid) -->
+                <div class="filter-group">
+                    <label class="filter-group__label">Severidad del Evento</label>
+                    <div class="filter-severity-cards">
+                        <div class="filter-severity-card filter-severity-card--critical" id="severity-card-critical" data-severity="critical" title="Filtrar por Severidad Crítica">
+                            <span class="filter-severity-card__dot"></span>
+                            <span class="filter-severity-card__count" id="count-severity-critical">0</span>
+                            <span class="filter-severity-card__label">CRITICAL</span>
+                        </div>
+                        <div class="filter-severity-card filter-severity-card--major" id="severity-card-major" data-severity="major" title="Filtrar por Severidad Mayor">
+                            <span class="filter-severity-card__dot"></span>
+                            <span class="filter-severity-card__count" id="count-severity-major">0</span>
+                            <span class="filter-severity-card__label">MAJOR</span>
+                        </div>
+                        <div class="filter-severity-card filter-severity-card--minor" id="severity-card-minor" data-severity="minor" title="Filtrar por Severidad Menor">
+                            <span class="filter-severity-card__dot"></span>
+                            <span class="filter-severity-card__count" id="count-severity-minor">0</span>
+                            <span class="filter-severity-card__label">MINOR</span>
+                        </div>
+                        <div class="filter-severity-card filter-severity-card--warning" id="severity-card-warning" data-severity="warning" title="Filtrar por Severidad Advertencia">
+                            <span class="filter-severity-card__dot"></span>
+                            <span class="filter-severity-card__count" id="count-severity-warning">0</span>
+                            <span class="filter-severity-card__label">WARNING</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2do: Filtro por Rango de Fechas (Desde / Hasta) -->
+                <div class="filter-group">
+                    <label class="filter-group__label">Rango de Fechas</label>
+                    <div style="display: flex; flex-direction: column; gap: 8px;">
+                        <div class="filter-date-input-wrapper" style="display: flex; align-items: center; gap: 6px;">
+                            <span style="font-size: 10px; min-width: 44px; color: var(--text-secondary); font-weight: 600;">Desde:</span>
+                            <input type="date" class="filter-date-input" id="filter-date-from" title="Fecha inicio" />
+                        </div>
+                        <div class="filter-date-input-wrapper" style="display: flex; align-items: center; gap: 6px;">
+                            <span style="font-size: 10px; min-width: 44px; color: var(--text-secondary); font-weight: 600;">Hasta:</span>
+                            <input type="date" class="filter-date-input" id="filter-date-to" title="Fecha fin" />
+                        </div>
+                    </div>
+                    <div class="filter-date-actions" style="margin-top: 4px;">
+                        <button class="filter-clear-btn" id="filter-clear-date-btn">Limpiar Fechas</button>
+                    </div>
+                </div>
+                
+                <!-- Reset Button -->
+                <button class="filter-reset-all-btn" id="filter-reset-all-btn" title="Restablecer todos los filtros del mapa">Restablecer Filtros</button>
+            </div>
+        </div>
+
+        <!-- Leaflet Live Map -->
+        <div class="map-container">
+            <div id="map"></div>
+
+            <!-- Floating Fullscreen/Maximize SaaS Control -->
+            <button id="map-maximize-btn" class="map-maximize-btn" title="Maximizar mapa" style="position: absolute; top: 16px; right: 16px; z-index: 1000; width: 42px; height: 42px; display: flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, 0.95); border: 1px solid var(--border-color, #e2e8f0); border-radius: 12px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08); backdrop-filter: blur(8px); cursor: pointer; transition: all 0.25s ease; color: #475569; outline: none; padding: 0;">
+                <svg id="maximize-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4h4M20 8V4h-4M4 16v4h4M20 16v4h-4" />
+                </svg>
+                <svg id="minimize-icon" xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5" style="display: none;">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v4h4M20 4v4h-4M4 20v-4h4M20 20v-4h-4" />
+                </svg>
+            </button>
+
+            <!-- Floating Route Search SaaS Control -->
+            <div class="floating-search-control" style="position: absolute; top: 16px; left: 16px; z-index: 1000; width: 320px;">
+                <div class="search-input-group" style="position: relative; display: flex; align-items: center; background: rgba(255, 255, 255, 0.95); border: 1px solid var(--border-color, #e2e8f0); border-radius: 12px; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08); backdrop-filter: blur(8px); padding: 2px 8px; transition: all 0.25s ease;">
+                    <div class="search-icon" style="color: #64748b; display: flex; align-items: center; justify-content: center; padding: 6px;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                    </div>
+                    <input type="text" id="route-search-input" placeholder="Buscar enlace o troncal..." style="width: 100%; border: none; background: transparent; font-size: 13px; font-weight: 550; color: #1e293b; padding: 8px 6px; outline: none; font-family: inherit;" />
+                    <button id="route-search-clear-btn" style="display: none; background: none; border: none; color: #94a3b8; cursor: pointer; padding: 6px; align-items: center; justify-content: center;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <!-- Autocomplete suggestions dropdown -->
+                <div id="route-search-suggestions" style="display: none; position: absolute; top: calc(100% + 6px); left: 0; right: 0; background: rgba(255, 255, 255, 0.98); border: 1px solid var(--border-color, #e2e8f0); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.1); max-height: 220px; overflow-y: auto; z-index: 1001; padding: 6px 0; font-family: inherit;">
+                </div>
+            </div>
+
+            <!-- Floating Tooltip for ports -->
+            <div id="port-hover-tooltip" class="port-tooltip-box"></div>
+
+            <!-- RFTS Right Info Panel -->
+            <div class="rfts-panel" id="rfts-info-panel">
+                <div class="rfts-panel__header">
+                    <div class="rfts-panel__title-area">
+                        <h3 class="rfts-panel__title" id="rfts-panel-title">RFTS-400-Olivos</h3>
+                        <div class="rfts-panel__subtitle">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                            <span id="rfts-panel-location">Independencia</span>
+                        </div>
+                        <div class="rfts-panel__breadcrumb" id="rfts-panel-routes-desc">Asociado a: Lampa OLT1 Primario 42</div>
+                    </div>
+                    <button class="rfts-panel__close" id="rfts-panel-close-btn" title="Cerrar Panel">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
+                    </button>
+                </div>
+                <div class="rfts-panel__content">
+                    <!-- Stats Grid -->
+                    <div class="rfts-stats-grid">
+                        <div class="rfts-stat-box rfts-stat-box--occupied">
+                            <span class="rfts-stat-box__value" id="rfts-stat-occupied">7</span>
+                            <span class="rfts-stat-box__label">Puertos Ocupados</span>
+                        </div>
+                        <div class="rfts-stat-box rfts-stat-box--free">
+                            <span class="rfts-stat-box__value" id="rfts-stat-free">41</span>
+                            <span class="rfts-stat-box__label">Puertos Libres</span>
+                        </div>
+                    </div>
+
+                    <!-- Ports Section -->
+                    <div class="rfts-ports-section">
+                        <div class="rfts-ports-header">
+                            <span class="rfts-ports-title">Estado de Puertos</span>
+                            <span class="rfts-ports-total" id="rfts-ports-total-text">Total: 48</span>
+                        </div>
+                        <div class="rfts-ports-grid" id="rfts-ports-grid-container">
+                            <!-- Dynamic Ports Go Here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{{ frontend_data|json_script:"backend-data" }}
+<script src="{% static 'vendor/leaflet/leaflet-1.9.4.js' %}" crossorigin=""></script>
+<script src="{% static 'vendor/leaflet-measure/leaflet-measure-3.1.0.js' %}"></script>
+
+<script>
+    const escapeHTML = window.FiberGeniusSafe.escapeHTML;
+
+    // Inicializar variables del Backend
+    const backendData = JSON.parse(document.getElementById('backend-data').textContent);
+    const routesData = backendData.rutas;
+
+    // Coordenadas por defecto (Lima, Perú)
+    const defaultLat = -12.046374;
+    const defaultLon = -77.042793;
+
+    // Configurar mapa de Leaflet centrado en Lima, Perú por defecto
+    const map = L.map('map', {
+        zoomControl: false,
+        minZoom: 5,
+        maxZoom: 18
+    }).setView([defaultLat, defaultLon], 12);
+
+    // Agregar control de zoom abajo a la derecha
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+    // Capas de mapas base (Claro, Oscuro, Satelital)
+    const mapClaro = L.tileLayer('{{ MAP_TILE_URL_LIGHT|escapejs }}', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        subdomains: 'abcd',
+        maxZoom: 20
+    });
+
+    const mapOscuro = L.tileLayer('{{ MAP_TILE_URL_DARK|escapejs }}', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+        subdomains: 'abcd',
+        maxZoom: 20
+    });
+
+    const satelite = L.tileLayer('{{ MAP_TILE_URL_SATELLITE|escapejs }}', {
+        attribution: 'Tiles &copy; Esri &mdash; Source: Esri',
+        maxZoom: 19
+    });
+
+    const baseMaps = {
+        "Mapa Claro": mapClaro,
+        "Mapa Oscuro": mapOscuro,
+        "Satélite": satelite
+    };
+
+    const theme = document.documentElement.getAttribute('data-theme') || 'light';
+    const isDark = theme === 'dark' || (localStorage.getItem('fg-theme') === 'dark');
+
+    if (isDark) {
+        mapOscuro.addTo(map);
+    } else {
+        mapClaro.addTo(map);
+    }
+
+    L.control.layers(baseMaps, null, { position: 'topright', collapsed: false }).addTo(map);
+
+    // Contenedores globales de objetos Leaflet
+    const routePolylines = {};
+    const alarmMarkers = {};
+    let activeAlarmsSet = new Set();
+    let borderPolyline = null;
+    
+    // Control de pestañas de alarmas
+    let currentAlarmsTab = 'activas'; // 'activas' o 'historial'
+    let fetchedAlarmasCache = []; // Almacén de las alarmas del último polling
+    
+    // Estado de paginación para el panel lateral
+    let currentAlarmsPage = 1;
+    const ITEMS_PER_PAGE = 10;
+
+    // Lógica e interactividad
+    window.rutasMostrandoReservas = new Set();
+    const reservasMarkersCache = []; // Array de objetos { marker, rutaNombre }
+
+    // El motor proactivo ahora usa pestañas independientes
+    // window.establecerTrazaReferencia fue removido en favor de UI dedicada
+
+    window.toggleReservasRuta = function(nombreRuta, isChecked) {
+        if (isChecked) {
+            window.rutasMostrandoReservas.add(nombreRuta);
+        } else {
+            window.rutasMostrandoReservas.delete(nombreRuta);
+        }
+        renderReservasVisibilidad();
+    };
+
+    function renderReservasVisibilidad() {
+        reservasMarkersCache.forEach(item => {
+            const debeMostrar = window.rutasMostrandoReservas.has(item.rutaNombre);
+            if (debeMostrar) {
+                if (!map.hasLayer(item.marker)) {
+                    item.marker.addTo(map);
+                }
+            } else {
+                if (map.hasLayer(item.marker)) {
+                    item.marker.remove();
+                }
+            }
+        });
+    }
+
+    // Estado de filtros del panel
+    let selectedStatusFilter = 'Active'; // Mostrar activos por defecto al cargar/refrescar
+    let selectedDateFrom = null;       // 'YYYY-MM-DD' o null
+    let selectedDateTo = null;         // 'YYYY-MM-DD' o null
+    let selectedTypeFilter = null;     // 'corte', 'atenuacion', 'reflexion' o null
+    let selectedSeverityFilter = null; // 'critical', 'major', 'minor', 'warning' o null
+
+    // Función para limpiar el borde resaltado de una ruta
+    function limpiarResaltadoRuta() {
+        if (borderPolyline) {
+            map.removeLayer(borderPolyline);
+            borderPolyline = null;
+        }
+    }
+
+    // Función para resaltar una ruta con borde azul de alto contraste
+    function resaltarRuta(ruta) {
+        limpiarResaltadoRuta();
+        if (ruta && ruta.coordenadas && ruta.coordenadas.length > 0) {
+            borderPolyline = L.polyline(ruta.coordenadas, {
+                color: '#0437F7',
+                weight: 10, // Grosor ajustado para resaltar la ruta sin saturar
+                opacity: 1,
+                lineJoin: 'round'
+            }).addTo(map);
+
+            // Asegurar que la línea original quede arriba del resaltador
+            const origPolyline = routePolylines[ruta.nombre];
+            if (origPolyline) {
+                origPolyline.bringToFront();
+            }
+        }
+    }
+
+    // Limpiar resaltado si se hace click en el fondo del mapa
+    map.on('click', () => {
+        limpiarResaltadoRuta();
+    });
+
+    // 1. Dibujar todas las rutas sobre el mapa
+    routesData.forEach(ruta => {
+        if (ruta.coordenadas && ruta.coordenadas.length > 0) {
+            // Polilínea de la ruta
+            const polyline = L.polyline(ruta.coordenadas, {
+                color: '#10b981', // Verde SaaS premium por defecto
+                weight: 5, // Grosor balanceado de 5 para un trazado limpio y legible
+                opacity: 0.85,
+                lineJoin: 'round'
+            }).addTo(map);
+
+            // Guardar referencia
+            routePolylines[ruta.nombre] = polyline;
+
+            // Calcular estilos y clases para el Tipo de Trazado
+            let trazadoBadge = 'badge--info'; // Default blue (Aéreo)
+            let trazadoEstilo = 'background:#e0f2fe; color:#0369a1; border: 1px solid #bae6fd;'; // Soft blue
+            if (ruta.tipo_trazado) {
+                const tMay = ruta.tipo_trazado.toUpperCase();
+                if (tMay.includes('SOTERRADO')) {
+                    trazadoBadge = 'badge--danger';
+                    trazadoEstilo = 'background:#fee2e2; color:#b91c1c; border: 1px solid #fecaca;'; // Soft red
+                } else if (tMay.includes('AEREO')) {
+                    trazadoBadge = 'badge--info';
+                    trazadoEstilo = 'background:#e0f2fe; color:#0369a1; border: 1px solid #bae6fd;'; // Soft blue
+                } else if (tMay.includes('HIBRIDO')) {
+                    trazadoBadge = 'badge--warning';
+                    trazadoEstilo = 'background:#fef3c7; color:#b45309; border: 1px solid #fde68a;'; // Soft yellow/amber
+                }
+            }
+
+            // Al hacer clic directo en la polilínea del mapa, resaltar y mostrar popup
+            polyline.on('click', (e) => {
+                resaltarRuta(ruta);
+                L.DomEvent.stopPropagation(e);
+            });
+
+            // Calcular conteo de reservas por tipo y suma total de metros de reserva
+            const conteoReservas = {};
+            let sumaReservasM = 0;
+            if (ruta.reservas_nodos) {
+                ruta.reservas_nodos.forEach(res => {
+                    const tipo = res.tipo || 'Otro';
+                    conteoReservas[tipo] = (conteoReservas[tipo] || 0) + 1;
+                    sumaReservasM += parseFloat(res.reserva_m || 0);
+                });
+            }
+
+            // Construir desglose detallado de reservas (usando las clases del archivo css de componentes)
+            let reservasResumenHtml = '';
+            const tiposReservas = Object.keys(conteoReservas);
+            if (tiposReservas.length > 0) {
+                reservasResumenHtml = `
+                    <div class="resumen-panel__section-title" style="padding: 10px 16px 4px; font-size:10px; font-weight:700; color:#3b82f6; text-transform:uppercase; letter-spacing:0.05em; border-bottom: 1px solid #f1f5f9; background: rgba(0,0,0,0.01);">Detalle de Reservas</div>
+                    <div class="ruta-popup__grid">
+                `;
+                tiposReservas.forEach(tipo => {
+                    reservasResumenHtml += `
+                        <div class="ruta-popup__field">
+                            <span class="ruta-popup__label">${escapeHTML(tipo)}</span>
+                            <span class="ruta-popup__value">${conteoReservas[tipo]}</span>
+                        </div>
+                    `;
+                });
+                if (tiposReservas.length % 2 !== 0) {
+                    reservasResumenHtml += `
+                        <div class="ruta-popup__field">
+                            <span class="ruta-popup__label">&nbsp;</span>
+                            <span class="ruta-popup__value">&nbsp;</span>
+                        </div>
+                    `;
+                }
+                reservasResumenHtml += '</div>';
+            }
+
+            // Popup al hacer clic en la ruta (adaptación premium usando las clases nativas del mapa)
+            const popupContent = `
+                <div class="ruta-popup">
+                    <div class="ruta-popup__header">
+                        <div class="ruta-popup__icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+                            </svg>
+                        </div>
+                        <div>
+                            <a href="/mapa/traza-en-vivo/?route_name=${encodeURIComponent(ruta.nombre)}" class="ruta-popup__title" style="color: #fff; font-size:14px; font-weight:700; text-decoration: none; cursor: pointer; display: flex; align-items: center; gap: 6px;" title="Solicitar traza en vivo">
+                                ${escapeHTML(ruta.nombre)}
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="opacity: 0.8;">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                </svg>
+                            </a>
+                            <div class="ruta-popup__subtitle" style="color: rgba(255,255,255,0.85); font-size:11px;">Monitoreo de Enlace</div>
+                        </div>
+                    </div>
+                    
+                    <div class="ruta-popup__grid">
+                        <div class="ruta-popup__field">
+                            <span class="ruta-popup__label">Site de origen</span>
+                            <span class="ruta-popup__value">${escapeHTML(ruta.otu)}</span>
+                        </div>
+                        <div class="ruta-popup__field">
+                            <span class="ruta-popup__label">Estado</span>
+                            <span class="ruta-popup__value"><span class="badge badge--success" style="background:#e6fffa; color:#047857; border: 1px solid #a7f3d0; padding:2px 8px; border-radius:12px; font-weight:600; font-size:11px;">Activo</span></span>
+                        </div>
+                        <div class="ruta-popup__field" style="grid-column: span 2; border-top: 1px solid #f1f5f9;">
+                            <span class="ruta-popup__label">Tipo de Trazado</span>
+                            <span class="ruta-popup__value"><span class="badge ${trazadoBadge}" style="${trazadoEstilo} padding:2px 8px; border-radius:12px; font-weight:600; font-size:11px; text-transform: uppercase;">${escapeHTML(ruta.tipo_trazado || 'Sin Clasificar')}</span></span>
+                        </div>
+                    </div>
+
+                    ${reservasResumenHtml}
+
+                    <div class="resumen-panel__section-title" style="padding: 10px 16px 4px; font-size:10px; font-weight:700; color:#3b82f6; text-transform:uppercase; letter-spacing:0.05em; border-bottom: 1px solid #f1f5f9; background: rgba(0,0,0,0.01);">Composición Física</div>
+                    <div class="ruta-popup__grid">
+                        <div class="ruta-popup__field" style="border-bottom:none;">
+                            <span class="ruta-popup__label">Distancia</span>
+                            <span class="ruta-popup__value" style="font-size:14px; font-weight:700; color:#1e293b;">${ruta.distancia ? parseFloat(ruta.distancia).toFixed(2) + ' km' : 'N/A'}</span>
+                        </div>
+                        <div class="ruta-popup__field" style="border-bottom:none;">
+                            <span class="ruta-popup__label">Reservas</span>
+                            <span class="ruta-popup__value" style="font-size:14px; font-weight:700; color:#1e293b;">${sumaReservasM.toFixed(1)} m</span>
+                        </div>
+                    </div>
+                    
+                    <div class="ruta-popup__section" style="border-top: 1px solid #f1f5f9;">
+                        <div class="ruta-popup__toggle-row">
+                            <div class="ruta-popup__toggle-info">
+                                <span class="ruta-popup__toggle-label">Mostrar reservas de esta ruta</span>
+                            </div>
+                            <label class="ruta-popup__switch">
+                                <input type="checkbox" data-route="${encodeURIComponent(ruta.nombre)}" onchange="window.toggleReservasRuta(decodeURIComponent(this.dataset.route), this.checked)" ${window.rutasMostrandoReservas.has(ruta.nombre) ? 'checked' : ''}>
+                                <span class="ruta-popup__slider"></span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Opciones Proactivas -->
+                    <div class="ruta-popup__section" style="border-top: 1px solid #f1f5f9; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px;">
+                        <a href="/mapa/diagnostico-proactivo/?route_name=${encodeURIComponent(ruta.nombre)}" style="background: var(--accent, #3b82f6); color: white; padding: 8px; border-radius: 6px; text-align: center; text-decoration: none; font-weight: 600; font-size: 12px; display: flex; justify-content: center; align-items: center; gap: 6px;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
+                            Análisis Proactivo (Diagnóstico)
+                        </a>
+                        <a href="/mapa/establecer-referencia/?route_name=${encodeURIComponent(ruta.nombre)}" style="background: var(--bg-surface-2, #f1f5f9); border: 1px solid var(--border-color, #e2e8f0); color: var(--text-primary, #1e293b); padding: 8px; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 12px; display: flex; justify-content: center; align-items: center; gap: 6px; width: 100%;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>
+                            Configurar Traza de Referencia
+                        </a>
+                    </div>
+                </div>
+            `;
+            
+            polyline.bindPopup(popupContent, { minWidth: 360, className: 'ruta-popup-wrapper' });
+
+            // Dibujar y cachear los marcadores de reservas de esta ruta
+            if (ruta.reservas_nodos && ruta.reservas_nodos.length > 0) {
+                ruta.reservas_nodos.forEach(res => {
+                    const tipo = (res.tipo || 'default').toLowerCase();
+                    const iconUrl = `/static/img/iconos/${encodeURIComponent(tipo)}-icono.png`;
+                    const customIcon = L.icon({ 
+                        iconUrl: iconUrl, 
+                        iconSize: [32, 32], 
+                        iconAnchor: [16, 32], 
+                        popupAnchor: [0, -30] 
+                    });
+                    
+                    const resPopup = `
+                        <div style="font-family: var(--font-sans); padding: 5px;">
+                            <h4 style="margin:0 0 8px 0; color:var(--primary); font-size:14px; border-bottom:1px solid var(--border-color); padding-bottom:4px;">${escapeHTML(res.nombre)}</h4>
+                            <div style="font-size:12px; margin-bottom:4px;"><strong>Tipo:</strong> ${escapeHTML(res.tipo)}</div>
+                            <div style="font-size:12px; margin-bottom:4px;"><strong>Reserva Fija:</strong> ${escapeHTML(res.reserva_m)} m</div>
+                            <div style="font-size:12px; color:var(--text-secondary);">Pertenece a: ${escapeHTML(ruta.nombre)}</div>
+                        </div>
+                    `;
+                    
+                    const marker = L.marker([res.lat, res.lon], { icon: customIcon })
+                        .bindPopup(resPopup);
+                    
+                    reservasMarkersCache.push({ marker: marker, rutaNombre: ruta.nombre });
+                });
+            }
+        }
+    });
+
+    // 1.5. Dibujar todos los equipos (OTUs / RFTS) sobre el mapa y configurar el panel lateral
+    const equiposData = backendData.equipos_data || [];
+    const equiposLayer = L.layerGroup().addTo(map);
+
+    // Evento para cerrar el panel RFTS
+    const rftsCloseBtn = document.getElementById('rfts-panel-close-btn');
+    if (rftsCloseBtn) {
+        rftsCloseBtn.addEventListener('click', () => {
+            document.getElementById('rfts-info-panel').classList.remove('active');
+        });
+    }
+
+    // Evento para cambiar entre las pestañas de alarmas
+    const tabActiveAlarms = document.getElementById('tab-active-alarms');
+    const tabHistoryAlarms = document.getElementById('tab-history-alarms');
+
+    function syncFilterButtonsUI() {
+        const btnActive = document.getElementById('filter-btn-active');
+        const btnResolved = document.getElementById('filter-btn-resolved');
+        if (!btnActive || !btnResolved) return;
+
+        btnActive.classList.remove('filter-btn--active');
+        btnResolved.classList.remove('filter-btn--active');
+
+        if (selectedStatusFilter === 'Active') {
+            btnActive.classList.add('filter-btn--active');
+        } else if (selectedStatusFilter === 'Resolved') {
+            btnResolved.classList.add('filter-btn--active');
+        }
+    }
+
+    if (tabActiveAlarms && tabHistoryAlarms) {
+        tabActiveAlarms.addEventListener('click', () => {
+            currentAlarmsTab = 'activas';
+            currentAlarmsPage = 1; // Reiniciar página
+            tabActiveAlarms.classList.add('map-panel__tab--active');
+            tabHistoryAlarms.classList.remove('map-panel__tab--active');
+            
+            // Solo renderiza la lista de alarmas en el panel sin afectar el mapa ni los filtros
+            renderAlarmsList(fetchedAlarmasCache);
+        });
+
+        tabHistoryAlarms.addEventListener('click', () => {
+            currentAlarmsTab = 'historial';
+            currentAlarmsPage = 1; // Reiniciar página
+            tabHistoryAlarms.classList.add('map-panel__tab--active');
+            tabActiveAlarms.classList.remove('map-panel__tab--active');
+            
+            // Solo renderiza la lista de alarmas en el panel sin afectar el mapa ni los filtros
+            renderAlarmsList(fetchedAlarmasCache);
+        });
+    }
+
+    // ── Lógica del Panel de Filtros Colapsable ──
+    const filterPanel = document.getElementById('filter-sidebar-panel');
+    const filterToggleBtn = document.getElementById('filter-sidebar-toggle-btn');
+
+    if (filterToggleBtn && filterPanel) {
+        filterToggleBtn.addEventListener('click', () => {
+            filterPanel.classList.toggle('filter-panel--collapsed');
+        });
+    }
+
+    // 1. Filtros por Botón de Estado
+    const btnFilterActive = document.getElementById('filter-btn-active');
+    const btnFilterResolved = document.getElementById('filter-btn-resolved');
+
+    if (btnFilterActive && btnFilterResolved) {
+        btnFilterActive.addEventListener('click', () => {
+            currentAlarmsPage = 1; // Reiniciar página
+            if (selectedStatusFilter === 'Active') {
+                // Deseleccionar
+                selectedStatusFilter = null;
+            } else {
+                selectedStatusFilter = 'Active';
+                // Auto-conmutar la pestaña lateral a 'activas'
+                if (tabActiveAlarms && tabHistoryAlarms) {
+                    currentAlarmsTab = 'activas';
+                    tabActiveAlarms.classList.add('map-panel__tab--active');
+                    tabHistoryAlarms.classList.remove('map-panel__tab--active');
+                }
+            }
+            syncFilterButtonsUI();
+            updateAlarmsOnMapAndPanel(fetchedAlarmasCache);
+        });
+
+        btnFilterResolved.addEventListener('click', () => {
+            currentAlarmsPage = 1; // Reiniciar página
+            if (selectedStatusFilter === 'Resolved') {
+                // Deseleccionar
+                selectedStatusFilter = null;
+            } else {
+                selectedStatusFilter = 'Resolved';
+                // Auto-conmutar la pestaña lateral a 'historial'
+                if (tabActiveAlarms && tabHistoryAlarms) {
+                    currentAlarmsTab = 'historial';
+                    tabHistoryAlarms.classList.add('map-panel__tab--active');
+                    tabActiveAlarms.classList.remove('map-panel__tab--active');
+                }
+            }
+            syncFilterButtonsUI();
+            updateAlarmsOnMapAndPanel(fetchedAlarmasCache);
+        });
+    }
+
+    // 2. Filtro por Tipo de Evento (Cards SaaS)
+    function syncTypeCardsUI() {
+        const cardCorte = document.getElementById('type-card-corte');
+        const cardAtenuacion = document.getElementById('type-card-atenuacion');
+        const cardReflexion = document.getElementById('type-card-reflexion');
+        
+        if (cardCorte) cardCorte.classList.remove('filter-type-card--active');
+        if (cardAtenuacion) cardAtenuacion.classList.remove('filter-type-card--active');
+        if (cardReflexion) cardReflexion.classList.remove('filter-type-card--active');
+        
+        if (selectedTypeFilter === 'corte') {
+            if (cardCorte) cardCorte.classList.add('filter-type-card--active');
+        } else if (selectedTypeFilter === 'atenuacion') {
+            if (cardAtenuacion) cardAtenuacion.classList.add('filter-type-card--active');
+        } else if (selectedTypeFilter === 'reflexion') {
+            if (cardReflexion) cardReflexion.classList.add('filter-type-card--active');
+        }
+    }
+
+    const typeCards = document.querySelectorAll('.filter-type-card');
+    typeCards.forEach(card => {
+        card.addEventListener('click', () => {
+            currentAlarmsPage = 1; // Reiniciar página
+            const cardType = card.getAttribute('data-type');
+            if (selectedTypeFilter === cardType) {
+                selectedTypeFilter = null; // Deseleccionar
+            } else {
+                selectedTypeFilter = cardType; // Seleccionar nuevo tipo
+            }
+            syncTypeCardsUI();
+            updateAlarmsOnMapAndPanel(fetchedAlarmasCache);
+        });
+    });
+
+    // 2.5 Filtro por Severidad (Cards SaaS)
+    function syncSeverityCardsUI() {
+        const cardCritical = document.getElementById('severity-card-critical');
+        const cardMajor = document.getElementById('severity-card-major');
+        const cardMinor = document.getElementById('severity-card-minor');
+        const cardWarning = document.getElementById('severity-card-warning');
+        
+        if (cardCritical) cardCritical.classList.remove('filter-severity-card--active');
+        if (cardMajor) cardMajor.classList.remove('filter-severity-card--active');
+        if (cardMinor) cardMinor.classList.remove('filter-severity-card--active');
+        if (cardWarning) cardWarning.classList.remove('filter-severity-card--active');
+        
+        if (selectedSeverityFilter === 'critical') {
+            if (cardCritical) cardCritical.classList.add('filter-severity-card--active');
+        } else if (selectedSeverityFilter === 'major') {
+            if (cardMajor) cardMajor.classList.add('filter-severity-card--active');
+        } else if (selectedSeverityFilter === 'minor') {
+            if (cardMinor) cardMinor.classList.add('filter-severity-card--active');
+        } else if (selectedSeverityFilter === 'warning') {
+            if (cardWarning) cardWarning.classList.add('filter-severity-card--active');
+        }
+    }
+
+    const severityCards = document.querySelectorAll('.filter-severity-card');
+    severityCards.forEach(card => {
+        card.addEventListener('click', () => {
+            currentAlarmsPage = 1; // Reiniciar página
+            const cardSeverity = card.getAttribute('data-severity');
+            if (selectedSeverityFilter === cardSeverity) {
+                selectedSeverityFilter = null; // Deseleccionar
+            } else {
+                selectedSeverityFilter = cardSeverity; // Seleccionar nuevo
+            }
+            syncSeverityCardsUI();
+            updateAlarmsOnMapAndPanel(fetchedAlarmasCache);
+        });
+    });
+
+    // 3. Filtros por Rango de Fechas (Desde / Hasta)
+    const dateFromInput = document.getElementById('filter-date-from');
+    const dateToInput = document.getElementById('filter-date-to');
+    const clearDatesBtn = document.getElementById('filter-clear-date-btn');
+
+    if (dateFromInput) {
+        dateFromInput.addEventListener('input', () => {
+            currentAlarmsPage = 1; // Reiniciar página
+            selectedDateFrom = dateFromInput.value || null;
+            updateAlarmsOnMapAndPanel(fetchedAlarmasCache);
+        });
+    }
+
+    if (dateToInput) {
+        dateToInput.addEventListener('input', () => {
+            currentAlarmsPage = 1; // Reiniciar página
+            selectedDateTo = dateToInput.value || null;
+            updateAlarmsOnMapAndPanel(fetchedAlarmasCache);
+        });
+    }
+
+    if (clearDatesBtn) {
+        clearDatesBtn.addEventListener('click', () => {
+            currentAlarmsPage = 1; // Reiniciar página
+            if (dateFromInput) dateFromInput.value = '';
+            if (dateToInput) dateToInput.value = '';
+            selectedDateFrom = null;
+            selectedDateTo = null;
+            updateAlarmsOnMapAndPanel(fetchedAlarmasCache);
+        });
+    }
+
+    // 4. Restablecer Todos los Filtros
+    const resetAllBtn = document.getElementById('filter-reset-all-btn');
+    if (resetAllBtn) {
+        resetAllBtn.addEventListener('click', () => {
+            currentAlarmsPage = 1; // Reiniciar página
+            selectedStatusFilter = 'Active'; // Retornar al valor por defecto
+            selectedTypeFilter = null;
+            selectedSeverityFilter = null;
+            selectedDateFrom = null;
+            selectedDateTo = null;
+            
+            if (dateFromInput) dateFromInput.value = '';
+            if (dateToInput) dateToInput.value = '';
+            
+            syncFilterButtonsUI();
+            syncTypeCardsUI();
+            syncSeverityCardsUI();
+            updateAlarmsOnMapAndPanel(fetchedAlarmasCache);
+        });
+    }
+
+    // Función para poblar y deslizar el panel de puertos
+
+
+    // Función auxiliar para mover el tooltip de los puertos interactivos
+    function updateTooltipPos(e) {
+        const tooltip = document.getElementById('port-hover-tooltip');
+        if (!tooltip) return;
+        const xOffset = 15;
+        const yOffset = 15;
+        const tooltipWidth = tooltip.offsetWidth;
+        const tooltipHeight = tooltip.offsetHeight;
+        let left = e.clientX + xOffset;
+        let top = e.clientY + yOffset;
+
+        if (left + tooltipWidth > window.innerWidth) {
+            left = e.clientX - tooltipWidth - xOffset;
+        }
+        if (top + tooltipHeight > window.innerHeight) {
+            top = e.clientY - tooltipHeight - yOffset;
+        }
+
+        tooltip.style.left = `${left}px`;
+        tooltip.style.top = `${top}px`;
+    }
+
+    // Función para poblar y deslizar el panel de puertos
+    function showRftsPanel(equipo) {
+        document.getElementById('rfts-panel-title').textContent = equipo.otu;
+        document.getElementById('rfts-panel-location').textContent = equipo.modelo || 'Independencia';
+        
+        const rutasDesc = equipo.rutas_asociadas && equipo.rutas_asociadas.length > 0 
+            ? `Asociado a: ${equipo.rutas_asociadas.join(', ')}`
+            : 'Sin rutas asociadas en el inventario';
+        document.getElementById('rfts-panel-routes-desc').textContent = rutasDesc;
+
+        document.getElementById('rfts-stat-occupied').textContent = equipo.puertos_monitoreados;
+        document.getElementById('rfts-stat-free').textContent = equipo.puertos_libres;
+
+        const totalPuertos = (equipo.puertos || []).length;
+        document.getElementById('rfts-ports-total-text').textContent = `Total: ${totalPuertos}`;
+
+        const gridContainer = document.getElementById('rfts-ports-grid-container');
+        gridContainer.innerHTML = '';
+
+        (equipo.puertos || []).forEach(puerto => {
+            const portItem = document.createElement('div');
+            const esMonitoreado = puerto.estado === 'Monitoreado';
+            portItem.className = esMonitoreado 
+                ? 'rfts-port-item rfts-port-item--monitored' 
+                : 'rfts-port-item rfts-port-item--free';
+            portItem.textContent = puerto.numero;
+
+            const ruta = routesData.find(r => r.nombre === puerto.enlace);
+
+            // 1. Mostrar/Ocultar Tooltip personalizado al pasar el mouse (Hover)
+            portItem.addEventListener('mouseenter', (e) => {
+                const tooltip = document.getElementById('port-hover-tooltip');
+                if (!tooltip) return;
+
+                if (esMonitoreado) {
+                    tooltip.innerHTML = `
+                        <div class="port-tooltip-box__title">Puerto ${escapeHTML(puerto.numero)}</div>
+                        <div class="port-tooltip-box__row">
+                            <span class="port-tooltip-box__label">Estado:</span>
+                            <span class="port-tooltip-box__value" style="color: #10b981; font-weight: 600;">Monitoreado</span>
+                        </div>
+                        <div class="port-tooltip-box__row">
+                            <span class="port-tooltip-box__label">Ruta:</span>
+                            <span class="port-tooltip-box__value" style="word-break: break-all;">${escapeHTML(puerto.enlace || 'N/A')}</span>
+                        </div>
+                        <div class="port-tooltip-box__row">
+                            <span class="port-tooltip-box__label">Distancia:</span>
+                            <span class="port-tooltip-box__value">${escapeHTML(ruta ? ruta.distancia + ' km' : 'N/A')}</span>
+                        </div>
+                        <div class="port-tooltip-box__row">
+                            <span class="port-tooltip-box__label">OLT/PON:</span>
+                            <span class="port-tooltip-box__value">${escapeHTML(ruta ? ruta.olt + ' (' + ruta.pon + ')' : 'N/A')}</span>
+                        </div>
+                    `;
+                } else {
+                    tooltip.innerHTML = `
+                        <div class="port-tooltip-box__title">Puerto ${escapeHTML(puerto.numero)}</div>
+                        <div class="port-tooltip-box__row">
+                            <span class="port-tooltip-box__label">Estado:</span>
+                            <span class="port-tooltip-box__value" style="color: var(--text-tertiary);">Libre</span>
+                        </div>
+                    `;
+                }
+                tooltip.style.display = 'block';
+                updateTooltipPos(e);
+            });
+
+            portItem.addEventListener('mousemove', (e) => {
+                updateTooltipPos(e);
+            });
+
+            portItem.addEventListener('mouseleave', () => {
+                const tooltip = document.getElementById('port-hover-tooltip');
+                if (tooltip) tooltip.style.display = 'none';
+            });
+
+            // 2. Al hacer clic en un puerto monitoreado, dirigir y resaltar su ruta correspondiente
+            if (esMonitoreado && puerto.enlace) {
+                portItem.addEventListener('click', () => {
+                    const polyline = routePolylines[puerto.enlace];
+                    if (polyline && ruta) {
+                        map.flyToBounds(polyline.getBounds(), { maxZoom: 16 });
+                        resaltarRuta(ruta);
+                        // Abrir popup de forma fluida después del vuelo de cámara
+                        setTimeout(() => {
+                            polyline.openPopup(polyline.getBounds().getCenter());
+                        }, 400);
+                    }
+                });
+            }
+
+            gridContainer.appendChild(portItem);
+        });
+
+        document.getElementById('rfts-info-panel').classList.add('active');
+    }
+
+    equiposData.forEach(equipo => {
+        if (equipo.lat && equipo.lon) {
+            const customIcon = L.icon({
+                iconUrl: equipo.imagen,
+                iconSize: [100, 70],
+                iconAnchor: [50, 55]
+            });
+            const marker = L.marker([equipo.lat, equipo.lon], { icon: customIcon }).addTo(equiposLayer);
+            
+            // Al hacer clic, centrar mapa y abrir panel lateral deslizante en vez de popup
+            marker.on('click', (e) => {
+                map.setView([equipo.lat, equipo.lon], 15);
+                showRftsPanel(equipo);
+                L.DomEvent.stopPropagation(e);
+            });
+        }
+    });
+
+    function getEventColor(alarmType) {
+        if (!alarmType) return '#ef4444';
+        const type = alarmType.trim().toLowerCase();
+        if (type.includes('break') || type.includes('cut') || type.includes('corte')) {
+            return '#ef4444'; // Rojo (Corte)
+        } else if (type.includes('loss') || type.includes('attenu') || type.includes('atenu') || type.includes('pérdida') || type.includes('perdida')) {
+            return '#f59e0b'; // Amarillo / Naranja cálido (Atenuación)
+        } else if (type.includes('reflect') || type.includes('reflex') || type.includes('nuevo') || type.includes('new event') || type.includes('eof')) {
+            return '#3b82f6'; // Azul (Reflexión)
+        }
+        return '#ef4444';
+    }
+
+    // Función para crear el icono sonar pulsante personalizado
+    function createPulseIcon(colorHex) {
+        const borderCol = colorHex || '#ef4444';
+        const bgCol = borderCol + '33';
+        return L.divIcon({
+            className: 'pulse-marker-icon',
+            html: `
+                <div class="pulse-sonar" style="border-color: ${borderCol}; background-color: ${bgCol};"></div>
+                <div class="pulse-core" style="background-color: ${borderCol}; box-shadow: 0 0 8px ${borderCol};"></div>
+            `,
+            iconSize: [48, 48],
+            iconAnchor: [24, 24]
+        });
+    }
+
+    // Función para crear el icono estable verde personalizado para alarmas resueltas
+    function createResolvedIcon(colorHex) {
+        const borderCol = colorHex || '#10b981';
+        return L.divIcon({
+            className: 'resolved-marker-icon',
+            html: `
+                <div class="resolved-core" style="background-color: ${borderCol}; box-shadow: 0 0 8px ${borderCol}; border-color: #ffffff;"></div>
+            `,
+            iconSize: [24, 24],
+            iconAnchor: [12, 12]
+        });
+    }
+
+    // 2. Sistema de Actualización y Consulta en Vivo (Polling cada 5 segundos)
+    function fetchLiveAlarms() {
+        fetch('/api/alarmas/activas/')
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    updateAlarmsOnMapAndPanel(data.alarmas);
+                }
+            })
+            .catch(error => console.error("Error consultando alarmas activas:", error));
+    }
+
+    function getFriendlyAlarmType(rawType) {
+        if (!rawType) return 'Falla de Fibra';
+        const type = rawType.trim().toLowerCase();
+        if (type.includes('break') || type.includes('cut') || type.includes('corte')) {
+            return 'Corte de Fibra';
+        } else if (type.includes('loss') || type.includes('attenu') || type.includes('atenu') || type.includes('pérdida') || type.includes('perdida')) {
+            return 'Atenuación';
+        } else if (type.includes('reflect') || type.includes('reflex') || type.includes('nuevo') || type.includes('new event') || type.includes('eof')) {
+            return 'Reflexión';
+        } else if (type.includes('snmp') || type.includes('test') || type.includes('prueba')) {
+            return 'Prueba de Conexión';
+        }
+        return rawType;
+    }
+
+    function updateAlarmsOnMapAndPanel(liveAlarms) {
+        fetchedAlarmasCache = liveAlarms;
+
+        const emptyState = document.getElementById('alarms-empty-state');
+        const statTotalEvents = document.getElementById('stat-total-events');
+        const statCorrectedEvents = document.getElementById('stat-corrected-events');
+        const statActiveEvents = document.getElementById('stat-active-events');
+
+        // Contar activas e historial
+        const activeAlarmsList = liveAlarms.filter(a => a.status === 'Active');
+        const historyAlarmsList = liveAlarms.filter(a => a.status !== 'Active');
+
+        // Actualizar badges de las pestañas
+        const activeBadge = document.getElementById('badge-active-count');
+        const historyBadge = document.getElementById('badge-history-count');
+        if (activeBadge) activeBadge.textContent = activeAlarmsList.length;
+        if (historyBadge) historyBadge.textContent = historyAlarmsList.length;
+
+        // Actualizar las tarjetas del NOC superiores dinámicamente con totales globales
+        if (statTotalEvents) {
+            statTotalEvents.textContent = liveAlarms.length;
+        }
+        if (statCorrectedEvents) {
+            statCorrectedEvents.textContent = historyAlarmsList.length;
+        }
+        if (statActiveEvents) {
+            statActiveEvents.textContent = activeAlarmsList.length;
+        }
+
+        // APLICAR FILTROS
+        let filteredAlarms = [...liveAlarms];
+
+        // ── CALCULAR CANTIDADES DINÁMICAS DE EVENTOS POR TIPO (PARA LAS TARJETAS DE FILTRO) ──
+        let corteCount = 0;
+        let atenuacionCount = 0;
+        let reflexionCount = 0;
+
+        liveAlarms.forEach(a => {
+            // Aplicar todos los otros filtros excepto el tipo
+            // 1. Filtro de Estado
+            if (selectedStatusFilter && a.status !== selectedStatusFilter) return;
+
+            // 2. Filtro de Severidad
+            if (selectedSeverityFilter && (!a.alarm_level || a.alarm_level.toLowerCase() !== selectedSeverityFilter.toLowerCase())) return;
+
+            // 3. Filtros de Fecha (Desde / Hasta)
+            if (selectedDateFrom) {
+                if (!a.timestamp || a.timestamp.substring(0, 10) < selectedDateFrom) return;
+            }
+            if (selectedDateTo) {
+                if (!a.timestamp || a.timestamp.substring(0, 10) > selectedDateTo) return;
+            }
+
+            // Si pasa los otros filtros, clasificar por tipo de evento
+            const friendly = getFriendlyAlarmType(a.alarm_type).toLowerCase();
+            if (friendly.includes('corte')) {
+                corteCount++;
+            } else if (friendly.includes('atenu')) {
+                atenuacionCount++;
+            } else if (friendly.includes('reflex') || friendly.includes('nuevo')) {
+                reflexionCount++;
+            }
+        });
+
+        // Actualizar UI de los contadores en las tarjetas de tipo
+        const countCorteEl = document.getElementById('count-type-corte');
+        const countAtenuacionEl = document.getElementById('count-type-atenuacion');
+        const countReflexionEl = document.getElementById('count-type-reflexion');
+
+        if (countCorteEl) countCorteEl.textContent = corteCount;
+        if (countAtenuacionEl) countAtenuacionEl.textContent = atenuacionCount;
+        if (countReflexionEl) countReflexionEl.textContent = reflexionCount;
+
+        // ── CALCULAR CANTIDADES DINÁMICAS DE EVENTOS POR SEVERIDAD (PARA LAS TARJETAS DE FILTRO) ──
+        let criticalCount = 0;
+        let majorCount = 0;
+        let minorCount = 0;
+        let warningCount = 0;
+
+        liveAlarms.forEach(a => {
+            // Aplicar todos los otros filtros excepto la severidad
+            // 1. Filtro de Estado
+            if (selectedStatusFilter && a.status !== selectedStatusFilter) return;
+
+            // 2. Filtro de Tipo de Evento
+            if (selectedTypeFilter) {
+                const friendly = getFriendlyAlarmType(a.alarm_type).toLowerCase();
+                if (selectedTypeFilter === 'corte') {
+                    if (!friendly.includes('corte')) return;
+                } else if (selectedTypeFilter === 'atenuacion') {
+                    if (!friendly.includes('atenu')) return;
+                } else if (selectedTypeFilter === 'reflexion') {
+                    if (!friendly.includes('reflex') && !friendly.includes('nuevo')) return;
+                }
+            }
+
+            // 3. Filtros de Fecha (Desde / Hasta)
+            if (selectedDateFrom) {
+                if (!a.timestamp || a.timestamp.substring(0, 10) < selectedDateFrom) return;
+            }
+            if (selectedDateTo) {
+                if (!a.timestamp || a.timestamp.substring(0, 10) > selectedDateTo) return;
+            }
+
+            // Si pasa los otros filtros, clasificar por severidad
+            const lvl = (a.alarm_level || 'warning').toLowerCase();
+            if (lvl === 'critical') {
+                criticalCount++;
+            } else if (lvl === 'major') {
+                majorCount++;
+            } else if (lvl === 'minor') {
+                minorCount++;
+            } else if (lvl === 'warning') {
+                warningCount++;
+            }
+        });
+
+        // Actualizar UI de los contadores en las tarjetas de severidad
+        const countCriticalEl = document.getElementById('count-severity-critical');
+        const countMajorEl = document.getElementById('count-severity-major');
+        const countMinorEl = document.getElementById('count-severity-minor');
+        const countWarningEl = document.getElementById('count-severity-warning');
+
+        if (countCriticalEl) countCriticalEl.textContent = criticalCount;
+        if (countMajorEl) countMajorEl.textContent = majorCount;
+        if (countMinorEl) countMinorEl.textContent = minorCount;
+        if (countWarningEl) countWarningEl.textContent = warningCount;
+
+        // Sincronizar estilos activos de las tarjetas
+        if (typeof syncTypeCardsUI === 'function') syncTypeCardsUI();
+        if (typeof syncSeverityCardsUI === 'function') syncSeverityCardsUI();
+
+        // 1. Filtro de Estado (Botones)
+        if (selectedStatusFilter) {
+            filteredAlarms = filteredAlarms.filter(a => a.status === selectedStatusFilter);
+        }
+
+        // 2. Filtro por Tipo de Evento
+        if (selectedTypeFilter) {
+            filteredAlarms = filteredAlarms.filter(a => {
+                const friendly = getFriendlyAlarmType(a.alarm_type).toLowerCase();
+                if (selectedTypeFilter === 'corte') {
+                    return friendly.includes('corte');
+                } else if (selectedTypeFilter === 'atenuacion') {
+                    return friendly.includes('atenu');
+                } else if (selectedTypeFilter === 'reflexion') {
+                    return friendly.includes('reflex') || friendly.includes('nuevo');
+                }
+                return true;
+            });
+        }
+
+        // 2.5 Filtro por Severidad (alarm_level)
+        if (selectedSeverityFilter) {
+            filteredAlarms = filteredAlarms.filter(a => {
+                if (!a.alarm_level) return false;
+                return a.alarm_level.toLowerCase() === selectedSeverityFilter.toLowerCase();
+            });
+        }
+
+        // 3. Filtro de Rango de Fechas (Desde / Hasta)
+        if (selectedDateFrom) {
+            filteredAlarms = filteredAlarms.filter(a => {
+                if (!a.timestamp) return false;
+                const alarmDateStr = a.timestamp.substring(0, 10);
+                return alarmDateStr >= selectedDateFrom;
+            });
+        }
+        if (selectedDateTo) {
+            filteredAlarms = filteredAlarms.filter(a => {
+                if (!a.timestamp) return false;
+                const alarmDateStr = a.timestamp.substring(0, 10);
+                return alarmDateStr <= selectedDateTo;
+            });
+        }
+
+        // IDs de alarmas filtradas
+        const filteredIds = new Set(filteredAlarms.map(a => a.id));
+
+        // 1. Remover marcadores de alarmas que ya no vienen en la lista filtrada
+        Object.keys(alarmMarkers).forEach(id => {
+            if (!filteredIds.has(parseInt(id))) {
+                map.removeLayer(alarmMarkers[id]);
+                delete alarmMarkers[id];
+            }
+        });
+
+        // Restaurar colores por defecto para todas las rutas que NO tengan falla activa
+        const activeRoutesSet = new Set(activeAlarmsList.map(a => a.route_name));
+        Object.keys(routePolylines).forEach(routeName => {
+            if (activeRoutesSet.has(routeName)) {
+                routePolylines[routeName].setStyle({ color: '#ef4444', weight: 7 }); // Ajustado a 7 para fallas activas
+            } else {
+                routePolylines[routeName].setStyle({ color: '#10b981', weight: 5 }); // Ajustado a 5 para estado normal
+            }
+        });
+
+        // 2. Agregar o actualizar marcadores para las alarmas filtradas
+        filteredAlarms.forEach((alarm, index) => {
+            const existingMarker = alarmMarkers[alarm.id];
+            const isNew = !existingMarker;
+            const esActiva = alarm.status === 'Active';
+
+            // Detectar si el estado o el tipo de una alarma existente cambió para recrear su marcador con el color e información correcta
+            let shouldCreate = isNew;
+            if (existingMarker) {
+                const markerIconOptions = existingMarker.options.icon.options;
+                const isPulseIcon = markerIconOptions.className && markerIconOptions.className.includes('pulse');
+                
+                // Recrear si cambió de estado (activo/corregido) O si el tipo de evento de alarma cambió de tipo
+                if (
+                    (esActiva && !isPulseIcon) || 
+                    (!esActiva && isPulseIcon) ||
+                    (existingMarker.alarm_type !== alarm.alarm_type)
+                ) {
+                    map.removeLayer(existingMarker);
+                    shouldCreate = true;
+                }
+            }
+
+            if (shouldCreate) {
+                const friendlyType = getFriendlyAlarmType(alarm.alarm_type);
+                const markerColor = getEventColor(alarm.alarm_type);
+                
+                const icon = esActiva ? createPulseIcon(markerColor) : createResolvedIcon(markerColor);
+                const marker = L.marker([alarm.latitude, alarm.longitude], {
+                    icon: icon
+                }).addTo(map);
+
+                // Guardar el tipo de alarma para futuras validaciones de actualización
+                marker.alarm_type = alarm.alarm_type;
+
+                // Popup personalizado dependiente del estado (Blinking vs Estático)
+                let popupContent = '';
+                if (esActiva) {
+                    popupContent = `
+                        <div style="font-family: var(--font-family); font-size: var(--text-sm); line-height: 1.4; width: 240px;">
+                            <h4 style="margin: 0 0 6px 0; font-weight: 700; color: ${markerColor}; text-transform: uppercase; display: flex; align-items: center; gap: 6px;">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                                ${escapeHTML(friendlyType.toUpperCase())} ACTIVO
+                            </h4>
+                            <p style="margin: 2px 0;"><strong>Ruta:</strong> ${escapeHTML(alarm.route_name)}</p>
+                            <p style="margin: 2px 0;"><strong>RFTS / Puerto:</strong> ${escapeHTML(alarm.device_serial)} (Puerto ${escapeHTML(alarm.port)})</p>
+                            <p style="margin: 2px 0;"><strong>Distancia Falla:</strong> <span style="color: ${markerColor}; font-weight: 700;">${escapeHTML(alarm.distance ? alarm.distance.toFixed(2) + ' m' : 'Desconocida')}</span></p>
+                            <p style="margin: 2px 0; font-size: 10px; color: var(--text-tertiary);"><strong>Inicio de Evento:</strong> ${escapeHTML(alarm.timestamp)}</p>
+                            ${alarm.veex_alarm_id ? `
+                            <div style="margin-top: 8px;">
+                                <a href="/mapa/visor-traza/${encodeURIComponent(String(alarm.veex_alarm_id))}/" style="background-color: #3b82f6; color: white; padding: 4px 8px; border-radius: 4px; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; font-size: 11px;">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                                    Abrir Visor de Traza
+                                </a>
+                            </div>
+                            ` : ''}
+                        </div>
+                    `;
+                } else {
+                    popupContent = `
+                        <div style="font-family: var(--font-family); font-size: var(--text-sm); line-height: 1.4; width: 240px;">
+                            <h4 style="margin: 0 0 6px 0; font-weight: 700; color: ${markerColor}; text-transform: uppercase; display: flex; align-items: center; gap: 6px;">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+                                ${escapeHTML(friendlyType.toUpperCase())} CORREGIDO
+                            </h4>
+                            <p style="margin: 2px 0;"><strong>Ruta:</strong> ${escapeHTML(alarm.route_name)}</p>
+                            <p style="margin: 2px 0;"><strong>RFTS / Puerto:</strong> ${escapeHTML(alarm.device_serial)} (Puerto ${escapeHTML(alarm.port)})</p>
+                            <p style="margin: 2px 0;"><strong>Distancia Falla:</strong> <span style="color: ${markerColor}; font-weight: 700;">${alarm.distance ? alarm.distance.toFixed(2) + ' m' : 'Desconocida'}</span></p>
+                            <p style="margin: 2px 0; font-size: 10px; color: var(--text-tertiary);"><strong>Inicio de Evento:</strong> ${escapeHTML(alarm.timestamp)}</p>
+                            <p style="margin: 2px 0; font-size: 10px; color: var(--text-tertiary);"><strong>Hora Corrección:</strong> ${escapeHTML(alarm.fecha_resolucion || 'Recientemente')}</p>
+                            ${alarm.veex_alarm_id ? `
+                            <div style="margin-top: 8px;">
+                                <a href="/mapa/visor-traza/${encodeURIComponent(String(alarm.veex_alarm_id))}/" style="background-color: #3b82f6; color: white; padding: 4px 8px; border-radius: 4px; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; font-size: 11px;">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                                    Visor de Traza Histórica
+                                </a>
+                            </div>
+                            ` : ''}
+                        </div>
+                    `;
+                }
+
+                marker.bindPopup(popupContent);
+                alarmMarkers[alarm.id] = marker;
+
+                // Si es una alarma activa nueva y es la más reciente, volar hacia ella
+                if (esActiva && isNew && index === 0) {
+                    map.flyTo([alarm.latitude, alarm.longitude], 15, {
+                        animate: true,
+                        duration: 1.5
+                    });
+                }
+            }
+        });
+
+        // 3. Renderizar la lista del panel lateral según la pestaña activa y filtros aplicados
+        renderAlarmsList(filteredAlarms);
+    }
+
+    function renderPaginationControls(totalItems) {
+        const pagContainer = document.getElementById('alarms-pagination-container');
+        const prevBtn = document.getElementById('pagination-prev-btn');
+        const nextBtn = document.getElementById('pagination-next-btn');
+        const infoText = document.getElementById('pagination-info-text');
+        
+        if (!pagContainer) return;
+        
+        if (totalItems <= ITEMS_PER_PAGE) {
+            pagContainer.style.display = 'none';
+            return;
+        }
+        
+        pagContainer.style.display = 'flex';
+        const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE) || 1;
+        
+        if (currentAlarmsPage > totalPages) {
+            currentAlarmsPage = totalPages;
+        }
+        if (currentAlarmsPage < 1) {
+            currentAlarmsPage = 1;
+        }
+        
+        if (infoText) {
+            infoText.textContent = `Pág. ${currentAlarmsPage} de ${totalPages}`;
+        }
+        
+        if (prevBtn) {
+            prevBtn.disabled = (currentAlarmsPage === 1);
+        }
+        if (nextBtn) {
+            nextBtn.disabled = (currentAlarmsPage === totalPages);
+        }
+    }
+
+    function renderAlarmsList(liveAlarms) {
+        const alarmsContainer = document.getElementById('alarms-list-container');
+        const emptyState = document.getElementById('alarms-empty-state');
+        if (!alarmsContainer) return;
+
+        // Eliminar tarjetas viejas
+        const oldCards = alarmsContainer.querySelectorAll('.alarm-card');
+        oldCards.forEach(c => c.remove());
+
+        // Filtrar alarmas correspondientes a la pestaña actual
+        const filteredAlarms = liveAlarms.filter(alarm => {
+            if (currentAlarmsTab === 'activas') {
+                return alarm.status === 'Active';
+            } else {
+                return alarm.status !== 'Active';
+            }
+        });
+
+        // Mostrar u ocultar el Empty State
+        if (filteredAlarms.length === 0) {
+            emptyState.style.display = 'flex';
+            const emptyTitle = emptyState.querySelector('p[style*="font-weight: 700"]');
+            const emptyText = emptyState.querySelector('p[style*="font-size: 11px"]');
+            if (currentAlarmsTab === 'activas') {
+                if (emptyTitle) emptyTitle.textContent = "NOC Limpio";
+                if (emptyText) emptyText.textContent = "Monitoreando sin alarmas activas en la red en este momento.";
+            } else {
+                if (emptyTitle) emptyTitle.textContent = "Historial Vacío";
+                if (emptyText) emptyText.textContent = "No se registran alarmas corregidas o resueltas en el historial recientemente.";
+            }
+            renderPaginationControls(0);
+            return;
+        }
+
+        emptyState.style.display = 'none';
+
+        // Rebanar alarmas para la página actual
+        const totalItems = filteredAlarms.length;
+        const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE) || 1;
+        
+        if (currentAlarmsPage > totalPages) {
+            currentAlarmsPage = totalPages;
+        }
+        if (currentAlarmsPage < 1) {
+            currentAlarmsPage = 1;
+        }
+        
+        const startIndex = (currentAlarmsPage - 1) * ITEMS_PER_PAGE;
+        const endIndex = startIndex + ITEMS_PER_PAGE;
+        const pageAlarms = filteredAlarms.slice(startIndex, endIndex);
+
+        // Dibujar tarjetas vigentes
+        pageAlarms.forEach(alarm => {
+            const card = document.createElement('div');
+            
+            const esActiva = alarm.status === 'Active';
+            const friendlyType = getFriendlyAlarmType(alarm.alarm_type);
+            const markerColor = getEventColor(alarm.alarm_type);
+            
+            const isAttenuation = markerColor === '#f59e0b';
+            const isReflection = markerColor === '#3b82f6';
+            
+            let claseCard = '';
+            let claseTag = '';
+            let textoTag = '';
+            
+            if (esActiva) {
+                if (isAttenuation) {
+                    claseCard = 'alarm-card alarm-card--warning';
+                    claseTag = 'alarm-card__tag alarm-card__tag--warning';
+                    textoTag = 'ACTIVO';
+                } else if (isReflection) {
+                    claseCard = 'alarm-card alarm-card--info';
+                    claseTag = 'alarm-card__tag alarm-card__tag--info';
+                    textoTag = 'ACTIVO';
+                } else {
+                    claseCard = 'alarm-card alarm-card--critical';
+                    claseTag = 'alarm-card__tag';
+                    textoTag = 'ACTIVO';
+                }
+            } else {
+                claseCard = 'alarm-card alarm-card--cleared';
+                claseTag = 'alarm-card__tag alarm-card__tag--cleared';
+                textoTag = 'CORREGIDO';
+            }
+
+            // Para el sombreado del Tipo de Evento según el color
+            let typeTagClass = '';
+            const origColor = getEventColor(alarm.alarm_type);
+            if (origColor === '#f59e0b') {
+                typeTagClass = 'alarm-card__tag alarm-card__tag--warning';
+            } else if (origColor === '#3b82f6') {
+                typeTagClass = 'alarm-card__tag alarm-card__tag--info';
+            } else if (esActiva) {
+                typeTagClass = 'alarm-card__tag'; // Rojo para corte activo
+            } else {
+                // Si está corregido pero era corte (Rojo)
+                typeTagClass = 'alarm-card__tag';
+            }
+
+            // Para el sombreado de la Severidad
+            let severityTagClass = 'alarm-card__tag';
+            const level = (alarm.alarm_level || '').toLowerCase();
+            if (level === 'critical') {
+                severityTagClass = 'alarm-card__tag';
+            } else if (level === 'major') {
+                severityTagClass = 'alarm-card__tag alarm-card__tag--warning';
+            } else {
+                severityTagClass = 'alarm-card__tag alarm-card__tag--info';
+            }
+
+            card.className = claseCard;
+            card.innerHTML = `
+                <div class="alarm-card__header">
+                    <span>${escapeHTML(alarm.route_name)}</span>
+                </div>
+                <div class="alarm-card__details">
+                    <span><strong>Tipo de Evento:</strong> <span class="${typeTagClass}" style="margin-left: 6px; display: inline-block;">${escapeHTML(friendlyType)}</span></span>
+                    <span><strong>Severidad:</strong> <span class="${severityTagClass}" style="margin-left: 6px; display: inline-block; font-size: 9px; padding: 2px 6px;">${escapeHTML((alarm.alarm_level || 'Warning').toUpperCase())}</span></span>
+                    <span><strong>ID Evento:</strong> <span style="margin-left: 6px; font-weight: 700; color: #0ea5e9;">${escapeHTML(alarm.id)}</span>
+                        ${alarm.veex_alarm_id ? `
+                        <a href="/mapa/visor-traza/${encodeURIComponent(String(alarm.veex_alarm_id))}/?incident_id=${encodeURIComponent(String(alarm.id))}" title="Abrir visor interactivo" style="margin-left: 8px; font-size: 10px; background-color: #3b82f6; color: white; padding: 2px 8px; border-radius: 4px; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; transition: background 0.2s;" onmouseover="this.style.backgroundColor='#2563eb'" onmouseout="this.style.backgroundColor='#3b82f6'">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                            Ver Traza
+                        </a>
+                        ` : ''}
+                    </span>
+                    <span><strong>Distancia:</strong> ${escapeHTML(alarm.distance ? alarm.distance.toFixed(2) + ' metros' : 'Validando...')}</span>
+                    <span><strong>RFTS/Puerto:</strong> ${escapeHTML(alarm.device_serial)} (Pto ${escapeHTML(alarm.port)})</span>
+                </div>
+                <div class="alarm-card__time" style="display: flex; flex-direction: column; gap: 2px; text-align: left; margin-top: 4px;">
+                    <div><strong>Inicio:</strong> ${escapeHTML(alarm.timestamp)}</div>
+                    ${!esActiva && alarm.fecha_resolucion ? `<div><strong>Resolución:</strong> ${escapeHTML(alarm.fecha_resolucion)}</div>` : ''}
+                </div>
+            `;
+
+            // Volar y hacer zoom en el mapa al hacer clic en la tarjeta del panel lateral
+            card.addEventListener('click', () => {
+                if (alarmMarkers[alarm.id]) {
+                    map.flyTo([alarm.latitude, alarm.longitude], 16, {
+                        animate: true,
+                        duration: 1.2
+                    });
+                    setTimeout(() => {
+                        alarmMarkers[alarm.id].openPopup();
+                    }, 1300);
+                } else {
+                    map.flyTo([alarm.latitude, alarm.longitude], 15, {
+                        animate: true,
+                        duration: 1.2
+                    });
+                }
+                
+                // Resaltar la polilínea de la ruta
+                const ruta = routesData.find(r => r.nombre === alarm.route_name);
+                if (ruta) {
+                    resaltarRuta(ruta);
+                }
+            });
+
+            alarmsContainer.appendChild(card);
+        });
+
+        // Dibujar barra de paginación
+        renderPaginationControls(totalItems);
+    }
+
+    // Configurar listeners de clicks en botones de paginación
+    const prevPageBtn = document.getElementById('pagination-prev-btn');
+    const nextPageBtn = document.getElementById('pagination-next-btn');
+    
+    if (prevPageBtn) {
+        prevPageBtn.addEventListener('click', () => {
+            if (currentAlarmsPage > 1) {
+                currentAlarmsPage--;
+                renderAlarmsList(fetchedAlarmasCache);
+            }
+        });
+    }
+    
+    if (nextPageBtn) {
+        nextPageBtn.addEventListener('click', () => {
+            const filteredAlarms = fetchedAlarmasCache.filter(alarm => {
+                if (currentAlarmsTab === 'activas') {
+                    return alarm.status === 'Active';
+                } else {
+                    return alarm.status !== 'Active';
+                }
+            });
+            const totalPages = Math.ceil(filteredAlarms.length / ITEMS_PER_PAGE) || 1;
+            if (currentAlarmsPage < totalPages) {
+                currentAlarmsPage++;
+                renderAlarmsList(fetchedAlarmasCache);
+            }
+        });
+    }
+
+    // Sincronizar UI de filtros iniciales al cargar la página (para que muestre Activas por defecto)
+    syncFilterButtonsUI();
+    if (typeof syncTypeCardsUI === 'function') syncTypeCardsUI();
+    if (typeof syncSeverityCardsUI === 'function') syncSeverityCardsUI();
+
+    // ── Lógica del Buscador Flotante de Rutas (SaaS Moderno) ──
+    const searchInput = document.getElementById('route-search-input');
+    const searchSuggestions = document.getElementById('route-search-suggestions');
+    const searchClearBtn = document.getElementById('route-search-clear-btn');
+
+    if (searchInput && searchSuggestions && searchClearBtn) {
+        searchInput.addEventListener('input', () => {
+            const query = searchInput.value.trim().toLowerCase();
+            
+            if (query.length === 0) {
+                searchSuggestions.style.display = 'none';
+                searchSuggestions.innerHTML = '';
+                searchClearBtn.style.display = 'none';
+                return;
+            }
+
+            searchClearBtn.style.display = 'flex';
+
+            // Filtrar las rutas que coincidan con la búsqueda
+            const matches = routesData.filter(r => r.nombre.toLowerCase().includes(query)).slice(0, 6);
+
+            if (matches.length === 0) {
+                searchSuggestions.innerHTML = `
+                    <div style="padding: 10px 14px; font-size: 13px; color: var(--text-tertiary); text-align: center;">
+                        No se encontraron rutas
+                    </div>
+                `;
+            } else {
+                searchSuggestions.replaceChildren();
+                matches.forEach(ruta => {
+                    const item = document.createElement('div');
+                    item.className = 'search-suggestion-item';
+                    item.dataset.route = ruta.nombre;
+                    item.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="#3b82f6" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>';
+                    const label = document.createElement('span');
+                    label.textContent = ruta.nombre;
+                    item.appendChild(label);
+                    searchSuggestions.appendChild(item);
+                });
+
+                // Agregar listeners a los elementos de sugerencia
+                searchSuggestions.querySelectorAll('.search-suggestion-item').forEach(item => {
+                    item.addEventListener('click', () => {
+                        const routeName = item.getAttribute('data-route');
+                        searchInput.value = routeName;
+                        searchSuggestions.style.display = 'none';
+                        buscarYCentrarRuta(routeName);
+                    });
+                });
+            }
+
+            searchSuggestions.style.display = 'block';
+        });
+
+        // Evento al presionar Enter
+        searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                const query = searchInput.value.trim().toLowerCase();
+                if (query.length > 0) {
+                    const exactMatch = routesData.find(r => r.nombre.toLowerCase() === query);
+                    const partialMatch = exactMatch || routesData.find(r => r.nombre.toLowerCase().includes(query));
+                    
+                    if (partialMatch) {
+                        searchInput.value = partialMatch.nombre;
+                        searchSuggestions.style.display = 'none';
+                        buscarYCentrarRuta(partialMatch.nombre);
+                    }
+                }
+            }
+        });
+
+        // Limpiar búsqueda
+        searchClearBtn.addEventListener('click', () => {
+            searchInput.value = '';
+            searchSuggestions.style.display = 'none';
+            searchSuggestions.innerHTML = '';
+            searchClearBtn.style.display = 'none';
+            limpiarResaltadoRuta();
+        });
+
+        // Ocultar sugerencias al hacer clic fuera
+        document.addEventListener('click', (e) => {
+            if (!searchInput.contains(e.target) && !searchSuggestions.contains(e.target)) {
+                searchSuggestions.style.display = 'none';
+            }
+        });
+    }
+
+    function buscarYCentrarRuta(nombreRuta) {
+        const ruta = routesData.find(r => r.nombre.toLowerCase() === nombreRuta.toLowerCase());
+        if (ruta) {
+            const polyline = routePolylines[ruta.nombre];
+            if (polyline) {
+                map.flyToBounds(polyline.getBounds(), { maxZoom: 16 });
+                resaltarRuta(ruta);
+                
+                // Abrir popup de forma fluida después de centrar el mapa
+                setTimeout(() => {
+                    polyline.openPopup(polyline.getBounds().getCenter());
+                }, 1300);
+            }
+        }
+    }
+
+    // ── Lógica de Maximizar / Pantalla Completa del Mapa (SaaS Moderno) ──
+    const mapMaximizeBtn = document.getElementById('map-maximize-btn');
+    const maximizeIcon = document.getElementById('maximize-icon');
+    const minimizeIcon = document.getElementById('minimize-icon');
+
+    if (mapMaximizeBtn && maximizeIcon && minimizeIcon) {
+        mapMaximizeBtn.addEventListener('click', () => {
+            const isFullscreen = document.body.classList.toggle('fullscreen-map-mode');
+            
+            if (isFullscreen) {
+                maximizeIcon.style.display = 'none';
+                minimizeIcon.style.display = 'block';
+                mapMaximizeBtn.title = 'Restaurar mapa';
+            } else {
+                maximizeIcon.style.display = 'block';
+                minimizeIcon.style.display = 'none';
+                mapMaximizeBtn.title = 'Maximizar mapa';
+            }
+            
+            // Invalidar el tamaño del mapa de Leaflet para redibujar correctamente
+            map.invalidateSize();
+            setTimeout(() => {
+                map.invalidateSize();
+            }, 300);
+        });
+    }
+
+    // Iniciar el ciclo de consultas periódicas (Cada 5 segundos)
+    fetchLiveAlarms();
+    setInterval(fetchLiveAlarms, 5000);
+</script>
+{% endblock %}

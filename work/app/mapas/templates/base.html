@@ -1,0 +1,111 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="es" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Fiber Genius{% endblock %}</title>
+    <link rel="icon" type="image/png" href="{% static 'img/cotenerlogov3.png' %}">
+
+    <link rel="stylesheet" href="{% static 'css/tokens.css' %}">
+    <link rel="stylesheet" href="{% static 'css/components.css' %}">
+    <link rel="stylesheet" href="{% static 'css/layout.css' %}?v=20260723-scroll-1">
+    <link rel="stylesheet" href="{% static 'css/operational-ui.css' %}?v=20260723-1">
+    {% block extra_css %}{% endblock %}
+
+    <script>
+        (function() {
+            var theme = localStorage.getItem('fg-theme') || 'light';
+            document.documentElement.setAttribute('data-theme', theme);
+        })();
+    </script>
+</head>
+<body>
+    <a class="skip-link" href="#contenido-principal">Saltar al contenido principal</a>
+    <div class="app">
+        {% include "partials/_sidebar.html" %}
+
+        <div class="main-wrapper">
+            {% block topbar %}
+            <header class="topbar" id="topbar">
+                <div class="topbar__left">
+                    <button class="topbar__mobile-toggle" id="mobile-menu-toggle" type="button" aria-label="Abrir menú principal" aria-controls="sidebar" aria-expanded="false">
+                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+                    </button>
+                    <button class="sidebar__toggle" id="sidebar-toggle" type="button" aria-label="Colapsar menú principal" aria-controls="sidebar" aria-expanded="true">
+                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+                    </button>
+                    <div class="topbar__breadcrumb"><span>{% block page_title %}Fiber Genius — Inventario y operación{% endblock %}</span></div>
+                </div>
+
+                {% if user.is_authenticated %}
+                <div class="global-search" data-search-url="{% url 'busqueda_global' %}">
+                    <label class="sr-only" for="global-search-input">Buscar en todo el inventario</label>
+                    <svg class="global-search__icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                    <input id="global-search-input" type="search" placeholder="Buscar site, ODF, puerto, troncal o fibra…" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="global-search-results" aria-expanded="false">
+                    <kbd class="global-search__shortcut" aria-hidden="true">Ctrl K</kbd>
+                    <div id="global-search-results" class="global-search__results" role="listbox" aria-label="Resultados del inventario" hidden></div>
+                </div>
+                {% endif %}
+
+                <div class="topbar__right">
+                    <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Cambiar tema visual">
+                        <svg class="icon-sun" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4"/></svg>
+                        <svg class="icon-moon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:none"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/></svg>
+                    </button>
+
+                    {% if user.is_authenticated %}
+                    <div class="user-dropdown" id="user-dropdown">
+                        <button class="user-dropdown__trigger" id="user-dropdown-trigger" type="button" aria-haspopup="menu" aria-expanded="false">
+                            <div class="user-dropdown__avatar" aria-hidden="true">{{ user.first_name|default:user.username|first|upper }}</div>
+                            <span class="user-dropdown__name">{{ user.username }}</span>
+                            <svg class="user-dropdown__chevron" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+                        </button>
+                        <div class="user-dropdown__menu" role="menu">
+                            <div class="user-dropdown__menu-header">
+                                <div class="name">{{ user.get_full_name|default:user.username|title }}</div>
+                                {% if user.get_full_name %}<div class="username">@{{ user.username }}</div>{% endif %}
+                            </div>
+                            <a href="{% url 'cambiar_mi_password' %}" class="user-dropdown__menu-item" role="menuitem">Cambiar contraseña</a>
+                            <form action="{% url 'logout' %}" method="post" style="margin:0">
+                                {% csrf_token %}
+                                <button type="submit" class="user-dropdown__menu-item user-dropdown__menu-item--danger" role="menuitem">Cerrar sesión</button>
+                            </form>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </header>
+            {% endblock %}
+
+            <main id="contenido-principal" class="main-content {% block content_class %}{% endblock %}" tabindex="-1">
+                {% include "partials/_messages.html" %}
+                {% block content %}{% endblock %}
+            </main>
+        </div>
+    </div>
+
+    <div id="asset-drawer-backdrop" class="asset-drawer__backdrop" hidden></div>
+    <aside id="asset-drawer" class="asset-drawer" role="dialog" aria-modal="true" aria-labelledby="asset-drawer-title" aria-hidden="true" tabindex="-1">
+        <header class="asset-drawer__header">
+            <div>
+                <p class="asset-drawer__eyebrow">Vista operativa 360°</p>
+                <h2 id="asset-drawer-title">Detalle del activo</h2>
+                <p id="asset-drawer-subtitle"></p>
+            </div>
+            <button id="asset-drawer-close" class="icon-button" type="button" aria-label="Cerrar ficha del activo">
+                <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 6 12 12M18 6 6 18"/></svg>
+            </button>
+        </header>
+        <div id="asset-drawer-content" class="asset-drawer__content" aria-live="polite"></div>
+    </aside>
+
+    <div id="fg-toast-region" class="fg-toast-region" aria-live="polite" aria-atomic="true"></div>
+
+    <script src="{% static 'js/app.js' %}"></script>
+    <script src="{% static 'js/safe-dom.js' %}"></script>
+    <script src="{% static 'js/operational-ui.js' %}"></script>
+    <script src="{% static 'js/global-search.js' %}?v=20260723-1"></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}ODF — Fiber Genius{% endblock %}
+{% block page_title %}Inventario / ODF{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/odf-inventory.css' %}?v=20260727-unified-inspector-1">
+<link rel="stylesheet" href="{% static 'css/network-inventory.css' %}?v=20260727-panel-fixes-1">
+<link rel="stylesheet" href="{% static 'css/inventory-filters.css' %}?v=20260723-1">
+{% endblock %}
+
+{% block content %}
+<div
+    id="odf-workbench"
+    class="odf-page"
+    data-api-url="{% url 'api_odfs_paginados' %}"
+    data-export-url="{% url 'exportar_inventario' 'odfs' 'xlsx' %}"
+    data-create-url="{% url 'api_create_odf' %}"
+    data-update-url="{% url 'api_update_odf' %}"
+    data-delete-url="{% url 'api_delete_odf' %}"
+    data-can-add="{% if perms.mapas.add_inventarioodf %}true{% else %}false{% endif %}"
+    data-can-edit="{% if perms.mapas.change_inventarioodf %}true{% else %}false{% endif %}"
+    data-can-delete="{% if perms.mapas.delete_inventarioodf %}true{% else %}false{% endif %}"
+>
+    <header class="odf-heading">
+        <div>
+            <span class="odf-heading__breadcrumb">Inventario <b>/</b> ODF</span>
+            <h1>ODF</h1>
+            <p>Capacidad, ocupación y ubicación física del inventario óptico.</p>
+        </div>
+        <div class="odf-heading__actions">
+            {% if perms.mapas.add_inventarioodf %}
+            <button id="odf-new" class="odf-primary-action" type="button">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+                Nuevo ODF
+            </button>
+            {% endif %}
+            <a id="odf-export" class="odf-secondary-action" href="{% url 'exportar_inventario' 'odfs' 'xlsx' %}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>
+                Exportar Excel
+            </a>
+        </div>
+    </header>
+
+    <section class="odf-kpis" aria-label="Resumen de inventario ODF">
+        <article class="odf-kpi odf-kpi--blue"><span class="odf-kpi__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h10M7 16h10"/></svg></span><div><span>Total ODF</span><strong id="odf-stat-total">0</strong><small>Equipos registrados</small></div></article>
+        <article class="odf-kpi odf-kpi--purple"><span class="odf-kpi__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 14a8 8 0 1 1 16 0"/><path d="m12 14 4-5"/><path d="M6 18h12"/></svg></span><div><span>Capacidad total</span><strong id="odf-stat-capacity">0</strong><small>Puertos instalados</small></div></article>
+        <article class="odf-kpi odf-kpi--green"><span class="odf-kpi__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg></span><div><span>Puertos ocupados</span><strong id="odf-stat-used">0</strong><small>Conexiones en uso</small></div></article>
+        <article class="odf-kpi odf-kpi--cyan"><span class="odf-kpi__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 9h2M14 9h2M8 14h2M14 14h2"/></svg></span><div><span>Puertos libres</span><strong id="odf-stat-free">0</strong><small>Capacidad disponible</small></div></article>
+        <article class="odf-kpi odf-kpi--amber"><span class="odf-kpi__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12v18l-6-4-6 4V3Z"/></svg></span><div><span>Reservados</span><strong id="odf-stat-reserved">0</strong><small>Asignados para uso futuro</small></div></article>
+        <article class="odf-kpi odf-kpi--orange"><span class="odf-kpi__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21V8l8-4v17M12 10h8v11M8 10v.01M8 14v.01M8 18v.01M16 14v.01M16 18v.01"/></svg></span><div><span>Sites con ODF</span><strong id="odf-stat-sites">0</strong><small>Ubicaciones cubiertas</small></div></article>
+    </section>
+
+    <main class="odf-analysis-main">
+    <section class="odf-filter-card inventory-filter-card" aria-label="Filtros de ODF">
+        <form id="odf-filters" class="odf-filters inventory-filter-grid inventory-filter-grid--seven" role="search">
+            <label class="odf-search"><span class="sr-only">Buscar</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input id="odf-query" name="q" type="search" placeholder="Buscar ODF, rack, sala o conector" autocomplete="off"></label>
+            <label class="odf-filter-field"><span>Site</span><select id="odf-site-filter" name="site"><option value="">Todos</option>{% for value in sites_odf %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
+            <label class="odf-filter-field"><span>Sala</span><select id="odf-room-filter" name="sala"><option value="">Todas</option>{% for value in salas_odf %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
+            <label class="odf-filter-field"><span>Rack</span><select id="odf-rack-filter" name="rack"><option value="">Todos</option>{% for value in racks_odf %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
+            <label class="odf-filter-field"><span>Estado</span><select id="odf-status-filter" name="estado"><option value="">Todos</option>{% for value in estados_odf %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
+            <label class="odf-filter-field"><span>Disponibilidad</span><select id="odf-capacity-filter" name="capacidad"><option value="">Todas</option><option value="disponible">Con puertos disponibles</option><option value="sin_disponibilidad">Sin puertos disponibles</option></select></label>
+            <label class="odf-filter-field odf-filter-field--size"><span>Filas</span><select id="odf-page-size" name="page_size"><option value="10">10</option><option value="25" selected>25</option><option value="50">50</option><option value="100">100</option><option value="200">200</option></select></label>
+            <div class="odf-filter-actions"><button class="odf-btn odf-btn--primary" type="submit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16l-6 7v5l-4 2v-7Z"/></svg>Aplicar filtros</button><button id="odf-clear" class="odf-btn" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 1 0 2-5.3L4 9M4 4v5h5"/></svg>Limpiar</button></div>
+            <p id="odf-export-status" class="odf-export-status" role="status" aria-live="polite"></p>
+        </form>
+    </section>
+
+    <section class="odf-table-card" aria-labelledby="odf-table-title">
+        <div id="odf-message" class="odf-message" role="status" aria-live="polite"></div>
+        <div class="odf-table-wrap"><table class="odf-table"><caption id="odf-table-title" class="sr-only">ODF filtrados</caption><thead><tr><th scope="col">Site</th><th scope="col">Sala</th><th scope="col">Rack</th><th scope="col">Nombre ODF</th><th scope="col">Capacidad</th><th scope="col">Ocupados</th><th scope="col">Libres</th><th scope="col">Reservados</th><th scope="col">Conector</th><th scope="col">Estado</th><th scope="col">Acciones</th></tr></thead><tbody id="odf-body"></tbody></table></div>
+        <footer class="odf-footer"><p id="odf-page-info">Mostrando 0 a 0 de 0 resultados</p><nav id="odf-pagination" class="odf-pagination" aria-label="Paginación de ODF"></nav><div class="odf-footer__fallback"><button id="odf-previous" class="odf-page-arrow" type="button" aria-label="Página anterior">‹</button><button id="odf-next" class="odf-page-arrow" type="button" aria-label="Página siguiente">›</button></div></footer>
+    </section>
+
+    </main>
+    <aside id="network-inspector" class="network-inspector" aria-label="Análisis contextual de ODF">
+        <header class="network-inspector__header">
+            <div class="network-inspector__title"><strong>Análisis de ODF</strong><span>Resumen filtrado y detalle seleccionado</span></div>
+            <button id="network-inspector-toggle" type="button" aria-label="Contraer panel" aria-expanded="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg></button>
+        </header>
+        <div class="network-inspector__body">
+            <section class="network-inspector-card network-inspector-card--summary">
+                <header><div><strong>Distribución por estado</strong><span>Según los filtros activos</span></div></header>
+                <div id="odf-inspector-summary" class="network-state-summary"></div>
+            </section>
+            <section class="network-inspector-card network-inspector-card--ranking">
+                <header><div><strong>ODF con mayor ocupación</strong><span>Top 5 del inventario filtrado</span></div></header>
+                <div id="odf-occupancy-ranking" class="network-ranking"></div>
+            </section>
+            <section class="network-inspector-card network-inspector-card--detail">
+                <header><div><strong>ODF seleccionado</strong><span>Ubicación y capacidad</span></div></header>
+                <div id="odf-inspector-empty" class="network-route-empty"><span>▦</span><strong>Ningún ODF seleccionado</strong><p>Haz clic en una fila para revisar su capacidad y abrir sus puertos.</p></div>
+                <div id="odf-inspector-detail" class="network-asset-detail" hidden></div>
+            </section>
+        </div>
+    </aside>
+
+    {% if perms.mapas.add_inventarioodf or perms.mapas.change_inventarioodf %}
+    <dialog id="odf-editor" class="odf-dialog">
+        <form id="odf-editor-form" method="dialog">
+            {% csrf_token %}<input id="odf-editor-id" type="hidden">
+            <header><div><span>Inventario interno</span><h2 id="odf-editor-title">Nuevo ODF / Rack</h2><p id="odf-editor-mode">Registra el equipo y su ubicación física.</p></div><button id="odf-editor-close" type="button" aria-label="Cerrar">×</button></header>
+            <div class="odf-dialog__intro">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>
+                <div><strong>Jerarquía del inventario</strong><p>El ODF quedará asociado a una ubicación <b>Site → Sala → Rack</b>. Puedes elegir valores existentes o escribir una ubicación nueva.</p></div>
+            </div>
+            <section class="odf-dialog__section">
+                <div class="odf-dialog__section-title"><span>1</span><div><h3>Ubicación física</h3><p>Indica exactamente dónde está instalado el ODF.</p></div></div>
+                <div class="odf-dialog__grid">
+                    <label><span>Site *</span><input id="odf-editor-site" list="odf-sites-list" maxlength="150" placeholder="Ej. HUB-001" required><small>Nodo o sede principal.</small></label>
+                    <label><span>Sala técnica *</span><input id="odf-editor-room" list="odf-rooms-list" maxlength="100" placeholder="Ej. SALA-FO-01" required><small>Sala donde se encuentra el rack.</small></label>
+                    <label class="odf-dialog__wide"><span>Rack *</span><input id="odf-editor-rack" list="odf-racks-list" maxlength="100" placeholder="Ej. RACK-03" required><small>Bastidor físico que contiene el ODF.</small></label>
+                </div>
+            </section>
+            <section class="odf-dialog__section">
+                <div class="odf-dialog__section-title"><span>2</span><div><h3>Configuración del ODF</h3><p>Define su identificación y capacidad operativa.</p></div></div>
+                <div class="odf-dialog__grid">
+                    <label><span>Nombre ODF *</span><input id="odf-editor-name" maxlength="150" placeholder="Ej. ODF-TR01-A" required><small>Debe ser único en Fiber Genius.</small></label>
+                    <label><span>Capacidad (puertos) *</span><input id="odf-editor-capacity" type="number" min="0" value="0" placeholder="Ej. 48" required><small>Inicializa la disponibilidad del equipo.</small></label>
+                    <label><span>Tipo de conector</span><input id="odf-editor-connector" maxlength="100" placeholder="Ej. SC/APC"><small>Formato óptico predominante.</small></label>
+                    <label><span>Estado</span><select id="odf-editor-status"><option value="Operativo">Operativo</option><option value="Activo">Activo</option><option value="En mantenimiento">En mantenimiento</option><option value="Fuera de servicio">Fuera de servicio</option><option value="Inactivo">Inactivo</option>{% for value in estados_odf %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select><small>Condición actual del equipo.</small></label>
+                </div>
+            </section>
+            <datalist id="odf-sites-list">{% for value in sites_odf %}<option value="{{ value }}">{% endfor %}</datalist>
+            <datalist id="odf-rooms-list">{% for value in salas_odf %}<option value="{{ value }}">{% endfor %}</datalist>
+            <datalist id="odf-racks-list">{% for value in racks_odf %}<option value="{{ value }}">{% endfor %}</datalist>
+            <p id="odf-editor-message" class="odf-dialog__message" role="status"></p>
+            <footer><p>Los campos marcados con * son obligatorios.</p><div><button id="odf-editor-cancel" class="odf-btn" type="button">Cancelar</button><button id="odf-editor-submit" class="odf-btn odf-btn--primary" type="submit">Crear ODF</button></div></footer>
+        </form>
+    </dialog>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/odf-inventory.js' %}?v=20260727-unified-inspector-1"></script>
+{% endblock %}
