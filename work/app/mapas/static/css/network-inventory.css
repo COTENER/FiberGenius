@@ -456,6 +456,27 @@
     background: rgba(15, 103, 223, .075);
     box-shadow: inset 3px 0 0 var(--odf-blue);
 }
+#routes-workbench [data-resource="tramos"] .odf-table {
+    min-width: 1330px;
+    table-layout: fixed;
+}
+#routes-workbench [data-resource="tramos"] .odf-table :is(th, td) {
+    box-sizing: border-box;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+#routes-workbench [data-resource="tramos"] .odf-table :is(th, td):nth-child(1) { width: 255px; }
+#routes-workbench [data-resource="tramos"] .odf-table :is(th, td):nth-child(2) { width: 72px; }
+#routes-workbench [data-resource="tramos"] .odf-table :is(th, td):nth-child(3) { width: 120px; }
+#routes-workbench [data-resource="tramos"] .odf-table :is(th, td):nth-child(4) { width: 150px; }
+#routes-workbench [data-resource="tramos"] .odf-table :is(th, td):nth-child(5) { width: 92px; }
+#routes-workbench [data-resource="tramos"] .odf-table :is(th, td):nth-child(6) { width: 92px; }
+#routes-workbench [data-resource="tramos"] .odf-table :is(th, td):nth-child(7) { width: 108px; }
+#routes-workbench [data-resource="tramos"] .odf-table :is(th, td):nth-child(8) { width: 78px; }
+#routes-workbench [data-resource="tramos"] .odf-table :is(th, td):nth-child(9) { width: 72px; }
+#routes-workbench [data-resource="tramos"] .odf-table :is(th, td):nth-child(10) { width: 82px; }
+#routes-workbench [data-resource="tramos"] .odf-table :is(th, td):nth-child(11) { width: 100px; }
+#routes-workbench [data-resource="tramos"] .odf-table :is(th, td):nth-child(12) { width: 90px; }
 .network-asset-detail {
     display: grid;
     gap: 10px;

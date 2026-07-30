@@ -21,6 +21,12 @@ from django.http import Http404, HttpResponse, JsonResponse, StreamingHttpRespon
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
 
+from ..distancias import (
+    etiqueta_fuente,
+    redondear_km,
+    resolver_distancia_ruta,
+    resolver_distancia_tramo,
+)
 from ..models import (
     CoordenadaRuta,
     DetallePuertoODF,
@@ -37,6 +43,7 @@ from ..models import (
 PAGE_SIZES = {10, 25, 48, 50, 100, 200}
 PERMISO_POR_TIPO = {
     "troncal": "mapas.view_ruta",
+    "tramo": "mapas.view_inventariotramo",
     "odf": "mapas.view_inventarioodf",
     "puerto": "mapas.view_detallepuertoodf",
     "fibra": "mapas.view_inventariofibra",
@@ -316,22 +323,20 @@ def _estadisticas_capacidad_rutas(ids_ruta):
         for ruta_id, datos in estadisticas.items()
         if not datos["registros"]
     ]
-    for fila in (
-        InventarioTramo.objects.filter(ruta_id__in=ids_sin_fibras)
-        .values("ruta_id")
-        .annotate(
-            ocupados=Sum("hilos_ocupados"),
-            libres=Sum("hilos_libres"),
-        )
+    for ruta in Ruta.objects.filter(pk__in=ids_sin_fibras).only(
+        'hilos_ocupados_declarados',
+        'hilos_libres_declarados',
+        'hilos_reservados_declarados',
     ):
-        datos = estadisticas[fila["ruta_id"]]
-        datos["ocupados"] = fila["ocupados"] or 0
-        datos["libres"] = fila["libres"] or 0
+        datos = estadisticas[ruta.pk]
+        datos["ocupados"] = ruta.hilos_ocupados_declarados or 0
+        datos["libres"] = ruta.hilos_libres_declarados or 0
+        datos["reservados"] = ruta.hilos_reservados_declarados or 0
     return estadisticas
 
 
 def _filtro_troncales(request):
-    queryset = Ruta.objects.filter(tramos_inventario__isnull=False)
+    queryset = Ruta.objects.all()
     termino = request.GET.get("q", "").strip()[:150]
     tipo = request.GET.get("tipo", "").strip()[:50]
     estado = request.GET.get("estado", "").strip()[:50]
@@ -341,6 +346,10 @@ def _filtro_troncales(request):
         queryset = queryset.filter(
             Q(nombre__icontains=termino)
             | Q(olt__icontains=termino)
+            | Q(hub_site__icontains=termino)
+            | Q(destino__icontains=termino)
+            | Q(odf_nombre__icontains=termino)
+            | Q(serial__icontains=termino)
             | Q(tramos_inventario__hub_site__icontains=termino)
             | Q(tramos_inventario__destino__icontains=termino)
             | Q(tramos_inventario__odf_nombre__icontains=termino)
@@ -349,10 +358,16 @@ def _filtro_troncales(request):
     if tipo:
         queryset = queryset.filter(tramos_inventario__tipo_trazado__iexact=tipo)
     if estado:
-        queryset = queryset.filter(tramos_inventario__estado__iexact=estado)
+        queryset = queryset.filter(
+            Q(estado__iexact=estado)
+            | Q(tramos_inventario__estado__iexact=estado)
+        )
     if site:
         queryset = queryset.filter(
-            Q(tramos_inventario__hub_site__iexact=site)
+            Q(hub_site__iexact=site)
+            | Q(origen__iexact=site)
+            | Q(destino__iexact=site)
+            | Q(tramos_inventario__hub_site__iexact=site)
             | Q(tramos_inventario__origen__iexact=site)
             | Q(tramos_inventario__destino__iexact=site)
         )
@@ -379,7 +394,11 @@ def _filtro_troncales(request):
         queryset.distinct()
         .prefetch_related("tramos_inventario")
         .annotate(
-            tramos_total=Count("tramos_inventario", distinct=True),
+            tramos_total=Count(
+                "tramos_inventario",
+                filter=Q(tramos_inventario__vigente=True),
+                distinct=True,
+            ),
             fibras_total=Count("fibras_inventario", distinct=True),
             reservas_total=Count("reservas", distinct=True),
         )
@@ -405,36 +424,73 @@ def _tipo_troncal(tramos):
 def _serializar_troncales(troncales):
     resultado = []
     for troncal in troncales:
-        tramos = list(troncal.tramos_inventario.all())
+        tramos = [
+            tramo
+            for tramo in troncal.tramos_inventario.all()
+            if tramo.vigente
+        ]
         primero = tramos[0] if tramos else None
         ultimo = tramos[-1] if tramos else None
-        distancia_m = troncal.distancia_m
-        if distancia_m is None:
-            distancia_m = sum(tramo.distancia_m or 0 for tramo in tramos)
+        distancia = resolver_distancia_ruta(troncal, tramos)
         resultado.append(
             {
                 "id": troncal.pk,
                 "nombre": troncal.nombre,
                 "origen": _texto(
-                    (primero.hub_site or primero.origen) if primero else troncal.olt
+                    troncal.hub_site
+                    or troncal.origen
+                    or (
+                        (primero.hub_site or primero.origen)
+                        if primero
+                        else troncal.olt
+                    )
                 ),
-                "destino": _texto(ultimo.destino if ultimo else None),
+                "destino": _texto(
+                    troncal.destino
+                    or (ultimo.destino if ultimo else None)
+                ),
                 "tipo": _tipo_troncal(tramos),
-                "distancia_km": round((distancia_m or 0) / 1000, 2),
+                "distancia_km": redondear_km(distancia),
+                "distancia_fuente": distancia.fuente,
+                "distancia_documentada_km": (
+                    round(troncal.distancia_documentada_m / 1000, 3)
+                    if troncal.distancia_documentada_m is not None
+                    else None
+                ),
                 "tramos": troncal.tramos_total,
-                "capacidad": _texto(primero.capacidad if primero else None),
-                "estado": _texto(primero.estado if primero else None, "Sin estado"),
+                "capacidad": _texto(
+                    troncal.capacidad_hilos_declarada
+                    if troncal.capacidad_hilos_declarada is not None
+                    else (primero.capacidad if primero else None)
+                ),
+                "estado": _texto(
+                    troncal.estado
+                    or (primero.estado if primero else None),
+                    "Sin estado",
+                ),
                 "fibras": troncal.fibras_total,
                 "reservas": troncal.reservas_total,
-                "odf": _texto(primero.odf_nombre if primero else None),
-                "tipo_fibra": _texto(primero.tipo_fibra if primero else None),
-                "marca_modelo": _texto(primero.marca_modelo if primero else None),
-                "serial": _texto(primero.serial if primero else None),
-                "mufas": (primero.mufas or 0) if primero else 0,
-                "splitters": (primero.splitters or 0) if primero else 0,
-                "hilos_ocupados": (primero.hilos_ocupados or 0) if primero else 0,
-                "hilos_libres": (primero.hilos_libres or 0) if primero else 0,
-                "reserva_km": round((primero.reservas_m or 0) / 1000, 3) if primero else 0,
+                "odf": _texto(
+                    troncal.odf_nombre
+                    or (primero.odf_nombre if primero else None)
+                ),
+                "tipo_fibra": _texto(
+                    troncal.tipo_fibra
+                    or (primero.tipo_fibra if primero else None)
+                ),
+                "marca_modelo": _texto(
+                    troncal.marca_modelo
+                    or (primero.marca_modelo if primero else None)
+                ),
+                "serial": _texto(
+                    troncal.serial
+                    or (primero.serial if primero else None)
+                ),
+                "mufas": troncal.mufas,
+                "splitters": troncal.splitters,
+                "hilos_ocupados": troncal.hilos_ocupados_declarados or 0,
+                "hilos_libres": troncal.hilos_libres_declarados or 0,
+                "reserva_km": round((troncal.reservas_m or 0) / 1000, 3),
                 "detail_url": reverse("asset_360", args=["troncal", troncal.pk]),
             }
         )
@@ -442,13 +498,35 @@ def _serializar_troncales(troncales):
 
 
 def _resumen_troncales(queryset):
-    base = Ruta.objects.filter(pk__in=queryset.values("pk"))
-    ids_ruta = list(base.values_list("pk", flat=True))
-    distancia = base.aggregate(total=Sum("distancia_m"))["total"] or 0
+    base = Ruta.objects.filter(
+        pk__in=queryset.values("pk")
+    ).prefetch_related("tramos_inventario")
+    rutas = list(base)
+    ids_ruta = [ruta.pk for ruta in rutas]
+    distancias = [
+        resolver_distancia_ruta(
+            ruta,
+            list(ruta.tramos_inventario.all()),
+        )
+        for ruta in rutas
+    ]
+    conocidas = [
+        distancia.valor_m
+        for distancia in distancias
+        if distancia.valor_m is not None
+    ]
     resumen = {
-        "total": base.count(),
-        "distancia_km": round(distancia / 1000, 2),
-        "tramos": InventarioTramo.objects.filter(ruta__in=base).count(),
+        "total": len(rutas),
+        "distancia_km": (
+            round(sum(conocidas) / 1000, 2)
+            if conocidas
+            else None
+        ),
+        "distancias_sin_dato": len(distancias) - len(conocidas),
+        "tramos": InventarioTramo.objects.filter(
+            ruta__in=base,
+            vigente=True,
+        ).count(),
         "fibras": InventarioFibra.objects.filter(ruta__in=base).count(),
         "reservas": Reserva.objects.filter(ruta__in=base).count(),
     }
@@ -475,7 +553,7 @@ def _resumen_troncales(queryset):
 
 
 def _filtro_tramos(request):
-    queryset = InventarioTramo.objects.select_related("ruta")
+    queryset = InventarioTramo.objects.select_related("ruta").filter(vigente=True)
     termino = request.GET.get("q", "").strip()[:150]
     tipo = request.GET.get("tipo", "").strip()[:50]
     estado = request.GET.get("estado", "").strip()[:50]
@@ -483,6 +561,12 @@ def _filtro_tramos(request):
     if termino:
         queryset = queryset.filter(
             Q(ruta__nombre__icontains=termino)
+            | Q(ruta__hub_site__icontains=termino)
+            | Q(ruta__origen__icontains=termino)
+            | Q(ruta__destino__icontains=termino)
+            | Q(ruta__odf_nombre__icontains=termino)
+            | Q(ruta__serial__icontains=termino)
+            | Q(codigo_tramo__icontains=termino)
             | Q(origen__icontains=termino)
             | Q(destino__icontains=termino)
             | Q(hub_site__icontains=termino)
@@ -499,38 +583,88 @@ def _filtro_tramos(request):
 
 
 def _serializar_tramos(tramos):
-    return [
-        {
+    tramos = list(tramos)
+    estadisticas = _estadisticas_capacidad_rutas(
+        {tramo.ruta_id for tramo in tramos}
+    )
+    reservas_por_tramo = {
+        fila["tramo_id"]: fila["total"] or 0
+        for fila in Reserva.objects.filter(
+            tramo_id__in={tramo.pk for tramo in tramos}
+        ).values("tramo_id").annotate(total=Sum("reserva_m"))
+    }
+    resultado = []
+    for tramo in tramos:
+        distancia = resolver_distancia_tramo(tramo)
+        resultado.append({
             "id": tramo.pk,
             "ruta_id": tramo.ruta_id,
             "troncal": tramo.ruta.nombre,
             "secuencia": tramo.tramo_secuencia,
+            "codigo": tramo.codigo_tramo,
             "origen": _texto(tramo.origen or tramo.hub_site),
             "destino": _texto(tramo.destino),
             "tipo": _texto(tramo.tipo_trazado, "Sin clasificar"),
-            "distancia_km": round((tramo.distancia_m or 0) / 1000, 2),
-            "capacidad": _texto(tramo.capacidad),
-            "ocupados": tramo.hilos_ocupados or 0,
-            "libres": tramo.hilos_libres or 0,
-            "reservas_m": tramo.reservas_m or 0,
+            "distancia_km": redondear_km(distancia),
+            "distancia_fuente": distancia.fuente,
+            "distancia_documentada_km": (
+                round(tramo.distancia_documentada_m / 1000, 2)
+                if tramo.distancia_documentada_m is not None
+                else None
+            ),
+            "capacidad": (
+                tramo.ruta.capacidad_hilos_declarada
+                if tramo.ruta.capacidad_hilos_declarada is not None
+                else sum(
+                    estadisticas.get(tramo.ruta_id, {}).get(clave, 0)
+                    for clave in ("ocupados", "reservados", "libres")
+                )
+            ),
+            "ocupados": estadisticas.get(
+                tramo.ruta_id, {}
+            ).get("ocupados", 0),
+            "reservados": estadisticas.get(
+                tramo.ruta_id, {}
+            ).get("reservados", 0),
+            "libres": estadisticas.get(tramo.ruta_id, {}).get("libres", 0),
+            "reservas_m": round(reservas_por_tramo.get(tramo.pk, 0), 2),
             "estado": _texto(tramo.estado, "Sin estado"),
-            "detail_url": reverse("asset_360", args=["troncal", tramo.ruta_id]),
-        }
-        for tramo in tramos
+            "detail_url": reverse("asset_360", args=["tramo", tramo.pk]),
+        })
+    return resultado
+
+
+def _resumen_tramos_legacy(queryset):
+    tramos_distancia = list(
+        queryset.select_related(None).only(
+            "id",
+            "distancia_m",
+            "distancia_documentada_m",
+        )
+    )
+    distancias = [
+        resolver_distancia_tramo(tramo)
+        for tramo in tramos_distancia
     ]
-
-
-def _resumen_tramos(queryset):
+    conocidas = [
+        distancia.valor_m
+        for distancia in distancias
+        if distancia.valor_m is not None
+    ]
     resumen = queryset.aggregate(
         total=Count("id"),
-        distancia_m=Sum("distancia_m"),
         aereos=Count("id", filter=Q(tipo_trazado__iexact="AEREO")),
         soterrados=Count("id", filter=Q(tipo_trazado__iexact="SOTERRADO")),
         reservas_m=Sum("reservas_m"),
     )
     resultado = {
         "total": resumen["total"] or 0,
-        "distancia_km": round((resumen["distancia_m"] or 0) / 1000, 2),
+        "distancia_km": (
+            round(sum(conocidas) / 1000, 2)
+            if conocidas
+            else None
+        ),
+        "distancias_sin_dato": len(distancias) - len(conocidas),
         "aereos": resumen["aereos"] or 0,
         "soterrados": resumen["soterrados"] or 0,
         "reservas_m": round(resumen["reservas_m"] or 0, 2),
@@ -562,6 +696,74 @@ def _resumen_tramos(queryset):
         reverse=True,
     )
     resultado["top_ocupacion"] = ranking[:5]
+    return resultado
+
+
+def _resumen_tramos(queryset):
+    tramos_distancia = list(
+        queryset.select_related(None).only(
+            "id",
+            "distancia_m",
+            "distancia_documentada_m",
+        )
+    )
+    distancias = [
+        resolver_distancia_tramo(tramo)
+        for tramo in tramos_distancia
+    ]
+    conocidas = [
+        distancia.valor_m
+        for distancia in distancias
+        if distancia.valor_m is not None
+    ]
+    resumen = queryset.aggregate(
+        total=Count("id"),
+        aereos=Count("id", filter=Q(tipo_trazado__iexact="AEREO")),
+        soterrados=Count("id", filter=Q(tipo_trazado__iexact="SOTERRADO")),
+        hibridos=Count("id", filter=Q(tipo_trazado__iexact="HIBRIDO")),
+        troncales=Count("ruta_id", distinct=True),
+    )
+    reservas_m = Reserva.objects.filter(
+        tramo_id__in=queryset.values("pk")
+    ).aggregate(total=Sum("reserva_m"))["total"] or 0
+    total = resumen["total"] or 0
+    clasificados = sum(
+        resumen[clave] or 0
+        for clave in ("aereos", "soterrados", "hibridos")
+    )
+    resultado = {
+        "total": total,
+        "distancia_km": (
+            round(sum(conocidas) / 1000, 2)
+            if conocidas
+            else None
+        ),
+        "distancias_sin_dato": len(distancias) - len(conocidas),
+        "aereos": resumen["aereos"] or 0,
+        "soterrados": resumen["soterrados"] or 0,
+        "hibridos": resumen["hibridos"] or 0,
+        "sin_clasificar": max(total - clasificados, 0),
+        "reservas_m": round(reservas_m, 2),
+        "troncales": resumen["troncales"] or 0,
+    }
+    top_troncales = list(
+        queryset.values("ruta_id", "ruta__nombre").annotate(
+            tramos=Count("id"),
+        ).order_by("-tramos", "ruta__nombre")[:5]
+    )
+    maximo = max((fila["tramos"] for fila in top_troncales), default=0)
+    resultado["top_troncales"] = [
+        {
+            "id": fila["ruta_id"],
+            "nombre": fila["ruta__nombre"],
+            "tramos": fila["tramos"],
+            "proporcion": (
+                round(fila["tramos"] / maximo * 100, 1)
+                if maximo else 0
+            ),
+        }
+        for fila in top_troncales
+    ]
     return resultado
 
 
@@ -821,6 +1023,126 @@ def api_elementos_paginados(request):
 
 @login_required
 @permission_required("mapas.view_ruta", raise_exception=True)
+def api_panel_tramo(request):
+    """Detalle del tramo seleccionado, con capacidad heredada de su troncal."""
+    tramo_id = request.GET.get("tramo_id", "").strip()
+    if not tramo_id.isdigit():
+        return JsonResponse(
+            {"status": "error", "message": "Tramo no válido."},
+            status=400,
+        )
+    tramo = get_object_or_404(
+        InventarioTramo.objects.select_related("ruta"),
+        pk=tramo_id,
+        vigente=True,
+    )
+    ruta = tramo.ruta
+    fibras = InventarioFibra.objects.filter(ruta=ruta)
+    resumen_fibras = _resumen_fibras(fibras)
+    reservas = Reserva.objects.filter(tramo=tramo).order_by(
+        "orden_en_ruta", "nombre", "id"
+    )
+    coordenadas = list(
+        CoordenadaRuta.objects.filter(tramo=tramo)
+        .order_by("orden")
+        .values_list("latitud", "longitud")
+    )
+    if not coordenadas:
+        coordenadas = list(
+            CoordenadaRuta.objects.filter(
+                ruta=ruta,
+                tramo_secuencia=tramo.tramo_secuencia,
+            )
+            .order_by("orden")
+            .values_list("latitud", "longitud")
+        )
+    if len(coordenadas) > 500:
+        ultimo = len(coordenadas) - 1
+        coordenadas = [
+            coordenadas[round(indice * ultimo / 499)]
+            for indice in range(500)
+        ]
+    reserva_elementos_m = reservas.aggregate(
+        total=Sum("reserva_m")
+    )["total"] or 0
+    capacidad = ruta.capacidad_hilos_declarada
+    if capacidad is None:
+        capacidad = resumen_fibras["total"]
+
+    distancia = resolver_distancia_tramo(tramo)
+    return JsonResponse({
+        "status": "success",
+        "asset_kind": "tramo",
+        "ruta": {
+            "id": ruta.pk,
+            "tramo_id": tramo.pk,
+            "nombre": f"{ruta.nombre} · {tramo.codigo_tramo}",
+            "troncal": ruta.nombre,
+            "codigo": tramo.codigo_tramo,
+            "secuencia": tramo.tramo_secuencia,
+            "distancia_km": redondear_km(distancia),
+            "distancia_fuente": distancia.fuente,
+            "distancia_documentada_km": (
+                round(tramo.distancia_documentada_m / 1000, 2)
+                if tramo.distancia_documentada_m is not None
+                else None
+            ),
+            "tramos": 1,
+            "tipos_trazado": [_texto(
+                tramo.tipo_trazado,
+                "SIN CLASIFICAR",
+            )],
+            "origen": _texto(tramo.origen or tramo.hub_site),
+            "destino": _texto(tramo.destino),
+            "estado": _texto(tramo.estado, "Sin estado"),
+            "capacidad": capacidad,
+            "mapa_url": (
+                f'{reverse("mapa_inventario")}?'
+                f'{urlencode({"ruta": ruta.nombre, "tramo": tramo.tramo_secuencia})}'
+            ),
+        },
+        "fibras": {
+            "total": resumen_fibras["total"],
+            "libres": resumen_fibras["libres"],
+            "ocupadas": resumen_fibras["ocupadas"],
+            "reservadas": resumen_fibras["reservadas"],
+            "utilizacion": round(
+                (
+                    (
+                        resumen_fibras["ocupadas"]
+                        + resumen_fibras["reservadas"]
+                    )
+                    / resumen_fibras["total"]
+                ) * 100,
+                1,
+            ) if resumen_fibras["total"] else 0,
+        },
+        "reservas": {
+            "elementos": reservas.count(),
+            "reserva_m": round(
+                reserva_elementos_m or tramo.reservas_m or 0,
+                2,
+            ),
+        },
+        "coordenadas": [
+            [float(latitud), float(longitud)]
+            for latitud, longitud in coordenadas
+        ],
+        "puntos": [
+            {
+                "nombre": reserva.nombre,
+                "tipo": _texto(reserva.tipo, "SIN CLASIFICAR"),
+                "latitud": float(reserva.latitud),
+                "longitud": float(reserva.longitud),
+                "reserva_m": reserva.reserva_m or 0,
+            }
+            for reserva in reservas[:100]
+        ],
+    })
+
+
+@login_required
+@permission_required("mapas.view_ruta", raise_exception=True)
 def api_panel_troncal(request):
     """Detalle contextual de una troncal, solicitado únicamente al seleccionarla."""
     ruta_id = request.GET.get("ruta_id", "").strip()
@@ -831,7 +1153,10 @@ def api_panel_troncal(request):
         )
     ruta = get_object_or_404(Ruta, pk=ruta_id)
     fibras = InventarioFibra.objects.filter(ruta=ruta)
-    tramos = InventarioTramo.objects.filter(ruta=ruta).order_by("tramo_secuencia")
+    tramos = InventarioTramo.objects.filter(
+        ruta=ruta,
+        vigente=True,
+    ).order_by("tramo_secuencia")
     reservas = Reserva.objects.filter(ruta=ruta).order_by(
         "orden_en_ruta", "nombre", "id"
     )
@@ -854,15 +1179,18 @@ def api_panel_troncal(request):
             "odf_nombre", "tipo_trazado",
         )
     )
-    distancia_m = tramos.aggregate(total=Sum("distancia_m"))["total"] or 0
+    tramos_lista = list(tramos)
+    distancia = resolver_distancia_ruta(ruta, tramos_lista)
     reservas_m = reservas.aggregate(total=Sum("reserva_m"))["total"] or 0
 
     return JsonResponse({
         "status": "success",
+        "asset_kind": "troncal",
         "ruta": {
             "id": ruta.pk,
             "nombre": ruta.nombre,
-            "distancia_km": round(distancia_m / 1000, 2),
+            "distancia_km": redondear_km(distancia),
+            "distancia_fuente": distancia.fuente,
             "tramos": len(extremos),
             "tipos_trazado": sorted({
                 tramo["tipo_trazado"]
@@ -870,11 +1198,21 @@ def api_panel_troncal(request):
                 if tramo["tipo_trazado"]
             }),
             "origen": _texto(
-                extremos[0]["odf_nombre"]
-                or extremos[0]["hub_site"]
-                or extremos[0]["origen"]
-            ) if extremos else "—",
-            "destino": _texto(extremos[-1]["destino"]) if extremos else "—",
+                ruta.odf_nombre
+                or ruta.hub_site
+                or ruta.origen
+                or (
+                    extremos[0]["odf_nombre"]
+                    or extremos[0]["hub_site"]
+                    or extremos[0]["origen"]
+                    if extremos
+                    else None
+                )
+            ),
+            "destino": _texto(
+                ruta.destino
+                or (extremos[-1]["destino"] if extremos else None)
+            ),
             "mapa_url": f'{reverse("mapa_inventario")}?{urlencode({"ruta": ruta.nombre})}',
         },
         "fibras": {
@@ -892,7 +1230,7 @@ def api_panel_troncal(request):
         },
         "reservas": {
             "elementos": reservas.count(),
-            "reserva_m": round(reservas_m, 2),
+            "reserva_m": round(reservas_m or ruta.reservas_m or 0, 2),
         },
         "coordenadas": [
             [float(latitud), float(longitud)]
@@ -934,23 +1272,71 @@ def create_tramo_manual(request):
         secuencia = _numero_no_negativo(data, "tramo_secuencia", entero=True)
         if secuencia < 1:
             raise ValueError("La secuencia debe ser mayor que cero")
+        codigo = str(data.get("codigo_tramo", "")).strip().upper()
+        if not codigo:
+            codigo = f"T{secuencia:03d}"
+        distancia_raw = data.get("distancia_km")
+        distancia_m = (
+            None
+            if distancia_raw in (None, "")
+            else _numero_no_negativo(data, "distancia_km") * 1000
+        )
+        capacidad_texto = str(data.get("capacidad", "")).strip()
+        capacidad_numero = None
+        if capacidad_texto:
+            import re
+            coincidencia = re.search(r"\d+", capacidad_texto)
+            if not coincidencia:
+                raise ValueError("La capacidad debe contener un número de hilos")
+            capacidad_numero = int(coincidencia.group(0))
+            if (
+                ruta.capacidad_hilos_declarada is not None
+                and ruta.capacidad_hilos_declarada != capacidad_numero
+            ):
+                raise ValueError(
+                    "La capacidad pertenece a la troncal y no puede variar por tramo"
+                )
         with transaction.atomic():
             tramo = InventarioTramo.objects.create(
                 ruta=ruta,
                 tramo_secuencia=secuencia,
+                codigo_tramo=codigo,
+                estado_calidad=InventarioTramo.CALIDAD_PENDIENTE,
                 tipo_trazado=str(data.get("tipo_trazado", "")).strip(),
                 estado=str(data.get("estado", "")).strip(),
-                distancia_m=_numero_no_negativo(data, "distancia_km") * 1000,
-                reservas_m=_numero_no_negativo(data, "reservas_m"),
-                mufas=_numero_no_negativo(data, "mufas", entero=True),
-                splitters=_numero_no_negativo(data, "splitters", entero=True),
-                capacidad=str(data.get("capacidad", "")).strip(),
-                tipo_fibra=str(data.get("tipo_fibra", "")).strip(),
+                distancia_documentada_m=distancia_m,
                 origen=str(data.get("origen", "")).strip(),
                 destino=str(data.get("destino", "")).strip(),
-                hub_site=str(data.get("hub_site", "")).strip(),
-                odf_nombre=str(data.get("odf_nombre", "")).strip(),
             )
+            if capacidad_numero is not None:
+                ruta.capacidad_hilos_declarada = capacidad_numero
+            if "estado" in data:
+                ruta.estado = str(data.get("estado", "")).strip() or None
+            if "tipo_fibra" in data:
+                ruta.tipo_fibra = (
+                    str(data.get("tipo_fibra", "")).strip() or None
+                )
+            if "hub_site" in data:
+                ruta.hub_site = str(data.get("hub_site", "")).strip() or None
+            if "odf_nombre" in data:
+                ruta.odf_nombre = (
+                    str(data.get("odf_nombre", "")).strip() or None
+                )
+            if "mufas" in data:
+                ruta.mufas = _numero_no_negativo(
+                    data,
+                    "mufas",
+                    entero=True,
+                )
+            if "splitters" in data:
+                ruta.splitters = _numero_no_negativo(
+                    data,
+                    "splitters",
+                    entero=True,
+                )
+            if "reservas_m" in data:
+                ruta.reservas_m = _numero_no_negativo(data, "reservas_m")
+            ruta.save()
         return JsonResponse(
             {"status": "success", "message": f"Tramo {tramo.tramo_secuencia} registrado correctamente"}
         )
@@ -1049,18 +1435,43 @@ def _filas_troncales(queryset):
 
 
 def _filas_tramos(queryset):
+    ids_ruta = set(queryset.values_list("ruta_id", flat=True).distinct())
+    estadisticas = _estadisticas_capacidad_rutas(ids_ruta)
+    reservas_por_tramo = {
+        fila["tramo_id"]: fila["total"] or 0
+        for fila in Reserva.objects.filter(
+            tramo_id__in=queryset.values("pk")
+        ).values("tramo_id").annotate(total=Sum("reserva_m"))
+    }
     for tramo in queryset.iterator(chunk_size=1000):
+        distancia = resolver_distancia_tramo(tramo)
+        capacidad = tramo.ruta.capacidad_hilos_declarada
+        datos = estadisticas.get(
+            tramo.ruta_id,
+            {"ocupados": 0, "reservados": 0, "libres": 0},
+        )
+        if capacidad is None:
+            capacidad = (
+                datos["ocupados"] + datos["reservados"] + datos["libres"]
+            )
         yield (
             tramo.ruta.nombre,
             tramo.tramo_secuencia,
+            tramo.codigo_tramo,
             tramo.origen or tramo.hub_site,
             tramo.destino,
             tramo.tipo_trazado,
-            round((tramo.distancia_m or 0) / 1000, 2),
-            tramo.capacidad,
-            tramo.hilos_ocupados,
-            tramo.hilos_libres,
-            tramo.reservas_m,
+            redondear_km(distancia),
+            (
+                round(tramo.distancia_documentada_m / 1000, 2)
+                if tramo.distancia_documentada_m is not None
+                else ""
+            ),
+            capacidad,
+            datos["ocupados"],
+            datos["reservados"],
+            datos["libres"],
+            round(reservas_por_tramo.get(tramo.pk, 0), 2),
             tramo.estado,
         )
 
@@ -1112,9 +1523,11 @@ def exportar_inventario(request, recurso, formato):
         permiso = "mapas.view_ruta"
         titulo = "Tramos"
         encabezados = (
-            "Troncal", "Secuencia", "Origen", "Destino", "Trazado",
-            "Distancia (km)", "Capacidad", "Ocupados", "Libres",
-            "Reserva (m)", "Estado",
+            "Troncal", "Secuencia", "Código tramo", "Origen", "Destino",
+            "Trazado", "Distancia calculada (km)",
+            "Distancia documentada (km)", "Capacidad de troncal",
+            "Ocupados", "Reservados", "Libres", "Reserva (m)",
+            "Estado",
         )
         filas = _filas_tramos(_filtro_tramos(request))
     elif recurso == "odfs":
@@ -1259,25 +1672,58 @@ def _ficha_troncal(pk):
     troncal = get_object_or_404(
         Ruta.objects.select_related("odf_origen", "odf_destino", "otu"), pk=pk
     )
-    tramos = list(troncal.tramos_inventario.order_by("tramo_secuencia"))
+    tramos = list(
+        troncal.tramos_inventario.filter(vigente=True).order_by(
+            "tramo_secuencia"
+        )
+    )
     primero = tramos[0] if tramos else None
     ultimo = tramos[-1] if tramos else None
     fibras = troncal.fibras_inventario
+    distancia = resolver_distancia_ruta(troncal, tramos)
     return {
         "type": "troncal",
         "title": troncal.nombre,
         "subtitle": "Ficha operativa de troncal",
-        "status": _texto(primero.estado if primero else None, "Sin estado"),
+        "status": _texto(
+            troncal.estado
+            or (primero.estado if primero else None),
+            "Sin estado",
+        ),
         "chain": [
-            _item("Site de origen", primero.hub_site if primero else None),
-            _item("ODF extremo A", troncal.odf_origen.odf if troncal.odf_origen else (primero.odf_nombre if primero else None)),
+            _item(
+                "Site de origen",
+                troncal.hub_site
+                or (primero.hub_site if primero else None),
+            ),
+            _item(
+                "ODF extremo A",
+                (
+                    troncal.odf_origen.odf
+                    if troncal.odf_origen
+                    else troncal.odf_nombre
+                    or (primero.odf_nombre if primero else None)
+                ),
+            ),
             _item("Troncal", troncal.nombre),
             _item("Tramos", len(tramos)),
             _item("ODF extremo B", troncal.odf_destino.odf if troncal.odf_destino else None),
-            _item("Destino", ultimo.destino if ultimo else None),
+            _item(
+                "Destino",
+                troncal.destino
+                or (ultimo.destino if ultimo else None),
+            ),
         ],
         "summary": [
-            _item("Distancia", f"{(troncal.distancia_m or 0) / 1000:.2f} km"),
+            _item(
+                "Distancia",
+                (
+                    f"{distancia.valor_km:.2f} km"
+                    if distancia.valor_km is not None
+                    else None
+                ),
+            ),
+            _item("Fuente de distancia", etiqueta_fuente(distancia)),
             _item("Fibras", fibras.count()),
             _item("Fibras libres", fibras.filter(estado="Libre").count()),
             _item("Reservas y elementos", troncal.reservas.count()),
@@ -1286,10 +1732,18 @@ def _ficha_troncal(pk):
             {
                 "title": "Datos técnicos",
                 "items": [
-                    _item("Capacidad", primero.capacidad if primero else None),
-                    _item("Tipo de fibra", primero.tipo_fibra if primero else None),
+                    _item("Capacidad", troncal.capacidad_hilos_declarada),
+                    _item(
+                        "Tipo de fibra",
+                        troncal.tipo_fibra
+                        or (primero.tipo_fibra if primero else None),
+                    ),
                     _item("Trazado", primero.tipo_trazado if primero else None),
-                    _item("Marca / modelo", primero.marca_modelo if primero else None),
+                    _item(
+                        "Marca / modelo",
+                        troncal.marca_modelo
+                        or (primero.marca_modelo if primero else None),
+                    ),
                 ],
             }
         ],
@@ -1297,6 +1751,88 @@ def _ficha_troncal(pk):
             _accion("Localizar en mapa", _url_con_query("mapa_inventario", ruta=troncal.nombre)),
             _accion("Ver troncales y tramos", _url_con_query("inventario_externo", q=troncal.nombre)),
             _accion("Ver sus fibras", _url_con_query("planta_externa", tab="fibras", q=troncal.nombre)),
+        ],
+    }
+
+
+def _ficha_tramo(pk):
+    tramo = get_object_or_404(
+        InventarioTramo.objects.select_related("ruta"),
+        pk=pk,
+        vigente=True,
+    )
+    ruta = tramo.ruta
+    fibras = ruta.fibras_inventario
+    reserva_tramo_m = Reserva.objects.filter(tramo=tramo).aggregate(
+        total=Sum("reserva_m")
+    )["total"] or 0
+    puntos_geometria = CoordenadaRuta.objects.filter(tramo=tramo).count()
+    capacidad = ruta.capacidad_hilos_declarada
+    if capacidad is None:
+        capacidad = fibras.count()
+    distancia = resolver_distancia_tramo(tramo)
+    return {
+        "type": "tramo",
+        "title": f"{ruta.nombre} · {tramo.codigo_tramo}",
+        "subtitle": "Ficha operativa de tramo",
+        "status": _texto(tramo.estado, "Sin estado"),
+        "chain": [
+            _item("Troncal", ruta.nombre),
+            _item("Código", tramo.codigo_tramo),
+            _item("Secuencia", tramo.tramo_secuencia),
+            _item("Origen", tramo.origen or tramo.hub_site),
+            _item("Destino", tramo.destino),
+        ],
+        "summary": [
+            _item(
+                "Distancia",
+                (
+                    f"{distancia.valor_km:.2f} km"
+                    if distancia.valor_km is not None
+                    else None
+                ),
+            ),
+            _item("Fuente de distancia", etiqueta_fuente(distancia)),
+            _item("Capacidad de la troncal", capacidad),
+            _item("Fibras inventariadas", fibras.count()),
+        ],
+        "sections": [
+            {
+                "title": "Datos del segmento",
+                "items": [
+                    _item("Tipo de trazado", tramo.tipo_trazado),
+                    _item("Reserva vinculada", f"{reserva_tramo_m:.2f} m"),
+                    _item("Puntos de geometría", puntos_geometria),
+                    _item("Estado", tramo.estado),
+                ],
+            },
+            {
+                "title": "Cable continuo de la troncal",
+                "items": [
+                    _item("Tipo de fibra", ruta.tipo_fibra),
+                    _item("Mufas totales", ruta.mufas),
+                    _item("Splitters totales", ruta.splitters),
+                    _item("Reserva lineal total", f"{ruta.reservas_m:.2f} m"),
+                ],
+            },
+        ],
+        "actions": [
+            _accion(
+                "Localizar tramo",
+                _url_con_query(
+                    "mapa_inventario",
+                    ruta=ruta.nombre,
+                    tramo=tramo.tramo_secuencia,
+                ),
+            ),
+            _accion(
+                "Ver todos los tramos",
+                _url_con_query(
+                    "inventario_externo",
+                    tab="tramos",
+                    ruta=ruta.nombre,
+                ),
+            ),
         ],
     }
 
@@ -1473,6 +2009,7 @@ def _ficha_elemento(pk):
 
 FICHAS = {
     "troncal": _ficha_troncal,
+    "tramo": _ficha_tramo,
     "odf": _ficha_odf,
     "puerto": _ficha_puerto,
     "fibra": _ficha_fibra,

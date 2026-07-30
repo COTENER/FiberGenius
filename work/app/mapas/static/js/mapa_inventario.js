@@ -396,10 +396,12 @@
         const estados = uniqueValues('estado');
         const origen = principal.hub_site || principal.origen || ruta.otu || 'Origen no especificado';
         const destino = principal.destino || ruta.olt || 'Destino no especificado';
-        const distanciaM = tramos.reduce((total, tramo) => {
-            const value = Number(tramo.distancia_m);
-            return total + (Number.isFinite(value) ? value : 0);
-        }, 0);
+        const distanciaValue = Number(ruta.distancia_m);
+        const distanciaM = (
+            ruta.distancia_m !== null
+            && ruta.distancia_m !== undefined
+            && Number.isFinite(distanciaValue)
+        ) ? distanciaValue : null;
         const searchText = normalizeSearchText([
             nombre,
             codigo,
@@ -542,7 +544,7 @@
 
             const meta = document.createElement('span');
             meta.className = 'route-search-result__meta';
-            const distance = item.distanciaM > 0
+            const distance = item.distanciaM !== null
                 ? `${(item.distanciaM / 1000).toLocaleString('es-PE', { maximumFractionDigits: 2 })} km`
                 : 'Distancia no registrada';
             meta.textContent = `${distance} · ${item.estado}`;
@@ -930,15 +932,15 @@
             reservasResumenHtml += '</div>';
         }
 
-        // Obtener la distancia con fallback
-        let distanciaMetros = parseFloat(tramo.distancia_m || 0);
-        if (!distanciaMetros && ruta.distancia_m) {
-            distanciaMetros = parseFloat(ruta.distancia_m);
-        }
-        if (!distanciaMetros && tramo.coordenadas && tramo.coordenadas.length >= 2) {
-            distanciaMetros = calcularDistanciaCoordenadas(tramo.coordenadas);
-        }
-        const distanciaTexto = distanciaMetros > 0 ? (distanciaMetros / 1000).toFixed(2) + ' km' : 'N/A';
+        const distanciaValue = Number(tramo.distancia_m);
+        const distanciaMetros = (
+            tramo.distancia_m !== null
+            && tramo.distancia_m !== undefined
+            && Number.isFinite(distanciaValue)
+        ) ? distanciaValue : null;
+        const distanciaTexto = distanciaMetros !== null
+            ? (distanciaMetros / 1000).toFixed(2) + ' km'
+            : 'N/A';
 
         return `
             <div class="popup-inventario route-detail">

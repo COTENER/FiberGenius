@@ -20,6 +20,13 @@ from django.test.utils import CaptureQueriesContext
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
 
+from .distancias import (
+    FUENTE_GEOMETRIA,
+    FUENTE_INVENTARIO_TRAMOS,
+    FUENTE_INVENTARIO_TRONCAL,
+    resolver_distancia_ruta,
+    resolver_distancia_tramo,
+)
 from .models import (
     AlarmaVeex,
     CoordenadaRuta,
@@ -51,10 +58,12 @@ from .management.commands.actualizar_mediciones import (
 )
 from .forms import CustomUserCreationForm
 from .views.importacion import (
+    _procesar_coordenadas_csv,
     _procesar_coordenadas_inventario_zip,
     _procesar_puertos_odf_inventario,
     _procesar_reservas,
     _procesar_ruta_otu,
+    _procesar_troncales_inventario,
     _procesar_tramos_inventario,
 )
 from .middleware import ActiveUserMiddleware
@@ -341,11 +350,24 @@ class ImportacionV5Tests(TestCase):
 
     def test_zip_segmentado_vincula_coordenadas_y_conserva_distancias(self):
         ruta = Ruta.objects.create(nombre='RUTA-ZIP')
+        InventarioTramo.objects.create(
+            ruta=ruta,
+            tramo_secuencia=1,
+            codigo_tramo='T001',
+            tipo_trazado='AEREO',
+        )
+        InventarioTramo.objects.create(
+            ruta=ruta,
+            tramo_secuencia=2,
+            codigo_tramo='T002',
+            tipo_trazado='SOTERRADO',
+        )
         contenido = (
             'Latitude,Longitude,tipo_trazado,new_seg\n'
             '-23.0000000,-69.0000000,AEREO,false\n'
             '-23.0010000,-69.0010000,AEREO,false\n'
             '-23.0020000,-69.0020000,SOTERRADO,true\n'
+            '-23.0030000,-69.0030000,SOTERRADO,false\n'
         ).encode()
         archivo = io.BytesIO()
         with zipfile.ZipFile(archivo, 'w') as paquete:
@@ -367,9 +389,11 @@ class ImportacionV5Tests(TestCase):
         _procesar_tramos_inventario(archivo)
         ruta.refresh_from_db()
         tramos = list(ruta.tramos_inventario.order_by('tramo_secuencia'))
-        self.assertEqual(ruta.distancia_m, 300)
+        self.assertIsNone(ruta.distancia_m)
+        self.assertEqual(ruta.distancia_documentada_m, 300)
+        self.assertEqual(ruta.mufas, 2)
         self.assertEqual([tramo.distancia_m for tramo in tramos], [100, 200])
-        self.assertEqual([tramo.mufas for tramo in tramos], [2, 0])
+        self.assertEqual([tramo.mufas for tramo in tramos], [0, 0])
 
     def test_carga_web_registra_lote_con_contadores_y_origen(self):
         usuario = User.objects.create_user('importador', password='clave')
@@ -883,19 +907,23 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(payload['summary']['total'], 1)
 
     def test_troncales_se_filtran_por_disponibilidad_y_umbral(self):
-        ruta_disponible = Ruta.objects.create(nombre='TRONCAL-DISPONIBLE')
+        ruta_disponible = Ruta.objects.create(
+            nombre='TRONCAL-DISPONIBLE',
+            hilos_ocupados_declarados=8,
+            hilos_libres_declarados=2,
+        )
         InventarioTramo.objects.create(
             ruta=ruta_disponible,
             tramo_secuencia=1,
-            hilos_ocupados=8,
-            hilos_libres=2,
         )
-        ruta_atencion = Ruta.objects.create(nombre='TRONCAL-ATENCION')
+        ruta_atencion = Ruta.objects.create(
+            nombre='TRONCAL-ATENCION',
+            hilos_ocupados_declarados=9,
+            hilos_libres_declarados=1,
+        )
         InventarioTramo.objects.create(
             ruta=ruta_atencion,
             tramo_secuencia=1,
-            hilos_ocupados=9,
-            hilos_libres=1,
         )
 
         disponibles = self.client.get(
@@ -1031,7 +1059,7 @@ class GuiOperativaTests(TestCase):
         self.assertTrue(InventarioTramo.objects.filter(
             ruta=self.troncal,
             tramo_secuencia=2,
-            distancia_m=1250,
+            distancia_documentada_m=1250,
         ).exists())
 
     def test_pagina_odf_usa_consulta_paginada_y_exportacion_servidor(self):
@@ -1186,6 +1214,430 @@ class GuiOperativaTests(TestCase):
         self.assertContains(respuesta_odf, '<option value="25" selected>25</option>', html=True)
 
 
+class SegmentacionTramosFase1Tests(TestCase):
+    def setUp(self):
+        self.usuario = User.objects.create_user(
+            'segmentador',
+            password='clave-segura',
+        )
+        self.usuario.user_permissions.add(
+            Permission.objects.get(codename='view_ruta')
+        )
+        self.client.force_login(self.usuario)
+        self.ruta = Ruta.objects.create(
+            nombre='RUTA-FASE-1',
+            distancia_m=123,
+        )
+        self.tramo_inicial = InventarioTramo.objects.create(
+            ruta=self.ruta,
+            tramo_secuencia=1,
+            codigo_tramo='T001',
+            estado_calidad=InventarioTramo.CALIDAD_LEGACY,
+            capacidad='24 Hilos',
+        )
+        self.reserva = Reserva.objects.create(
+            ruta=self.ruta,
+            tramo=self.tramo_inicial,
+            nombre='RESERVA-FASE-1',
+            latitud='-12.0000000',
+            longitud='-77.0000000',
+        )
+
+    def _geometria_dos_tramos(self):
+        contenido = (
+            'ruta,latitude,longitude,tramo_secuencia,codigo_tramo,tipo_trazado\n'
+            'RUTA-FASE-1,-12.0000,-77.0000,1,T001,AEREO\n'
+            'RUTA-FASE-1,-12.0010,-77.0010,1,T001,AEREO\n'
+            'RUTA-FASE-1,-12.0020,-77.0020,2,T002,SOTERRADO\n'
+            'RUTA-FASE-1,-12.0030,-77.0030,2,T002,SOTERRADO\n'
+        )
+        return SimpleUploadedFile(
+            'tramos.csv',
+            contenido.encode('utf-8'),
+            content_type='text/csv',
+        )
+
+    def _cargar_inventario_dos_tramos(self):
+        archivo = SimpleUploadedFile(
+            'inventario-tramos.csv',
+            (
+                'ruta,tramo_secuencia,codigo_tramo,origen,destino,'
+                'tipo_trazado,estado_tramo,distancia_documentada_m\n'
+                'RUTA-FASE-1,1,T001,HUB-A,CAMARA-1,AEREO,ACTIVO,100\n'
+                'RUTA-FASE-1,2,T002,CAMARA-1,HUB-B,SOTERRADO,ACTIVO,120\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+        return _procesar_tramos_inventario(archivo)
+
+    def test_recarga_segmentada_es_idempotente_y_conserva_relaciones(self):
+        self._cargar_inventario_dos_tramos()
+        _procesar_coordenadas_csv(self._geometria_dos_tramos())
+        ids_primera = list(
+            InventarioTramo.objects.filter(
+                ruta=self.ruta,
+                vigente=True,
+            ).order_by('tramo_secuencia').values_list('id', flat=True)
+        )
+        coordenadas_primera = list(
+            CoordenadaRuta.objects.filter(
+                ruta=self.ruta
+            ).order_by('orden').values_list('id', flat=True)
+        )
+
+        _procesar_coordenadas_csv(self._geometria_dos_tramos())
+
+        ids_segunda = list(
+            InventarioTramo.objects.filter(
+                ruta=self.ruta,
+                vigente=True,
+            ).order_by('tramo_secuencia').values_list('id', flat=True)
+        )
+        coordenadas_segunda = list(
+            CoordenadaRuta.objects.filter(
+                ruta=self.ruta
+            ).order_by('orden').values_list('id', flat=True)
+        )
+        self.reserva.refresh_from_db()
+        self.assertEqual(ids_primera, ids_segunda)
+        self.assertEqual(coordenadas_primera, coordenadas_segunda)
+        self.assertEqual(self.reserva.tramo_id, self.tramo_inicial.pk)
+        self.assertEqual(
+            list(
+                InventarioTramo.objects.filter(
+                    ruta=self.ruta,
+                    vigente=True,
+                ).values_list('codigo_tramo', flat=True)
+            ),
+            ['T001', 'T002'],
+        )
+
+    def test_rechaza_tramos_intercalados_o_fuera_de_orden(self):
+        self._cargar_inventario_dos_tramos()
+        archivo = SimpleUploadedFile(
+            'tramos-desordenados.csv',
+            (
+                'ruta,latitude,longitude,tramo_secuencia,codigo_tramo\n'
+                'RUTA-FASE-1,-12.0000,-77.0000,1,T001\n'
+                'RUTA-FASE-1,-12.0010,-77.0010,2,T002\n'
+                'RUTA-FASE-1,-12.0020,-77.0020,1,T001\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        with self.assertRaisesRegex(ValueError, 'bloque continuo'):
+            _procesar_coordenadas_csv(archivo)
+
+    def test_rechaza_codigo_repetido_en_dos_secuencias(self):
+        self._cargar_inventario_dos_tramos()
+        archivo = SimpleUploadedFile(
+            'tramos-codigo-repetido.csv',
+            (
+                'ruta,latitude,longitude,tramo_secuencia,codigo_tramo\n'
+                'RUTA-FASE-1,-12.0000,-77.0000,1,T001\n'
+                'RUTA-FASE-1,-12.0010,-77.0010,1,T001\n'
+                'RUTA-FASE-1,-12.0020,-77.0020,2,T001\n'
+                'RUTA-FASE-1,-12.0030,-77.0030,2,T001\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        with self.assertRaisesRegex(ValueError, 'pertenece a la secuencia'):
+            _procesar_coordenadas_csv(archivo)
+
+    def test_panel_de_tramo_dibuja_solo_el_segmento_seleccionado(self):
+        self._cargar_inventario_dos_tramos()
+        _procesar_coordenadas_csv(self._geometria_dos_tramos())
+        tramo = InventarioTramo.objects.get(
+            ruta=self.ruta,
+            codigo_tramo='T002',
+        )
+
+        response = self.client.get(
+            reverse('api_panel_tramo'),
+            {'tramo_id': tramo.pk},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload['asset_kind'], 'tramo')
+        self.assertEqual(payload['ruta']['codigo'], 'T002')
+        self.assertEqual(payload['ruta']['troncal'], 'RUTA-FASE-1')
+        self.assertEqual(len(payload['coordenadas']), 2)
+        self.assertNotIn('calidad', payload['ruta'])
+
+    def test_metadatos_separan_distancia_documentada_y_geometrica(self):
+        InventarioTramo.objects.create(
+            ruta=self.ruta,
+            tramo_secuencia=2,
+            codigo_tramo='T002',
+        )
+        archivo = SimpleUploadedFile(
+            'detalle.csv',
+            (
+                'ruta,distancia,capacidad,estado\n'
+                'RUTA-FASE-1,500,24,OPERATIVO\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        _procesar_tramos_inventario(archivo)
+
+        self.ruta.refresh_from_db()
+        self.assertEqual(self.ruta.distancia_m, 123)
+        self.assertEqual(self.ruta.distancia_documentada_m, 500)
+        self.assertEqual(self.ruta.capacidad_hilos_declarada, 24)
+        self.assertEqual(
+            InventarioTramo.objects.filter(
+                ruta=self.ruta,
+                vigente=True,
+                capacidad='24 Hilos',
+            ).count(),
+            1,
+        )
+
+    def test_api_tramos_expone_codigo_y_capacidad_sin_calidad_interna(self):
+        self.ruta.capacidad_hilos_declarada = 24
+        self.ruta.save(update_fields=['capacidad_hilos_declarada'])
+
+        response = self.client.get(
+            reverse('api_tramos_paginados'),
+            {'ruta': self.ruta.nombre},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload['data'][0]['codigo'], 'T001')
+        self.assertEqual(payload['data'][0]['capacidad'], 24)
+        self.assertNotIn('calidad_label', payload['data'][0])
+        self.assertIn('/api/inventario/360/tramo/', payload['data'][0]['detail_url'])
+        self.assertEqual(payload['summary']['troncales'], 1)
+        self.assertEqual(payload['summary']['top_troncales'][0]['tramos'], 1)
+
+    def test_gui_tramos_oculta_calidad_y_muestra_resumen_operativo(self):
+        response = self.client.get(
+            reverse('inventario_externo'),
+            {'tab': 'tramos'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="tramos-stat-routes"')
+        self.assertNotContains(response, 'id="tramos-stat-review"')
+        self.assertNotContains(response, '<th scope="col">Calidad</th>')
+        self.assertNotContains(response, 'Segmentos pendientes de homologación')
+
+    def test_plantillas_separan_troncales_tramos_y_geometria(self):
+        carpeta = (
+            Path(__file__).resolve().parent
+            / 'static'
+            / 'ejemplos'
+        )
+        for nombre, procesador in (
+            ('troncales_inventario_ejemplo.csv', _procesar_troncales_inventario),
+            ('tramos_inventario_ejemplo.csv', _procesar_tramos_inventario),
+        ):
+            ruta_plantilla = carpeta / nombre
+            procesador(SimpleUploadedFile(
+                ruta_plantilla.name,
+                ruta_plantilla.read_bytes(),
+                content_type='text/csv',
+            ))
+
+        ruta_demo = Ruta.objects.get(nombre='RUTA-DEMO-01')
+        ids_antes = list(
+            ruta_demo.tramos_inventario.order_by('tramo_secuencia')
+            .values_list('pk', flat=True)
+        )
+        ruta_geometria = carpeta / 'coordenadas_unificadas_ejemplo.csv'
+        _procesar_coordenadas_csv(SimpleUploadedFile(
+            ruta_geometria.name,
+            ruta_geometria.read_bytes(),
+            content_type='text/csv',
+        ))
+        self.assertEqual(
+            list(
+                ruta_demo.tramos_inventario.filter(vigente=True)
+                .order_by('tramo_secuencia')
+                .values_list('codigo_tramo', flat=True)
+            ),
+            ['T001', 'T002'],
+        )
+        self.assertEqual(
+            ids_antes,
+            list(
+                ruta_demo.tramos_inventario.order_by('tramo_secuencia')
+                .values_list('pk', flat=True)
+            ),
+        )
+        self.assertEqual(ruta_demo.coordenadas.count(), 4)
+
+    def test_troncal_y_tramos_se_cargan_sin_coordenadas(self):
+        troncal = SimpleUploadedFile(
+            'troncal.csv',
+            (
+                'ruta,capacidad,hilos_ocupados,hilos_libres,'
+                'hilos_reservados,origen,destino\n'
+                'RUTA-SIN-MAPA,12,4,6,2,HUB-A,HUB-B\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+        _procesar_troncales_inventario(troncal)
+        ruta = Ruta.objects.get(nombre='RUTA-SIN-MAPA')
+        self.assertEqual(ruta.capacidad_hilos_declarada, 12)
+        self.assertFalse(ruta.coordenadas.exists())
+
+        tramos = SimpleUploadedFile(
+            'tramos.csv',
+            (
+                'ruta,tramo_secuencia,codigo_tramo,origen,destino\n'
+                'RUTA-SIN-MAPA,1,T001,HUB-A,CAMARA-1\n'
+                'RUTA-SIN-MAPA,2,T002,CAMARA-1,HUB-B\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+        _procesar_tramos_inventario(tramos)
+        self.assertEqual(ruta.tramos_inventario.count(), 2)
+        self.assertFalse(ruta.coordenadas.exists())
+
+    def test_geometria_no_crea_inventario_faltante(self):
+        archivo = SimpleUploadedFile(
+            'geometria-sin-inventario.csv',
+            (
+                'ruta,codigo_tramo,latitude,longitude\n'
+                'RUTA-FANTASMA,T001,-12.0,-77.0\n'
+                'RUTA-FANTASMA,T001,-12.1,-77.1\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+        with self.assertRaisesRegex(ValueError, 'no existe en el inventario'):
+            _procesar_coordenadas_csv(archivo)
+        self.assertFalse(Ruta.objects.filter(nombre='RUTA-FANTASMA').exists())
+
+    def test_ruta_rechaza_conteos_superiores_a_capacidad(self):
+        self.ruta.capacidad_hilos_declarada = 12
+        self.ruta.hilos_ocupados_declarados = 8
+        self.ruta.hilos_libres_declarados = 5
+        with self.assertRaises(ValidationError):
+            self.ruta.full_clean()
+
+    def test_distancia_ruta_prioriza_inventario_troncal(self):
+        self.ruta.distancia_documentada_m = 500
+        self.ruta.save()
+        self.tramo_inicial.distancia_documentada_m = 100
+        self.tramo_inicial.save()
+
+        distancia = resolver_distancia_ruta(
+            self.ruta,
+            [self.tramo_inicial],
+        )
+
+        self.assertEqual(distancia.valor_m, 500)
+        self.assertEqual(distancia.fuente, FUENTE_INVENTARIO_TRONCAL)
+
+    def test_distancia_ruta_suma_tramos_solo_si_todos_tienen_inventario(self):
+        self.tramo_inicial.distancia_documentada_m = 100
+        self.tramo_inicial.save()
+        segundo = InventarioTramo.objects.create(
+            ruta=self.ruta,
+            tramo_secuencia=2,
+            codigo_tramo='T002',
+            distancia_documentada_m=120,
+        )
+
+        distancia = resolver_distancia_ruta(
+            self.ruta,
+            [self.tramo_inicial, segundo],
+        )
+        self.assertEqual(distancia.valor_m, 220)
+        self.assertEqual(distancia.fuente, FUENTE_INVENTARIO_TRAMOS)
+
+        segundo.distancia_documentada_m = None
+        segundo.save()
+        distancia = resolver_distancia_ruta(
+            self.ruta,
+            [self.tramo_inicial, segundo],
+        )
+        self.assertEqual(distancia.valor_m, 123)
+        self.assertEqual(distancia.fuente, FUENTE_GEOMETRIA)
+
+        self.ruta.distancia_m = None
+        self.ruta.save()
+        distancia = resolver_distancia_ruta(
+            self.ruta,
+            [self.tramo_inicial, segundo],
+        )
+        self.assertIsNone(distancia.valor_m)
+        self.assertIsNone(distancia.fuente)
+
+    def test_distancia_tramo_prioriza_inventario_y_respeta_cero(self):
+        self.tramo_inicial.distancia_m = 250
+        self.tramo_inicial.distancia_documentada_m = 0
+        self.tramo_inicial.save()
+
+        distancia = resolver_distancia_tramo(self.tramo_inicial)
+
+        self.assertEqual(distancia.valor_m, 0)
+        self.assertEqual(distancia.fuente, FUENTE_INVENTARIO_TRAMOS)
+
+    def test_geometria_parcial_conserva_tramo_omitido(self):
+        self._cargar_inventario_dos_tramos()
+        _procesar_coordenadas_csv(self._geometria_dos_tramos())
+        tramo_dos = InventarioTramo.objects.get(
+            ruta=self.ruta,
+            codigo_tramo='T002',
+        )
+        coordenadas_antes = list(
+            CoordenadaRuta.objects.filter(tramo=tramo_dos)
+            .order_by('orden')
+            .values_list('id', 'latitud', 'longitud')
+        )
+        distancia_antes = tramo_dos.distancia_m
+        archivo = SimpleUploadedFile(
+            'solo-t001.csv',
+            (
+                'ruta,latitude,longitude,codigo_tramo\n'
+                'RUTA-FASE-1,-12.0100,-77.0100,T001\n'
+                'RUTA-FASE-1,-12.0110,-77.0110,T001\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        _procesar_coordenadas_csv(archivo)
+
+        tramo_dos.refresh_from_db()
+        self.assertEqual(
+            coordenadas_antes,
+            list(
+                CoordenadaRuta.objects.filter(tramo=tramo_dos)
+                .order_by('orden')
+                .values_list('id', 'latitud', 'longitud')
+            ),
+        )
+        self.assertEqual(tramo_dos.distancia_m, distancia_antes)
+        self.assertIsNotNone(Ruta.objects.get(pk=self.ruta.pk).distancia_m)
+
+    def test_geometria_parcial_no_se_presenta_como_distancia_total(self):
+        self._cargar_inventario_dos_tramos()
+        archivo = SimpleUploadedFile(
+            'solo-t001.csv',
+            (
+                'ruta,latitude,longitude,codigo_tramo\n'
+                'RUTA-FASE-1,-12.0100,-77.0100,T001\n'
+                'RUTA-FASE-1,-12.0110,-77.0110,T001\n'
+            ).encode('utf-8'),
+            content_type='text/csv',
+        )
+
+        _procesar_coordenadas_csv(archivo)
+
+        ruta = Ruta.objects.get(pk=self.ruta.pk)
+        tramo_uno = ruta.tramos_inventario.get(codigo_tramo='T001')
+        tramo_dos = ruta.tramos_inventario.get(codigo_tramo='T002')
+        self.assertIsNotNone(tramo_uno.distancia_m)
+        self.assertIsNone(tramo_dos.distancia_m)
+        self.assertIsNone(ruta.distancia_m)
+
+
 class SeguridadYRendimientoTests(TestCase):
     def setUp(self):
         self.usuario = User.objects.create_superuser(
@@ -1213,6 +1665,20 @@ class SeguridadYRendimientoTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, f'href="{reverse("gestion_sites")}"')
         self.assertNotContains(response, f'href="{reverse("importar_sites_csv")}"')
+
+    def test_ayuda_importacion_muestra_segmentacion_explicita(self):
+        response = self.client.get(reverse('configuracion'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Inventario de Troncales')
+        self.assertContains(response, 'Inventario de Tramos')
+        self.assertContains(response, 'Geometría de Tramos')
+        self.assertContains(response, 'tramo_secuencia')
+        self.assertContains(response, 'codigo_tramo')
+        self.assertContains(
+            response,
+            '/static/ejemplos/coordenadas_unificadas_ejemplo.csv',
+        )
 
     def test_capacidad_odf_no_se_sobreasigna_desde_la_gui(self):
         _, _, _, odf = crear_jerarquia_odf(nombre='ODF-CAPACIDAD', capacidad=1)

@@ -22,9 +22,14 @@ class OTUAdmin(admin.ModelAdmin):
 
 @admin.register(Ruta)
 class RutaAdmin(admin.ModelAdmin):
-    list_display = ('nombre', 'otu', 'distancia_m', 'olt', 'pon')
-    search_fields = ('nombre', 'olt', 'pon')
-    list_filter = ('otu',)
+    list_display = (
+        'nombre', 'otu', 'distancia_m', 'distancia_documentada_m',
+        'capacidad_hilos_declarada', 'estado', 'hub_site', 'olt', 'pon',
+    )
+    search_fields = (
+        'nombre', 'origen', 'destino', 'hub_site', 'serial', 'olt', 'pon',
+    )
+    list_filter = ('estado', 'tipo_fibra', 'otu')
     list_select_related = ('otu',)
 
 
@@ -95,9 +100,12 @@ class DetallePuertoODFAdmin(admin.ModelAdmin):
 
 @admin.register(InventarioTramo)
 class InventarioTramoAdmin(admin.ModelAdmin):
-    list_display = ('ruta', 'tramo_secuencia', 'tipo_trazado', 'distancia_m', 'estado')
-    search_fields = ('ruta__nombre', 'origen', 'destino')
-    list_filter = ('tipo_trazado', 'estado')
+    list_display = (
+        'ruta', 'codigo_tramo', 'tramo_secuencia', 'tipo_trazado',
+        'distancia_m', 'estado_calidad', 'vigente', 'estado',
+    )
+    search_fields = ('ruta__nombre', 'codigo_tramo', 'origen', 'destino')
+    list_filter = ('tipo_trazado', 'estado_calidad', 'vigente', 'estado')
     list_select_related = ('ruta',)
 
 

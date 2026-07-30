@@ -146,26 +146,37 @@ input:checked + .slider:before { transform: translateX(22px); }
         <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Importa los Sites antes de cargar las troncales y el inventario físico.</p>
     </a>
 
-    <div onclick="openImportModal('coordenadas_csv', 'Cargar Coordenadas y Tipo de Trazado (.csv)')" class="card" style="text-decoration:none; cursor:pointer;">
+    <div onclick="openImportModal('troncales_inventario', 'Cargar Inventario de Troncales (.csv)')" class="card" style="text-decoration:none; cursor:pointer;">
         <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
             <div class="stat-card__icon stat-card__icon--warning" style="width:36px;height:36px;">
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
             </div>
-            <span class="badge badge--warning">Paso 1</span>
+            <span class="badge badge--warning">Archivo A</span>
         </div>
-        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Trazado de Troncales Unificado (.csv)</h3>
-        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Crea las troncales geográficas (coordenadas) y enlaza con los Sites.</p>
+        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Inventario de Troncales (.csv)</h3>
+        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Registra el cable continuo, su capacidad y sus datos técnicos. No requiere coordenadas.</p>
     </div>
 
-    <div onclick="openImportModal('tramos_inventario', 'Cargar Detalles Técnicos Complementarios (.csv)')" class="card" style="text-decoration:none; cursor:pointer;">
+    <div onclick="openImportModal('tramos_inventario', 'Cargar Inventario de Tramos (.csv)')" class="card" style="text-decoration:none; cursor:pointer;">
         <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
             <div class="stat-card__icon stat-card__icon--accent" style="width:36px;height:36px;">
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
             </div>
-            <span class="badge badge--accent">Archivo A</span>
+            <span class="badge badge--accent">Archivo B</span>
         </div>
-        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Detalles Técnicos Complementarios (.csv)</h3>
-        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Sube metadatos cruzados por Troncal y N° de Tramo (mufas, capacidad, splitters).</p>
+        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Inventario de Tramos (.csv)</h3>
+        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Define uno o varios tramos por troncal mediante secuencia y código estable. No requiere coordenadas.</p>
+    </div>
+
+    <div onclick="openImportModal('coordenadas_csv', 'Cargar Geometría de Tramos (.csv)')" class="card" style="text-decoration:none; cursor:pointer;">
+        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
+            <div class="stat-card__icon stat-card__icon--warning" style="width:36px;height:36px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" x2="9" y1="3" y2="18"/><line x1="15" x2="15" y1="6" y2="21"/></svg>
+            </div>
+            <span class="badge badge--warning">Archivo C · Opcional</span>
+        </div>
+        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Geometría de Tramos (.csv)</h3>
+        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Vincula coordenadas a tramos existentes. No crea ni modifica el inventario técnico.</p>
     </div>
 
     <div onclick="openImportModal('fibras_inventario', 'Cargar inventario de fibras ópticas (.csv)')" class="card" style="text-decoration:none; cursor:pointer;">
@@ -173,7 +184,7 @@ input:checked + .slider:before { transform: translateX(22px); }
             <div class="stat-card__icon stat-card__icon--success" style="width:36px;height:36px;">
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M2 12h20M4.93 4.93l14.14 14.14M19.07 4.93L4.93 19.07"/></svg>
             </div>
-            <span class="badge badge--success">Archivo B</span>
+            <span class="badge badge--success">Archivo D</span>
         </div>
         <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar inventario de fibras ópticas (.csv)</h3>
         <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Sube el estado individual de cada fibra (Ocupado/Libre, Destino).</p>
@@ -184,7 +195,7 @@ input:checked + .slider:before { transform: translateX(22px); }
             <div class="stat-card__icon stat-card__icon--danger" style="width:36px;height:36px;">
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
             </div>
-            <span class="badge badge--danger">Archivo C</span>
+            <span class="badge badge--danger">Archivo E</span>
         </div>
         <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Inventario de ODFs (.csv)</h3>
         <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Sube la información de racks, salas y capacidad de los ODFs.</p>
@@ -195,7 +206,7 @@ input:checked + .slider:before { transform: translateX(22px); }
             <div class="stat-card__icon stat-card__icon--warning" style="width:36px;height:36px;">
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 16V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v16"/><path d="M4 15h16"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M8 18h.01"/><path d="M12 18h.01"/><path d="M16 18h.01"/></svg>
             </div>
-            <span class="badge badge--warning">Archivo D</span>
+            <span class="badge badge--warning">Archivo F</span>
         </div>
         <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Detalle de Puertos ODF (.csv)</h3>
         <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Sube el estado de cada puerto (Libre/Ocupado/Reservado, Patchcord, Destino).</p>
@@ -206,7 +217,7 @@ input:checked + .slider:before { transform: translateX(22px); }
             <div class="stat-card__icon stat-card__icon--info" style="width:36px;height:36px;">
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
             </div>
-            <span class="badge badge--info">Archivo E</span>
+            <span class="badge badge--info">Archivo G</span>
         </div>
         <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar reservas y elementos (.csv)</h3>
         <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Sube reservas y elementos como Sites, mufas, cámaras y postes.</p>
@@ -537,103 +548,66 @@ input:checked + .slider:before { transform: translateX(22px); }
 <template id="tmpl-coordenadas_inventario">
     <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
         <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del Archivo ZIP (Inventario Geoespacial)</h4>
-        <p style="font-size:var(--text-sm);color:var(--text-secondary);">Archivo <code>.zip</code> con múltiples <code>.csv</code>. El nombre de cada CSV debe coincidir con la troncal. Columnas soportadas:</p>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);">Archivo <code>.zip</code> con múltiples <code>.csv</code>. El nombre de cada CSV debe coincidir con la troncal. Para cargar varios tramos, repite la secuencia en todas las coordenadas que pertenecen al mismo tramo.</p>
         <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-top:var(--space-2);">
-            <span class="badge badge--accent">Latitude</span> <span class="badge badge--accent">Longitude</span> 
+            <span class="badge badge--accent">Latitude</span> <span class="badge badge--accent">Longitude</span>
+            <span class="badge badge--success">tramo_secuencia</span>
+            <span class="badge badge--accent">codigo_tramo</span>
             <span style="background:#3b82f6;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;">tipo_trazado</span>
-            <span style="background:#f59e0b;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;">new_seg (opcional)</span>
+            <span style="background:#f59e0b;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;">new_seg (compatible)</span>
         </div>
-        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo</h5>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-top:var(--space-2);">Las secuencias deben comenzar en 1 y continuar sin saltos. <code>new_seg</code> se mantiene únicamente para archivos anteriores.</p>
+        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo: una troncal con dos tramos</h5>
         <div style="overflow-x: auto; margin-top: 8px;">
-            <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);">
+            <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);min-width:780px;">
                 <thead style="border-bottom:1px solid var(--border-color);color:var(--text-secondary);">
-                    <tr><th style="text-align:left;padding:4px;">Latitude</th><th>Longitude</th><th>tipo_trazado</th><th>new_seg</th></tr>
+                    <tr><th style="text-align:left;padding:4px;">Latitude</th><th>Longitude</th><th>tramo_secuencia</th><th>codigo_tramo</th><th>tipo_trazado</th></tr>
                 </thead>
                 <tbody>
                     <tr style="border-bottom:1px solid var(--border-color);">
-                        <td style="padding:4px;">-12.293</td><td style="text-align:center;">-76.830</td><td style="text-align:center;">AEREO</td><td style="text-align:center;">True</td>
+                        <td style="padding:4px;">-12.293000</td><td style="text-align:center;">-76.830000</td><td style="text-align:center;">1</td><td style="text-align:center;">T001</td><td style="text-align:center;">AEREO</td>
                     </tr>
+                    <tr style="border-bottom:1px solid var(--border-color);"><td style="padding:4px;">-12.294000</td><td style="text-align:center;">-76.829000</td><td style="text-align:center;">1</td><td style="text-align:center;">T001</td><td style="text-align:center;">AEREO</td></tr>
+                    <tr style="border-bottom:1px solid var(--border-color);"><td style="padding:4px;">-12.294000</td><td style="text-align:center;">-76.829000</td><td style="text-align:center;">2</td><td style="text-align:center;">T002</td><td style="text-align:center;">SOTERRADO</td></tr>
+                    <tr><td style="padding:4px;">-12.295000</td><td style="text-align:center;">-76.828000</td><td style="text-align:center;">2</td><td style="text-align:center;">T002</td><td style="text-align:center;">SOTERRADO</td></tr>
                 </tbody>
             </table>
         </div>
     </div>
 </template>
 
-<template id="tmpl-coordenadas_csv">
+<template id="tmpl-troncales_inventario">
     <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
-        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Coordenadas e Inventario Unificado</h4>
-        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">
-            Sube un único archivo <code>.csv</code> que contenga las coordenadas de múltiples troncales a la vez. No requiere comprimir en ZIP.
-        </p>
-        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Columnas requeridas y recomendadas:</p>
-        <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
-            <span class="badge badge--success">Troncal (requerido)</span> 
-            <span class="badge badge--accent">Latitude (requerido)</span> 
-            <span class="badge badge--accent">Longitude (requerido)</span> 
-            <span style="background:#3b82f6;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;">tipo_trazado</span>
-            <span style="background:#8b5cf6;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;">hub_site (opcional)</span>
-            <span style="background:#f59e0b;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;">new_seg (opcional)</span>
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Inventario de Troncales</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Cada fila representa un cable continuo. Esta carga funciona aunque todavía no existan tramos ni coordenadas.</p>
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;">
+            <span class="badge badge--success">ruta (requerido)</span><span class="badge badge--accent">estado</span><span class="badge badge--accent">capacidad</span><span class="badge badge--accent">tipo_fibra</span><span class="badge badge--accent">origen</span><span class="badge badge--accent">destino</span><span class="badge badge--accent">hub_site</span><span class="badge badge--accent">marca_modelo</span><span class="badge badge--accent">serial</span><span class="badge badge--accent">odf_nombre</span><span class="badge badge--accent">mufas</span><span class="badge badge--accent">splitters</span><span class="badge badge--accent">reservas_m</span><span class="badge badge--accent">hilos_ocupados</span><span class="badge badge--accent">hilos_libres</span><span class="badge badge--accent">hilos_reservados</span>
         </div>
-        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo:</h5>
-        <div style="overflow-x: auto; margin-top: 8px; border: 1px solid var(--border-color); border-radius: 8px;">
-            <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);">
-                <thead style="border-bottom:1px solid var(--border-color);background:var(--bg-surface-2);color:var(--text-secondary);">
-                    <tr>
-                        <th style="text-align:left;padding:6px 12px;">Troncal</th>
-                        <th style="text-align:center;padding:6px;">Latitude</th>
-                        <th style="text-align:center;padding:6px;">Longitude</th>
-                        <th style="text-align:center;padding:6px;">tipo_trazado</th>
-                        <th style="text-align:center;padding:6px;">hub_site</th>
-                        <th style="text-align:center;padding:6px;">new_seg</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr style="border-bottom:1px solid var(--border-color);">
-                        <td style="padding:6px 12px;font-weight:600;color:var(--text-primary);">Lampa OLT1 Primario 42</td>
-                        <td style="text-align:center;padding:6px;">-33.4041276</td>
-                        <td style="text-align:center;padding:6px;">-70.6712350</td>
-                        <td style="text-align:center;padding:6px;color:#3b82f6;font-weight:600;">AEREO</td>
-                        <td style="text-align:center;padding:6px;color:#8b5cf6;font-weight:600;">Hub Independencia</td>
-                        <td style="text-align:center;padding:6px;color:#94a3b8;">False</td>
-                    </tr>
-                    <tr style="border-bottom:1px solid var(--border-color);">
-                        <td style="padding:6px 12px;font-weight:600;color:var(--text-primary);">Lampa OLT1 Primario 42</td>
-                        <td style="text-align:center;padding:6px;">-33.4042727</td>
-                        <td style="text-align:center;padding:6px;">-70.6711975</td>
-                        <td style="text-align:center;padding:6px;color:#f59e0b;font-weight:600;">SOTERRADO</td>
-                        <td style="text-align:center;padding:6px;color:#8b5cf6;"></td>
-                        <td style="text-align:center;padding:6px;color:#10b981;font-weight:700;">True</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-        <div style="margin-top: 16px; display: flex; justify-content: flex-start;">
-            <a href="/static/ejemplos/coordenadas_unificadas_ejemplo.csv" download class="btn btn--sm btn--secondary" style="font-size: 12px; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px; text-decoration: none;">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                Descargar Plantilla CSV Ejemplo
-            </a>
-        </div>
+        <a href="/static/ejemplos/troncales_inventario_ejemplo.csv" download class="btn btn--sm btn--secondary" style="font-size:12px;display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:8px;text-decoration:none;">Descargar plantilla de troncales</a>
     </div>
 </template>
 
 <template id="tmpl-tramos_inventario">
     <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
-        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Inventario Técnico</h4>
-        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Columnas disponibles (usa <span class="badge badge--accent">ruta/troncal</span> como clave):</p>
-        <div style="display:flex;flex-wrap:wrap;gap:4px; margin-bottom: 12px;">
-            <span class="badge badge--accent">ruta/troncal</span><span class="badge badge--accent">estado</span><span class="badge badge--accent">distancia</span><span class="badge badge--accent">mufas</span><span class="badge badge--accent">splitters</span><span class="badge badge--accent">reservas_m</span><span class="badge badge--accent">capacidad</span><span class="badge badge--accent">tipo_fibra</span><span class="badge badge--accent">origen</span><span class="badge badge--accent">destino</span><span class="badge badge--accent">hub_site</span><span class="badge badge--accent">marca_modelo</span><span class="badge badge--accent">serial</span><span class="badge badge--accent">odf_nombre</span><span class="badge badge--accent">hilos_ocupados</span><span class="badge badge--accent">hilos_libres</span>
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Inventario de Tramos</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Cada fila representa un tramo de una troncal. La capacidad y el detalle de fibras permanecen en la troncal.</p>
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;">
+            <span class="badge badge--success">ruta (requerido)</span><span class="badge badge--success">tramo_secuencia (requerido)</span><span class="badge badge--success">codigo_tramo (requerido)</span><span class="badge badge--accent">origen</span><span class="badge badge--accent">destino</span><span class="badge badge--accent">tipo_trazado</span><span class="badge badge--accent">estado_tramo</span><span class="badge badge--accent">distancia_documentada_m</span>
         </div>
-        <h5 style="font-size:12px;color:var(--text-primary);margin-bottom:8px;">Ejemplo de Fila:</h5>
-        <div style="overflow-x: auto;">
-            <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);min-width:1200px;">
-                <thead style="border-bottom:1px solid var(--border-color);color:var(--text-secondary);">
-                    <tr><th style="text-align:left;padding:4px;">ruta/troncal</th><th>estado</th><th>distancia</th><th>mufas</th><th>splitters</th><th>reservas_m</th><th>capacidad</th><th>tipo_fibra</th><th>origen</th><th>destino</th><th>hub_site</th><th>marca_modelo</th><th>serial</th><th>odf_nombre</th><th>hilos_ocupados</th><th>hilos_libres</th></tr>
-                </thead>
-                <tbody>
-                    <tr><td style="padding:4px;">Colina OLT1...</td><td style="text-align:center;">ACTIVO</td><td style="text-align:center;">36.86</td><td style="text-align:center;">2</td><td style="text-align:center;">0</td><td style="text-align:center;">2.97</td><td style="text-align:center;">144 fibras</td><td style="text-align:center;">G.652D</td><td style="text-align:center;">Indep.</td><td style="text-align:center;">Colina</td><td style="text-align:center;">Indep.</td><td style="text-align:center;">Cable FO</td><td style="text-align:center;">S/N</td><td style="text-align:center;">TR01</td><td style="text-align:center;">0</td><td style="text-align:center;">144</td></tr>
-                </tbody>
-            </table>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-3);">Las secuencias deben comenzar en 1 y no tener saltos. Una troncal puede contener 1, 2, 3 o más tramos.</p>
+        <a href="/static/ejemplos/tramos_inventario_ejemplo.csv" download class="btn btn--sm btn--secondary" style="font-size:12px;display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:8px;text-decoration:none;">Descargar plantilla de tramos</a>
+    </div>
+</template>
+
+<template id="tmpl-coordenadas_csv">
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Geometría de Tramos</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Esta carga es opcional. Solo reemplaza coordenadas y distancia calculada; nunca crea, renombra ni elimina troncales o tramos.</p>
+        <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;">
+            <span class="badge badge--success">ruta (requerido)</span><span class="badge badge--success">codigo_tramo (requerido si hay varios)</span><span class="badge badge--accent">tramo_secuencia</span><span class="badge badge--accent">orden_punto</span><span class="badge badge--accent">Latitude</span><span class="badge badge--accent">Longitude</span><span class="badge badge--accent">tipo_trazado (validación)</span>
         </div>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-3);">Carga primero el inventario de troncales y de tramos. Cada tramo referenciado necesita al menos dos puntos consecutivos.</p>
+        <a href="/static/ejemplos/coordenadas_unificadas_ejemplo.csv" download class="btn btn--sm btn--secondary" style="font-size:12px;display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:8px;text-decoration:none;">Descargar plantilla de geometría</a>
     </div>
 </template>
 

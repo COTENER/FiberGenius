@@ -11,6 +11,7 @@ from django.views.decorators.http import require_http_methods, require_POST
 from django.views.decorators.gzip import gzip_page
 from django.db import IntegrityError, transaction
 from django.urls import reverse
+from ..distancias import redondear_km, resolver_distancia_ruta
 from ..models import (
     Ruta, CoordenadaRuta, InventarioTramo, normalizar_estado_puerto_odf,
     normalizar_estado_puerto_odf_con_destino,
@@ -81,10 +82,13 @@ def dashboard_inventario(request):
     
     rutas_db = Ruta.objects.prefetch_related(
         'tramos_inventario', 'reservas', 'coordenadas', 'fibras_inventario'
-    ).filter(tramos_inventario__isnull=False).distinct()
+    ).all()
     if site_seleccionado:
         rutas_db = rutas_db.filter(
-            Q(tramos_inventario__hub_site=site_seleccionado)
+            Q(hub_site=site_seleccionado)
+            | Q(origen=site_seleccionado)
+            | Q(destino=site_seleccionado)
+            | Q(tramos_inventario__hub_site=site_seleccionado)
             | Q(tramos_inventario__destino=site_seleccionado)
         ).distinct()
     if trazado_seleccionado:
@@ -102,19 +106,20 @@ def dashboard_inventario(request):
     total_km = 0.0
     
     for r in rutas_db:
-        tramos = r.tramos_inventario.all()
+        tramos = [
+            tramo
+            for tramo in r.tramos_inventario.all()
+            if tramo.vigente
+        ]
         tipos_en_ruta = set(t.tipo_trazado for t in tramos)
         
-        # Ruta.distancia_m contiene el total; cada InventarioTramo conserva solo su segmento.
-        distancia_ruta_m = r.distancia_m or sum((t.distancia_m or 0 for t in tramos), 0)
-        if not distancia_ruta_m:
-            coords = sorted(r.coordenadas.all(), key=lambda coordenada: coordenada.orden)
-            if len(coords) >= 2:
-                distancia_ruta_m = calculate_coordinate_distance(coords)
-                
-        distancia_ruta_km = round(distancia_ruta_m / 1000, 2)
+        distancia_ruta = resolver_distancia_ruta(r, tramos)
+        distancia_ruta_km = redondear_km(distancia_ruta)
         
-        res_tramos_m = sum((t.reservas_m or 0 for t in tramos), 0)
+        res_tramos_m = r.reservas_m or sum(
+            (t.reservas_m or 0 for t in tramos),
+            0,
+        )
         res_nodos_m = sum(res.reserva_m or 0 for res in r.reservas.all())
         total_res_ruta_m = round(res_tramos_m + res_nodos_m, 2)
 
@@ -130,20 +135,29 @@ def dashboard_inventario(request):
             
         # Acumular para gráficas (basado en rutas únicas)
         stats_trazado[tipo_final] = stats_trazado.get(tipo_final, 0) + 1
-        distancia_trazado[tipo_final] = round(distancia_trazado.get(tipo_final, 0.0) + distancia_ruta_km, 2)
+        if distancia_ruta_km is not None:
+            distancia_trazado[tipo_final] = round(
+                distancia_trazado.get(tipo_final, 0.0) + distancia_ruta_km,
+                2,
+            )
         
-        hub_origen = "N/A"
-        destino = "N/A"
-        marca_modelo = "N/A"
-        cap = "N/A"
-        tipo_fibra = ""
-        serial = ""
-        estado_tramo = ""
-        mufas_total = 0
-        splitters_total = 0
-        odf_nombre = ""
-        hilos_ocupados_total = 0
-        hilos_libres_total = 0
+        hub_origen = r.hub_site or r.origen or "N/A"
+        destino = r.destino or "N/A"
+        marca_modelo = r.marca_modelo or "N/A"
+        cap = (
+            str(r.capacidad_hilos_declarada)
+            if r.capacidad_hilos_declarada is not None
+            else "N/A"
+        )
+        tipo_fibra = r.tipo_fibra or ""
+        serial = r.serial or ""
+        estado_tramo = r.estado or ""
+        mufas_total = r.mufas or 0
+        splitters_total = r.splitters or 0
+        odf_nombre = r.odf_nombre or ""
+        hilos_ocupados_total = r.hilos_ocupados_declarados or 0
+        hilos_reservados_total = r.hilos_reservados_declarados or 0
+        hilos_libres_total = r.hilos_libres_declarados or 0
         
         for t in tramos:
             if t.hub_site and t.hub_site != "N/A" and hub_origen == "N/A":
@@ -160,12 +174,16 @@ def dashboard_inventario(request):
                 serial = t.serial
             if t.estado and not estado_tramo:
                 estado_tramo = t.estado
-            mufas_total += (t.mufas or 0)
-            splitters_total += (t.splitters or 0)
+            if not r.mufas:
+                mufas_total += (t.mufas or 0)
+            if not r.splitters:
+                splitters_total += (t.splitters or 0)
             if t.odf_nombre and not odf_nombre:
                 odf_nombre = t.odf_nombre
-            hilos_ocupados_total += (t.hilos_ocupados or 0)
-            hilos_libres_total += (t.hilos_libres or 0)
+            if r.hilos_ocupados_declarados is None:
+                hilos_ocupados_total += (t.hilos_ocupados or 0)
+            if r.hilos_libres_declarados is None:
+                hilos_libres_total += (t.hilos_libres or 0)
             
         fibras = list(r.fibras_inventario.all())
         if fibras:
@@ -180,9 +198,6 @@ def dashboard_inventario(request):
                     hilos_reservados_total += 1
                 elif est == 'libre':
                     hilos_libres_total += 1
-        else:
-            hilos_reservados_total = 0
-        
         stats_capacidad[cap] = stats_capacidad.get(cap, 0) + 1
 
         # Conteo dinámico de tipos de reservas (nodos/hitos)
@@ -205,6 +220,7 @@ def dashboard_inventario(request):
             'marca_modelo': marca_modelo,
             'tipo': tipo_final,
             'distancia_km': distancia_ruta_km,
+            'distancia_fuente': distancia_ruta.fuente,
             'capacidad': cap,
             'reservas_km': round(total_res_ruta_m / 1000, 3),
             'conteo_reservas': conteo_reservas_nodos,
@@ -227,11 +243,18 @@ def dashboard_inventario(request):
         })
 
     # Totales para los cards superiores
-    total_km_global = sum(r['distancia_km'] for r in resumen_rutas)
+    total_km_global = sum(
+        ruta['distancia_km']
+        for ruta in resumen_rutas
+        if ruta['distancia_km'] is not None
+    )
     total_res_global_km = sum(r['reservas_km'] for r in resumen_rutas)
 
     rutas_ids = [ruta['id'] for ruta in resumen_rutas]
-    tramos_filtrados = InventarioTramo.objects.filter(ruta_id__in=rutas_ids)
+    tramos_filtrados = InventarioTramo.objects.filter(
+        ruta_id__in=rutas_ids,
+        vigente=True,
+    )
     fibras_filtradas = InventarioFibra.objects.filter(ruta_id__in=rutas_ids)
     reservas_filtradas = Reserva.objects.filter(ruta_id__in=rutas_ids)
     coordenadas_filtradas = CoordenadaRuta.objects.filter(ruta_id__in=rutas_ids)
@@ -419,7 +442,10 @@ def dashboard_inventario(request):
             'detalle': 'No aparecen en el mapa de cobertura del inventario.',
         })
 
-    total_tramos = sum(len(ruta.tramos_inventario.all()) for ruta in rutas_db)
+    total_tramos = sum(
+        sum(1 for tramo in ruta.tramos_inventario.all() if tramo.vigente)
+        for ruta in rutas_db
+    )
     total_reservas = sum(len(ruta.reservas.all()) for ruta in rutas_db)
     total_coordenadas = sum(len(ruta.coordenadas.all()) for ruta in rutas_db)
 
@@ -531,7 +557,7 @@ def inventario_externo(request):
     """Inventario paginado de troncales y tramos."""
     from ..models import InventarioTramo, Ruta
 
-    tramos = InventarioTramo.objects.all()
+    tramos = InventarioTramo.objects.filter(vigente=True)
 
     def opciones(campo):
         return list(
@@ -544,7 +570,10 @@ def inventario_externo(request):
 
     context = {
         'rutas_inventario': list(
-            Ruta.objects.filter(tramos_inventario__isnull=False)
+            Ruta.objects.filter(
+                tramos_inventario__isnull=False,
+                tramos_inventario__vigente=True,
+            )
             .order_by('nombre').values('id', 'nombre').distinct()
         ),
         'tipos_trazado': opciones('tipo_trazado'),
@@ -590,9 +619,32 @@ def get_datos_inventario(request):
     # Django. Consultar solo las columnas utilizadas evita construir más de
     # 10 000 modelos en memoria y mantiene exactamente el mismo contrato JSON.
     rutas = list(
-        Ruta.objects.filter(tramos_inventario__isnull=False)
+        Ruta.objects.filter(
+            tramos_inventario__isnull=False,
+            tramos_inventario__vigente=True,
+        )
         .order_by('nombre')
-        .values('id', 'nombre', 'otu__nombre', 'olt', 'pon')
+        .values(
+            'id',
+            'nombre',
+            'otu__nombre',
+            'olt',
+            'pon',
+            'estado',
+            'capacidad_hilos_declarada',
+            'tipo_fibra',
+            'origen',
+            'destino',
+            'hub_site',
+            'marca_modelo',
+            'serial',
+            'odf_nombre',
+            'mufas',
+            'splitters',
+            'reservas_m',
+            'distancia_m',
+            'distancia_documentada_m',
+        )
         .distinct()
     )
     rutas_ids = [ruta['id'] for ruta in rutas]
@@ -607,12 +659,16 @@ def get_datos_inventario(request):
 
     campos_tramo = (
         'ruta_id', 'tramo_secuencia', 'tipo_trazado', 'estado', 'distancia_m',
+        'distancia_documentada_m',
         'mufas', 'splitters', 'reservas_m', 'capacidad', 'tipo_fibra',
         'origen', 'destino', 'hub_site', 'marca_modelo', 'serial', 'odf_nombre',
     )
     tramos_por_ruta = defaultdict(list)
     for tramo in (
-        InventarioTramo.objects.filter(ruta_id__in=rutas_ids)
+        InventarioTramo.objects.filter(
+            ruta_id__in=rutas_ids,
+            vigente=True,
+        )
         .order_by('ruta_id', 'tramo_secuencia')
         .values(*campos_tramo)
     ):
@@ -669,7 +725,7 @@ def get_datos_inventario(request):
                     val = tramo_principal.get(field)
                 return val
             
-            hub_site_name = get_val('hub_site')
+            hub_site_name = ruta['hub_site'] or get_val('hub_site')
             hub_site_lat = None
             hub_site_lon = None
             hub_site_id = None
@@ -680,27 +736,55 @@ def get_datos_inventario(request):
                     hub_site_lat = float(hs['latitud'])
                     hub_site_lon = float(hs['longitud'])
 
+            distancia_documentada_m = (
+                meta.get('distancia_documentada_m')
+                if meta
+                else None
+            )
+            distancia_geometrica_m = meta.get('distancia_m') if meta else None
+            if distancia_documentada_m is not None:
+                distancia_tramo_m = distancia_documentada_m
+                distancia_fuente = 'inventario_tramos'
+            else:
+                distancia_tramo_m = distancia_geometrica_m
+                distancia_fuente = (
+                    'geometria'
+                    if distancia_geometrica_m is not None
+                    else None
+                )
+
             tramo_obj = {
                 "tramo_secuencia": sec,
                 "tipo_trazado": (
                     meta.get('tipo_trazado') if meta else "SIN CLASIFICAR"
                 ) or "SIN CLASIFICAR",
-                "estado": get_val('estado') or "Desconocido",
-                "distancia_m": get_val('distancia_m'),
-                "mufas": get_val('mufas') or 0,
-                "splitters": get_val('splitters') or 0,
-                "reservas_m": get_val('reservas_m') or 0.0,
-                "capacidad": get_val('capacidad') or "N/A",
-                "tipo_fibra": get_val('tipo_fibra') or "N/A",
-                "origen": get_val('origen'),
-                "destino": get_val('destino'),
+                "estado": get_val('estado') or ruta['estado'] or "Desconocido",
+                "distancia_m": distancia_tramo_m,
+                "distancia_fuente": distancia_fuente,
+                "mufas": ruta['mufas'] or get_val('mufas') or 0,
+                "splitters": ruta['splitters'] or get_val('splitters') or 0,
+                "reservas_m": (
+                    ruta['reservas_m'] or get_val('reservas_m') or 0.0
+                ),
+                "capacidad": (
+                    ruta['capacidad_hilos_declarada']
+                    if ruta['capacidad_hilos_declarada'] is not None
+                    else get_val('capacidad') or "N/A"
+                ),
+                "tipo_fibra": (
+                    ruta['tipo_fibra'] or get_val('tipo_fibra') or "N/A"
+                ),
+                "origen": get_val('origen') or ruta['origen'],
+                "destino": get_val('destino') or ruta['destino'],
                 "hub_site": hub_site_name,
                 "hub_site_id": hub_site_id,
                 "hub_site_lat": hub_site_lat,
                 "hub_site_lon": hub_site_lon,
-                "marca_modelo": get_val('marca_modelo'),
-                "serial": get_val('serial'),
-                "odf_nombre": get_val('odf_nombre'),
+                "marca_modelo": (
+                    ruta['marca_modelo'] or get_val('marca_modelo')
+                ),
+                "serial": ruta['serial'] or get_val('serial'),
+                "odf_nombre": ruta['odf_nombre'] or get_val('odf_nombre'),
                 "coordenadas": coords
             }
             tramos_list.append(tramo_obj)
@@ -715,11 +799,34 @@ def get_datos_inventario(request):
                 "lon": float(reserva['longitud'])
             })
             
+        tramos_inventario = list(tramos_metadata.values())
+        if ruta['distancia_documentada_m'] is not None:
+            distancia_ruta_m = ruta['distancia_documentada_m']
+            distancia_ruta_fuente = 'inventario_troncal'
+        elif tramos_inventario and all(
+            tramo['distancia_documentada_m'] is not None
+            for tramo in tramos_inventario
+        ):
+            distancia_ruta_m = sum(
+                tramo['distancia_documentada_m']
+                for tramo in tramos_inventario
+            )
+            distancia_ruta_fuente = 'inventario_tramos'
+        else:
+            distancia_ruta_m = ruta['distancia_m']
+            distancia_ruta_fuente = (
+                'geometria'
+                if distancia_ruta_m is not None
+                else None
+            )
+
         resultado.append({
             "nombre": ruta['nombre'],
             "otu": ruta['otu__nombre'] if ruta['otu__nombre'] else "N/A",
             "olt": ruta['olt'] if ruta['olt'] else "N/A",
             "pon": ruta['pon'] if ruta['pon'] else "N/A",
+            "distancia_m": distancia_ruta_m,
+            "distancia_fuente": distancia_ruta_fuente,
             "tramos": tramos_list,
             "reservas_nodos": reservas_list
         })
@@ -770,6 +877,26 @@ def get_detalle_fibras(request, ruta_nombre):
         
     return JsonResponse({"status": "success", "data": data})
 
+
+def _actualizar_conteos_fibra_ruta(ruta):
+    """Sincroniza en Ruta los conteos derivados del detalle de fibras."""
+    from ..models import InventarioFibra
+
+    fibras = InventarioFibra.objects.filter(ruta=ruta)
+    ruta.hilos_ocupados_declarados = fibras.filter(
+        estado__in=['Ocupada', 'Ocupado', 'Active', 'Activo']
+    ).count()
+    ruta.hilos_reservados_declarados = fibras.filter(
+        estado__in=['Reservada', 'Reservado']
+    ).count()
+    ruta.hilos_libres_declarados = fibras.filter(estado='Libre').count()
+    ruta.save(update_fields=[
+        'hilos_ocupados_declarados',
+        'hilos_reservados_declarados',
+        'hilos_libres_declarados',
+    ])
+
+
 @login_required
 @permission_required('mapas.add_inventariofibra', raise_exception=True)
 @require_POST
@@ -798,18 +925,19 @@ def create_detalle_fibra(request):
             if InventarioFibra.objects.filter(ruta=ruta, fibra_numero=fibra_numero).exists():
                 return JsonResponse({"status": "error", "message": f"La fibra/hilo '{fibra_numero}' ya existe para esta ruta."}, status=400)
             
-            # Validar capacidad de hilos
-            import re
-            from ..models import InventarioTramo
-            tramo = InventarioTramo.objects.filter(ruta=ruta).order_by('tramo_secuencia').first()
-            if tramo and tramo.capacidad:
-                match = re.search(r'\d+', tramo.capacidad)
-                if match:
-                    capacidad_max = int(match.group())
-                    if capacidad_max > 0:
-                        actual_hilos = InventarioFibra.objects.filter(ruta=ruta).count()
-                        if actual_hilos >= capacidad_max:
-                            return JsonResponse({"status": "error", "message": f"Límite excedido. La ruta tiene una capacidad máxima de {capacidad_max} hilos."}, status=400)
+            capacidad_max = ruta.capacidad_hilos_declarada
+            if capacidad_max is None:
+                import re
+                tramo = InventarioTramo.objects.filter(
+                    ruta=ruta
+                ).order_by('tramo_secuencia').first()
+                if tramo and tramo.capacidad:
+                    match = re.search(r'\d+', tramo.capacidad)
+                    capacidad_max = int(match.group()) if match else None
+            if capacidad_max:
+                actual_hilos = InventarioFibra.objects.filter(ruta=ruta).count()
+                if actual_hilos >= capacidad_max:
+                    return JsonResponse({"status": "error", "message": f"Límite excedido. La ruta tiene una capacidad máxima de {capacidad_max} hilos."}, status=400)
             
             nuevo_estado = str(data.get('estado', 'Libre')).strip()
             
@@ -822,6 +950,7 @@ def create_detalle_fibra(request):
                 destino=str(data.get('destino', '')).strip(),
                 tipo_conector=str(data.get('tipo_conector', '')).strip()
             )
+            _actualizar_conteos_fibra_ruta(ruta)
             return JsonResponse({"status": "success", "message": "Hilo creado correctamente"})
         except ValidationError as exc:
             return JsonResponse({"status": "error", "message": "; ".join(exc.messages)}, status=400)
@@ -895,20 +1024,31 @@ def import_fibras_csv(request):
             if not fibra_col:
                 return JsonResponse({"status": "error", "message": "El CSV debe contener una columna para el Hilo/Fibra (ej: 'hilo/fibra' o 'fibra')."}, status=400)
                 
-            # Validar capacidad de hilos
-            import re
-            from ..models import InventarioTramo
-            tramo = InventarioTramo.objects.filter(ruta=ruta).order_by('tramo_secuencia').first()
-            if tramo and tramo.capacidad:
-                match = re.search(r'\d+', tramo.capacidad)
-                if match:
-                    capacidad_max = int(match.group())
-                    if capacidad_max > 0:
-                        hilos_en_csv = set(str(row[fibra_col]).strip() for index, row in df.iterrows() if str(row[fibra_col]).strip() not in ['nan', 'None', ''])
-                        hilos_existentes = set(InventarioFibra.objects.filter(ruta=ruta).values_list('fibra_numero', flat=True))
-                        nuevos_hilos = hilos_en_csv - hilos_existentes
-                        if len(hilos_existentes) + len(nuevos_hilos) > capacidad_max:
-                            return JsonResponse({"status": "error", "message": f"Límite excedido. La ruta tiene capacidad para {capacidad_max} hilos, pero estás intentando registrar {len(hilos_existentes) + len(nuevos_hilos)} hilos totales."}, status=400)
+            capacidad_max = ruta.capacidad_hilos_declarada
+            if capacidad_max is None:
+                import re
+                tramo = InventarioTramo.objects.filter(
+                    ruta=ruta
+                ).order_by('tramo_secuencia').first()
+                if tramo and tramo.capacidad:
+                    match = re.search(r'\d+', tramo.capacidad)
+                    capacidad_max = int(match.group()) if match else None
+            if capacidad_max:
+                hilos_en_csv = {
+                    str(row[fibra_col]).strip()
+                    for _, row in df.iterrows()
+                    if str(row[fibra_col]).strip() not in ['nan', 'None', '']
+                }
+                hilos_existentes = set(
+                    InventarioFibra.objects.filter(ruta=ruta).values_list(
+                        'fibra_numero',
+                        flat=True,
+                    )
+                )
+                nuevos_hilos = hilos_en_csv - hilos_existentes
+                total_proyectado = len(hilos_existentes) + len(nuevos_hilos)
+                if total_proyectado > capacidad_max:
+                    return JsonResponse({"status": "error", "message": f"Límite excedido. La ruta tiene capacidad para {capacidad_max} hilos, pero estás intentando registrar {total_proyectado} hilos totales."}, status=400)
                 
             for _, row in df.iterrows():
                 fibra_num = str(row[fibra_col]).strip()
@@ -926,7 +1066,7 @@ def import_fibras_csv(request):
                         'tipo_conector': get_val(row, 'tipo_conector')
                     }
                 )
-                
+            _actualizar_conteos_fibra_ruta(ruta)
             return JsonResponse({"status": "success", "message": "Hilos importados correctamente."})
         except ERRORES_DATOS_ENTRADA:
             logger.info("CSV de fibras inválido", exc_info=True)
@@ -975,19 +1115,7 @@ def update_detalle_fibra(request):
             fibra.save()
 
             if fibra.ruta_id:
-                from ..models import InventarioTramo
-                ocupados = InventarioFibra.objects.filter(ruta_id=fibra.ruta_id, estado__in=['Ocupada', 'Ocupado', 'Active', 'Activo']).count()
-                libres = InventarioFibra.objects.filter(ruta_id=fibra.ruta_id, estado='Libre').count()
-                tramos = InventarioTramo.objects.filter(
-                    ruta_id=fibra.ruta_id
-                ).order_by('tramo_secuencia')
-                primer_tramo = tramos.first()
-                tramos.update(hilos_ocupados=0, hilos_libres=0)
-                if primer_tramo:
-                    InventarioTramo.objects.filter(pk=primer_tramo.pk).update(
-                        hilos_ocupados=ocupados,
-                        hilos_libres=libres,
-                    )
+                _actualizar_conteos_fibra_ruta(fibra.ruta)
             
             return JsonResponse({"status": "success", "message": "Fibra actualizada correctamente"})
         except ERRORES_DATOS_ENTRADA:
@@ -1106,14 +1234,11 @@ def update_detalle_puerto(request):
 @require_POST
 @transaction.atomic
 def create_ruta_manual(request):
-    """Crea una nueva ruta y su tramo técnico inicial."""
-    import json
+    """Crea una troncal y su tramo inicial sin exigir geometría."""
     if request.method != 'POST':
         return JsonResponse({'status': 'error', 'message': 'Método no permitido'}, status=405)
     
     try:
-        from ..models import Ruta, InventarioTramo
-        
         if request.content_type == 'application/json':
             data = json.loads(request.body)
         else:
@@ -1124,101 +1249,78 @@ def create_ruta_manual(request):
         if not nombre:
             return JsonResponse({'status': 'error', 'message': 'El nombre de la ruta es obligatorio'})
 
-        # Validación de duplicado
         ruta_existente = Ruta.objects.filter(nombre=nombre).first()
-        
         if ruta_existente:
             if InventarioTramo.objects.filter(ruta=ruta_existente).exists():
                 return JsonResponse({'status': 'error', 'message': f'La ruta troncal "{nombre}" ya existe y tiene datos registrados.'})
-            else:
-                nueva_ruta = ruta_existente
-                if not nueva_ruta.olt:
-                    nueva_ruta.olt = data.get('hub_origen', '')
-                if nueva_ruta.distancia_m is None or nueva_ruta.distancia_m == 0:
-                    nueva_ruta.distancia_m = float(data.get('distancia_km', 0) or 0) * 1000
-                nueva_ruta.save()
+            nueva_ruta = ruta_existente
         else:
-            # Crear Ruta
-            nueva_ruta = Ruta.objects.create(
-                nombre=nombre,
-                olt=data.get('hub_origen', ''),
-                distancia_m=float(data.get('distancia_km', 0) or 0) * 1000
-            )
+            nueva_ruta = Ruta(nombre=nombre)
         
         capacidad_raw = data.get('capacidad', '').strip()
+        capacidad_declarada = None
         if capacidad_raw.isdigit():
+            capacidad_declarada = int(capacidad_raw)
             capacidad_raw = f"{capacidad_raw} Hilos"
+        else:
+            import re
+            coincidencia_capacidad = re.search(r'\d+', capacidad_raw)
+            if coincidencia_capacidad:
+                capacidad_declarada = int(coincidencia_capacidad.group(0))
+        distancia_raw = data.get('distancia_km')
+        distancia_inicial_m = (
+            None
+            if distancia_raw in (None, '')
+            else float(distancia_raw) * 1000
+        )
+
+        nueva_ruta.olt = data.get('hub_origen', '').strip() or None
+        nueva_ruta.estado = data.get('estado', '').strip() or None
+        nueva_ruta.tipo_fibra = data.get('tipo_fibra', '').strip() or None
+        nueva_ruta.origen = data.get('hub_origen', '').strip() or None
+        nueva_ruta.destino = data.get('destino', '').strip() or None
+        nueva_ruta.hub_site = data.get('hub_origen', '').strip() or None
+        nueva_ruta.marca_modelo = data.get('marca_modelo', '').strip() or None
+        nueva_ruta.serial = data.get('serial', '').strip() or None
+        nueva_ruta.odf_nombre = data.get('odf_nombre', '').strip() or None
+        nueva_ruta.mufas = int(data.get('mufas', 0) or 0)
+        nueva_ruta.splitters = int(data.get('splitters', 0) or 0)
+        nueva_ruta.reservas_m = float(data.get('reserva_km', 0) or 0) * 1000
+        nueva_ruta.hilos_ocupados_declarados = int(
+            data.get('hilos_ocupados', 0) or 0
+        )
+        nueva_ruta.hilos_libres_declarados = int(
+            data.get('hilos_libres', 0) or 0
+        )
+        nueva_ruta.hilos_reservados_declarados = int(
+            data.get('hilos_reservados', 0) or 0
+        )
+        nueva_ruta.capacidad_hilos_declarada = capacidad_declarada
+        nueva_ruta.distancia_documentada_m = distancia_inicial_m
+        nueva_ruta.full_clean()
+        nueva_ruta.save()
             
-        # Crear Tramo Técnico inicial (para que aparezca en el dashboard)
         tramo_inicial = InventarioTramo.objects.create(
             ruta=nueva_ruta,
             tramo_secuencia=1,
-            tipo_trazado=data.get('tipo_trazado', ''),
+            codigo_tramo='T001',
+            estado_calidad=InventarioTramo.CALIDAD_PENDIENTE,
+            tipo_trazado=data.get('tipo_trazado', '') or 'SIN_CLASIFICAR',
             estado=data.get('estado', ''),
-            capacidad=capacidad_raw,
-            hub_site=data.get('hub_origen', ''),
+            origen=data.get('hub_origen', ''),
             destino=data.get('destino', ''),
-            marca_modelo=data.get('marca_modelo', ''),
-            tipo_fibra=data.get('tipo_fibra', ''),
-            serial=data.get('serial', ''),
-            mufas=int(data.get('mufas', 0) or 0),
-            splitters=int(data.get('splitters', 0) or 0),
-            odf_nombre=data.get('odf_nombre', ''),
-            hilos_ocupados=int(data.get('hilos_ocupados', 0) or 0),
-            hilos_libres=int(data.get('hilos_libres', 0) or 0),
-            distancia_m=float(data.get('distancia_km', 0) or 0) * 1000,
-            reservas_m=float(data.get('reserva_km', 0) or 0) * 1000
+            distancia_documentada_m=distancia_inicial_m,
         )
-        # Procesar archivo CSV si se adjuntó
+
         csv_file = request.FILES.get('csv_coordenadas')
         if csv_file:
             import pandas as pd
             import io
-            from ..models import CoordenadaRuta
+            from .importacion import _vincular_geometria_existente
             
-            decoded_file = csv_file.read().decode('utf-8')
+            decoded_file = csv_file.read().decode('utf-8-sig')
             df = pd.read_csv(io.StringIO(decoded_file))
-            df.columns = [c.strip().lower() for c in df.columns]
-            
-            if 'latitude' in df.columns and 'longitude' in df.columns:
-                CoordenadaRuta.objects.filter(ruta=nueva_ruta).delete()
-                
-                coords_a_crear = []
-                distancia_calculada = 0.0
-                prev_lat = None
-                prev_lon = None
-                from .importacion import calcular_distancia_haversine
-                
-                for i, row in df.iterrows():
-                    lat = float(row['latitude'])
-                    lon = float(row['longitude'])
-                    
-                    if prev_lat is not None and prev_lon is not None:
-                        distancia_calculada += calcular_distancia_haversine(prev_lat, prev_lon, lat, lon)
-                    prev_lat = lat
-                    prev_lon = lon
-                    
-                    coords_a_crear.append(
-                        CoordenadaRuta(
-                            ruta=nueva_ruta,
-                            tramo=tramo_inicial,
-                            latitud=lat,
-                            longitud=lon,
-                            orden=i + 1,
-                            tramo_secuencia=1
-                        )
-                    )
-                if coords_a_crear:
-                    CoordenadaRuta.objects.bulk_create(coords_a_crear)
-                    
-                distancia_ingresada = float(data.get('distancia_km', 0) or 0) * 1000
-                if distancia_ingresada == 0 and distancia_calculada > 0:
-                    nueva_ruta.distancia_m = distancia_calculada
-                    nueva_ruta.save(update_fields=['distancia_m'])
-                    tramo = InventarioTramo.objects.filter(ruta=nueva_ruta).first()
-                    if tramo:
-                        tramo.distancia_m = distancia_calculada
-                        tramo.save(update_fields=['distancia_m'])
+            _vincular_geometria_existente(nueva_ruta, df)
 
         return JsonResponse({'status': 'success', 'message': 'Ruta creada correctamente'})
     except ERRORES_DATOS_ENTRADA:
@@ -1410,90 +1512,78 @@ def update_ruta_manual(request):
         if nombre_original != nuevo_nombre and Ruta.objects.filter(nombre=nuevo_nombre).exists():
             return JsonResponse({'status': 'error', 'message': f'La ruta "{nuevo_nombre}" ya existe.'})
             
-        # Actualizar Ruta
-        ruta.nombre = nuevo_nombre
-        ruta.olt = data.get('hub_origen', '')
-        ruta.distancia_m = float(data.get('distancia_km', 0) or 0) * 1000
-        ruta.save()
-        
         capacidad_raw = data.get('capacidad', '').strip()
-        if capacidad_raw.isdigit():
-            capacidad_raw = f"{capacidad_raw} Hilos"
+        import re
+        coincidencia_capacidad = re.search(r'\d+', capacidad_raw)
+        capacidad = (
+            int(coincidencia_capacidad.group(0))
+            if coincidencia_capacidad
+            else None
+        )
 
-        # Actualizar el primer tramo técnico
-        tramo = InventarioTramo.objects.filter(ruta=ruta).order_by('tramo_secuencia').first()
-        if tramo:
-            # Solo permitimos sobreescribir el tipo_trazado si no hay coordenadas.
-            # Si hay coordenadas, los tramos ya tienen su trazado específico (AEREO/SOTERRADO)
-            if not ruta.coordenadas.exists():
-                tramo.tipo_trazado = data.get('tipo_trazado', '')
-                
+        ruta.nombre = nuevo_nombre
+        ruta.olt = data.get('hub_origen', '').strip() or None
+        ruta.estado = data.get('estado', '').strip() or None
+        ruta.tipo_fibra = data.get('tipo_fibra', '').strip() or None
+        ruta.origen = data.get('hub_origen', '').strip() or None
+        ruta.destino = data.get('destino', '').strip() or None
+        ruta.hub_site = data.get('hub_origen', '').strip() or None
+        ruta.marca_modelo = data.get('marca_modelo', '').strip() or None
+        ruta.serial = data.get('serial', '').strip() or None
+        ruta.odf_nombre = data.get('odf_nombre', '').strip() or None
+        ruta.capacidad_hilos_declarada = capacidad
+        distancia_raw = data.get('distancia_km')
+        ruta.distancia_documentada_m = (
+            None
+            if distancia_raw in (None, '')
+            else float(distancia_raw) * 1000
+        )
+        ruta.mufas = int(data.get('mufas', 0) or 0)
+        ruta.splitters = int(data.get('splitters', 0) or 0)
+        ruta.reservas_m = float(data.get('reserva_km', 0) or 0) * 1000
+        if 'hilos_ocupados' in data:
+            ruta.hilos_ocupados_declarados = int(
+                data.get('hilos_ocupados', 0) or 0
+            )
+        if 'hilos_libres' in data:
+            ruta.hilos_libres_declarados = int(
+                data.get('hilos_libres', 0) or 0
+            )
+        if 'hilos_reservados' in data:
+            ruta.hilos_reservados_declarados = int(
+                data.get('hilos_reservados', 0) or 0
+            )
+        ruta.full_clean()
+        ruta.save()
+
+        tramos = list(
+            InventarioTramo.objects.filter(
+                ruta=ruta,
+                vigente=True,
+            ).order_by('tramo_secuencia')
+        )
+        if len(tramos) == 1 and not ruta.coordenadas.exists():
+            tramo = tramos[0]
+            tramo.tipo_trazado = (
+                data.get('tipo_trazado', '')
+                or tramo.tipo_trazado
+                or 'SIN_CLASIFICAR'
+            )
             tramo.estado = data.get('estado', '')
-            tramo.capacidad = capacidad_raw
-            tramo.hub_site = data.get('hub_origen', '')
+            tramo.origen = data.get('hub_origen', '')
             tramo.destino = data.get('destino', '')
-            tramo.marca_modelo = data.get('marca_modelo', '')
-            tramo.tipo_fibra = data.get('tipo_fibra', '')
-            tramo.serial = data.get('serial', '')
-            tramo.mufas = int(data.get('mufas', 0) or 0)
-            tramo.splitters = int(data.get('splitters', 0) or 0)
-            tramo.odf_nombre = data.get('odf_nombre', '')
-            tramo.hilos_ocupados = int(data.get('hilos_ocupados', 0) or 0)
-            tramo.hilos_libres = int(data.get('hilos_libres', 0) or 0)
-            tramo.distancia_m = float(data.get('distancia_km', 0) or 0) * 1000
-            tramo.reservas_m = float(data.get('reserva_km', 0) or 0) * 1000
+            tramo.distancia_documentada_m = ruta.distancia_documentada_m
             tramo.save()
             
-        # Procesar archivo CSV si se adjuntó
         csv_file = request.FILES.get('csv_coordenadas')
         if csv_file:
             import pandas as pd
             import io
-            from ..models import CoordenadaRuta
+            from .importacion import _vincular_geometria_existente
             
-            decoded_file = csv_file.read().decode('utf-8')
+            decoded_file = csv_file.read().decode('utf-8-sig')
             df = pd.read_csv(io.StringIO(decoded_file))
-            df.columns = [c.strip().lower() for c in df.columns]
-            
-            if 'latitude' in df.columns and 'longitude' in df.columns:
-                CoordenadaRuta.objects.filter(ruta=ruta).delete()
-                
-                coords_a_crear = []
-                distancia_calculada = 0.0
-                prev_lat = None
-                prev_lon = None
-                from .importacion import calcular_distancia_haversine
-                
-                for i, row in df.iterrows():
-                    lat = float(row['latitude'])
-                    lon = float(row['longitude'])
-                    
-                    if prev_lat is not None and prev_lon is not None:
-                        distancia_calculada += calcular_distancia_haversine(prev_lat, prev_lon, lat, lon)
-                    prev_lat = lat
-                    prev_lon = lon
-                    
-                    coords_a_crear.append(
-                        CoordenadaRuta(
-                            ruta=ruta,
-                            tramo=tramo,
-                            latitud=lat,
-                            longitud=lon,
-                            orden=i + 1,
-                            tramo_secuencia=1
-                        )
-                    )
-                if coords_a_crear:
-                    CoordenadaRuta.objects.bulk_create(coords_a_crear)
-                    
-                distancia_ingresada = float(data.get('distancia_km', 0) or 0) * 1000
-                if distancia_ingresada == 0 and distancia_calculada > 0:
-                    ruta.distancia_m = distancia_calculada
-                    ruta.save(update_fields=['distancia_m'])
-                    tramo = InventarioTramo.objects.filter(ruta=ruta).first()
-                    if tramo:
-                        tramo.distancia_m = distancia_calculada
-                        tramo.save(update_fields=['distancia_m'])
+            _vincular_geometria_existente(ruta, df)
 
         return JsonResponse({'status': 'success', 'message': 'Ruta actualizada correctamente'})
     except ERRORES_DATOS_ENTRADA:

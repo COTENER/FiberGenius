@@ -1,0 +1,3 @@
+ruta,estado,capacidad,tipo_fibra,origen,destino,hub_site,marca_modelo,serial,odf_nombre,mufas,splitters,reservas_m,hilos_ocupados,hilos_libres,hilos_reservados
+RUTA-DEMO-01,ACTIVO,48,G.652D,Hub Independencia,Hub Colina,Hub Independencia,Cable ADSS 48F,SN-DEMO-001,ODF-IND-01,2,0,120,20,24,4
+RUTA-DEMO-02,ACTIVO,24,G.652D,Hub Recoleta,ER-200,Hub Recoleta,Cable ADSS 24F,SN-DEMO-002,ODF-REC-01,1,0,60,8,16,0

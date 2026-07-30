@@ -7,6 +7,7 @@ from django.utils.text import get_valid_filename
 from django.views.decorators.http import require_GET, require_POST
 from django.http import Http404, JsonResponse
 import json
+from ..distancias import resolver_distancia_ruta
 from ..models import Ruta, TrazaReferencia, DiagnosticoProactivo, PerfilUmbral, CoordenadaRuta
 from ..veex_api import create_on_demand_task # Reutilizaremos esta API
 from ..management.commands.georeferenciar_eventos import interpolate_on_route, haversine
@@ -294,7 +295,12 @@ def api_calcular_coordenadas(request, ruta_id):
         route_geo_len = geo_cum[-1]
 
         # Obtener la longitud óptica total de la fibra para escalar
-        route_optical_len = ruta.distancia_m if ruta.distancia_m else route_geo_len
+        distancia_ruta = resolver_distancia_ruta(ruta)
+        route_optical_len = (
+            distancia_ruta.valor_m
+            if distancia_ruta.valor_m is not None
+            else route_geo_len
+        )
 
         ref_activa = ruta.trazas_referencia.filter(activa=True).order_by('-fecha_creacion').first()
         if ref_activa and ref_activa.distancia_km:

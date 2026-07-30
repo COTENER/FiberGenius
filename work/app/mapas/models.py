@@ -76,6 +76,93 @@ class Ruta(models.Model):
     nombre = models.CharField(max_length=150, unique=True, db_index=True, verbose_name="Nombre de Ruta")
     otu = models.ForeignKey(OTU, on_delete=models.SET_NULL, null=True, blank=True, related_name='rutas', verbose_name="OTU Asociado")
     distancia_m = models.FloatField(null=True, blank=True, verbose_name="Distancia (m)")
+    distancia_documentada_m = models.FloatField(
+        null=True,
+        blank=True,
+        verbose_name="Distancia documentada (m)",
+        help_text="Valor declarado en el inventario técnico; no reemplaza la distancia calculada desde la geometría.",
+    )
+    capacidad_hilos_declarada = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Capacidad declarada (hilos)",
+        help_text="Capacidad del cable continuo asociada a toda la troncal.",
+    )
+    estado = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        verbose_name="Estado operativo",
+    )
+    tipo_fibra = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="Tipo de fibra",
+    )
+    origen = models.CharField(
+        max_length=150,
+        blank=True,
+        null=True,
+        verbose_name="Origen declarado de la troncal",
+    )
+    destino = models.CharField(
+        max_length=150,
+        blank=True,
+        null=True,
+        verbose_name="Destino declarado de la troncal",
+    )
+    hub_site = models.CharField(
+        max_length=150,
+        blank=True,
+        null=True,
+        verbose_name="Hub/Site principal",
+    )
+    marca_modelo = models.CharField(
+        max_length=150,
+        blank=True,
+        null=True,
+        verbose_name="Marca / modelo del cable",
+    )
+    serial = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name="Serial del cable",
+    )
+    odf_nombre = models.CharField(
+        max_length=150,
+        blank=True,
+        null=True,
+        verbose_name="ODF declarado",
+    )
+    mufas = models.PositiveIntegerField(
+        default=0,
+        verbose_name="Mufas totales",
+    )
+    splitters = models.PositiveIntegerField(
+        default=0,
+        verbose_name="Splitters totales",
+    )
+    reservas_m = models.FloatField(
+        default=0.0,
+        verbose_name="Reserva lineal total (m)",
+    )
+    hilos_ocupados_declarados = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Hilos ocupados declarados",
+    )
+    hilos_libres_declarados = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Hilos libres declarados",
+    )
+    hilos_reservados_declarados = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Hilos reservados declarados",
+    )
     olt = models.CharField(max_length=100, blank=True, null=True, verbose_name="OLT")
     slot_olt = models.IntegerField(null=True, blank=True)
     puerto_olt = models.IntegerField(null=True, blank=True)
@@ -111,6 +198,27 @@ class Ruta(models.Model):
 
     def clean(self):
         super().clean()
+        if self.reservas_m is not None and self.reservas_m < 0:
+            raise ValidationError({
+                'reservas_m': 'La reserva lineal no puede ser negativa.'
+            })
+        conteos_declarados = [
+            self.hilos_ocupados_declarados,
+            self.hilos_libres_declarados,
+            self.hilos_reservados_declarados,
+        ]
+        if (
+            self.capacidad_hilos_declarada is not None
+            and any(valor is not None for valor in conteos_declarados)
+            and sum(valor or 0 for valor in conteos_declarados)
+            > self.capacidad_hilos_declarada
+        ):
+            raise ValidationError({
+                'capacidad_hilos_declarada': (
+                    'La suma de hilos ocupados, libres y reservados declarados '
+                    'no puede superar la capacidad del cable.'
+                )
+            })
         if not self.pk:
             return
         puerto = PuertoOTU.objects.filter(ruta_asociada_id=self.pk).select_related('otu').first()
@@ -131,6 +239,23 @@ class Ruta(models.Model):
         ordering = ['nombre']
         permissions = [
             ("can_view_reports", "Puede ver Reportes (Dashboard/Ranking)"),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(distancia_m__isnull=True) | Q(distancia_m__gte=0),
+                name='ck_ruta_distancia_no_negativa',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(distancia_documentada_m__isnull=True)
+                    | Q(distancia_documentada_m__gte=0)
+                ),
+                name='ck_ruta_dist_doc_no_negativa',
+            ),
+            models.CheckConstraint(
+                condition=Q(reservas_m__gte=0),
+                name='ck_ruta_reservas_m_no_negativas',
+            ),
         ]
 
 
@@ -376,11 +501,47 @@ class InventarioTramo(models.Model):
     de una ruta de fibra óptica.
     Datos poblados desde el CSV de 'Inventario Técnico'.
     """
+    CALIDAD_LEGACY = 'LEGACY_SIN_SEGMENTAR'
+    CALIDAD_PENDIENTE = 'PENDIENTE'
+    CALIDAD_VALIDADO = 'VALIDADO'
+    CALIDAD_INFERIDO = 'INFERIDO'
+    CALIDAD_REVISION = 'REQUIERE_REVISION'
+    CALIDAD_CHOICES = [
+        (CALIDAD_LEGACY, 'Heredado sin segmentación validada'),
+        (CALIDAD_PENDIENTE, 'Pendiente de validación'),
+        (CALIDAD_VALIDADO, 'Validado'),
+        (CALIDAD_INFERIDO, 'Inferido desde geometría'),
+        (CALIDAD_REVISION, 'Requiere revisión'),
+    ]
+
     ruta = models.ForeignKey(Ruta, on_delete=models.CASCADE, related_name='tramos_inventario', verbose_name="Ruta Asociada")
     tramo_secuencia = models.PositiveIntegerField(verbose_name="Secuencia del Tramo")
+    codigo_tramo = models.CharField(
+        max_length=50,
+        verbose_name="Código estable del tramo",
+        help_text="Identificador estable dentro de la troncal, por ejemplo T001.",
+    )
+    estado_calidad = models.CharField(
+        max_length=30,
+        choices=CALIDAD_CHOICES,
+        default=CALIDAD_PENDIENTE,
+        db_index=True,
+        verbose_name="Calidad de segmentación",
+    )
+    vigente = models.BooleanField(
+        default=True,
+        db_index=True,
+        verbose_name="Tramo vigente",
+        help_text="Se desactiva, sin borrar, cuando una recarga ya no contiene el tramo.",
+    )
     tipo_trazado = models.CharField(max_length=50, blank=True, null=True, verbose_name="Tipo de Trazado (Ej: AEREO, SOTERRADO)")
     estado = models.CharField(max_length=50, blank=True, null=True, verbose_name="Estado")
     distancia_m = models.FloatField(blank=True, null=True, verbose_name="Distancia del Tramo (m)")
+    distancia_documentada_m = models.FloatField(
+        blank=True,
+        null=True,
+        verbose_name="Distancia documentada del tramo (m)",
+    )
     mufas = models.IntegerField(blank=True, null=True, default=0, verbose_name="Número de Mufas")
     splitters = models.IntegerField(blank=True, null=True, default=0, verbose_name="Número de Splitters")
     reservas_m = models.FloatField(blank=True, null=True, default=0.0, verbose_name="Metraje de Reservas (m)")
@@ -401,9 +562,18 @@ class InventarioTramo(models.Model):
         blank=True,
         related_name='tramos_inventario',
     )
+    creado_en = models.DateTimeField(auto_now_add=True)
+    actualizado_en = models.DateTimeField(auto_now=True)
     
     def __str__(self):
-        return f"{self.ruta.nombre} - Tramo {self.tramo_secuencia} ({self.tipo_trazado})"
+        return f"{self.ruta.nombre} - {self.codigo_tramo} ({self.tipo_trazado})"
+
+    def save(self, *args, **kwargs):
+        if not self.codigo_tramo and self.tramo_secuencia:
+            self.codigo_tramo = f"T{self.tramo_secuencia:03d}"
+        self.codigo_tramo = (self.codigo_tramo or '').strip().upper()
+        self.full_clean()
+        return super().save(*args, **kwargs)
 
     class Meta:
         db_table = 'inv_tramos'
@@ -412,9 +582,20 @@ class InventarioTramo(models.Model):
         unique_together = ('ruta', 'tramo_secuencia')
         ordering = ['ruta', 'tramo_secuencia']
         constraints = [
+            models.UniqueConstraint(
+                fields=['ruta', 'codigo_tramo'],
+                name='uq_tramo_codigo_por_ruta',
+            ),
             models.CheckConstraint(
                 condition=Q(distancia_m__isnull=True) | Q(distancia_m__gte=0),
                 name='ck_tramo_distancia_no_negativa',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(distancia_documentada_m__isnull=True)
+                    | Q(distancia_documentada_m__gte=0)
+                ),
+                name='ck_tramo_dist_doc_no_negativa',
             ),
             models.CheckConstraint(
                 condition=Q(mufas__isnull=True) | Q(mufas__gte=0),

@@ -59,80 +59,59 @@
     {% elif tipo_csv == 'coordenadas_inventario' %}
     <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
         <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del Archivo ZIP (Inventario Geoespacial)</h4>
-        <p style="font-size:var(--text-sm);color:var(--text-secondary);">Archivo <code>.zip</code> con múltiples <code>.csv</code>. El nombre de cada CSV debe coincidir con la ruta (ej: PUERTO 1_BO). Columnas soportadas:</p>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);">Archivo <code>.zip</code> con múltiples <code>.csv</code>. El nombre de cada CSV debe coincidir con la troncal. Para cargar varios tramos, repite la secuencia en todas las coordenadas que pertenecen al mismo tramo.</p>
         <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-top:var(--space-2);">
-            <span class="badge badge--accent">Latitude</span> <span class="badge badge--accent">Longitude</span> 
+            <span class="badge badge--accent">Latitude</span> <span class="badge badge--accent">Longitude</span>
+            <span class="badge badge--success">tramo_secuencia</span>
+            <span class="badge badge--accent">codigo_tramo</span>
             <span style="background:#3b82f6;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;">tipo_trazado</span>
-            <span style="background:#f59e0b;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;">new_seg (opcional)</span>
+            <span style="background:#f59e0b;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px;">new_seg (compatible)</span>
         </div>
-        <p style="font-size:12px;color:var(--text-tertiary);margin-top:8px;">
-            * El sistema segmentará el tramo automáticamente si detecta un cambio en <code>tipo_trazado</code> o usando <code>new_seg</code>.
-        </p>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-top:var(--space-2);">Las secuencias deben comenzar en 1 y continuar sin saltos. <code>new_seg</code> se mantiene únicamente para archivos anteriores.</p>
 
-        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo (Cada archivo CSV)</h5>
+        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo: una troncal con dos tramos</h5>
         <div style="overflow-x: auto; margin-top: 8px;">
-            <table style="width:100%;border-collapse:collapse;font-size:12px;background:var(--bg-surface);min-width: 600px;">
+            <table style="width:100%;border-collapse:collapse;font-size:12px;background:var(--bg-surface);min-width:780px;">
                 <thead style="border-bottom:1px solid var(--border-color);color:var(--text-secondary);">
                     <tr>
                         <th style="text-align:left;padding:6px;">Latitude</th><th style="padding:6px;">Longitude</th>
-                        <th style="padding:6px;">tipo_trazado</th><th style="padding:6px;">new_seg</th>
+                        <th style="padding:6px;">tramo_secuencia</th><th style="padding:6px;">codigo_tramo</th><th style="padding:6px;">tipo_trazado</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr style="border-bottom:1px solid var(--border-color);">
-                        <td style="padding:6px;">-12.293295</td><td style="padding:6px;text-align:center;">-76.83004</td>
-                        <td style="padding:6px;text-align:center;">AEREO</td><td style="padding:6px;text-align:center;">True</td>
+                        <td style="padding:6px;">-12.293000</td><td style="padding:6px;text-align:center;">-76.830000</td>
+                        <td style="padding:6px;text-align:center;">1</td><td style="padding:6px;text-align:center;">T001</td><td style="padding:6px;text-align:center;">AEREO</td>
                     </tr>
-                    <tr>
-                        <td style="padding:6px;">-12.313159</td><td style="padding:6px;text-align:center;">-76.81141</td>
-                        <td style="padding:6px;text-align:center;">SOTERRADO</td><td style="padding:6px;text-align:center;">False</td>
-                    </tr>
+                    <tr style="border-bottom:1px solid var(--border-color);"><td style="padding:6px;">-12.294000</td><td style="padding:6px;text-align:center;">-76.829000</td><td style="padding:6px;text-align:center;">1</td><td style="padding:6px;text-align:center;">T001</td><td style="padding:6px;text-align:center;">AEREO</td></tr>
+                    <tr style="border-bottom:1px solid var(--border-color);"><td style="padding:6px;">-12.294000</td><td style="padding:6px;text-align:center;">-76.829000</td><td style="padding:6px;text-align:center;">2</td><td style="padding:6px;text-align:center;">T002</td><td style="padding:6px;text-align:center;">SOTERRADO</td></tr>
+                    <tr><td style="padding:6px;">-12.295000</td><td style="padding:6px;text-align:center;">-76.828000</td><td style="padding:6px;text-align:center;">2</td><td style="padding:6px;text-align:center;">T002</td><td style="padding:6px;text-align:center;">SOTERRADO</td></tr>
                 </tbody>
             </table>
         </div>
     </div>
+    {% elif tipo_csv == 'troncales_inventario' %}
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Inventario de Troncales</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Cada fila representa un cable continuo. No se requieren coordenadas.</p>
+        <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
+            <span class="badge badge--success">ruta (requerido)</span><span class="badge badge--accent">estado</span><span class="badge badge--accent">capacidad</span><span class="badge badge--accent">tipo_fibra</span><span class="badge badge--accent">origen</span><span class="badge badge--accent">destino</span><span class="badge badge--accent">hub_site</span><span class="badge badge--accent">marca_modelo</span><span class="badge badge--accent">serial</span><span class="badge badge--accent">odf_nombre</span><span class="badge badge--accent">mufas</span><span class="badge badge--accent">splitters</span><span class="badge badge--accent">reservas_m</span><span class="badge badge--accent">hilos_ocupados</span><span class="badge badge--accent">hilos_libres</span><span class="badge badge--accent">hilos_reservados</span>
+        </div>
+    </div>
     {% elif tipo_csv == 'tramos_inventario' %}
     <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
-        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Inventario Técnico</h4>
-        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Sube un único <code>.csv</code> con el detalle técnico del <strong>troncal</strong>. Cruza con el mapa usando <span class="badge badge--accent">ruta</span> (la data ingresada aplicará a todos sus segmentos):</p>
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Inventario de Tramos</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Cada fila representa un tramo. Una troncal puede tener uno o más tramos y no requiere geometría para cargarlos.</p>
         <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);">
-            <span class="badge badge--accent">ruta</span>
-            <span class="badge badge--accent">estado</span> <span class="badge badge--accent">distancia</span>
-            <span class="badge badge--accent">mufas</span> <span class="badge badge--accent">splitters</span> <span class="badge badge--accent">reservas_m</span>
-            <span class="badge badge--accent">capacidad</span> <span class="badge badge--accent">tipo_fibra</span>
-            <span class="badge badge--accent">origen</span> <span class="badge badge--accent">destino</span>
-            <span class="badge badge--accent">hub_site</span> <span class="badge badge--accent">marca_modelo</span>
-            <span class="badge badge--accent">serial</span>
+            <span class="badge badge--success">ruta</span><span class="badge badge--success">tramo_secuencia</span><span class="badge badge--success">codigo_tramo</span><span class="badge badge--accent">origen</span><span class="badge badge--accent">destino</span><span class="badge badge--accent">tipo_trazado</span><span class="badge badge--accent">estado_tramo</span><span class="badge badge--accent">distancia_documentada_m</span>
         </div>
-        
-        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo Completa</h5>
-        <div style="overflow-x: auto; margin-top: 8px;">
-            <table style="width:100%;border-collapse:collapse;font-size:12px;background:var(--bg-surface);min-width: 1000px;">
-                <thead style="border-bottom:1px solid var(--border-color);color:var(--text-secondary);">
-                    <tr>
-                        <th style="text-align:left;padding:6px;">ruta</th>
-                        <th style="padding:6px;">estado</th>
-                        <th style="padding:6px;">distancia</th><th style="padding:6px;">mufas</th>
-                        <th style="padding:6px;">splitters</th><th style="padding:6px;">reservas_m</th>
-                        <th style="padding:6px;">capacidad</th><th style="padding:6px;">tipo_fibra</th>
-                        <th style="padding:6px;">origen</th><th style="padding:6px;">destino</th>
-                        <th style="padding:6px;">hub_site</th><th style="padding:6px;">marca_modelo</th>
-                        <th style="padding:6px;">serial</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr style="border-bottom:1px solid var(--border-color);">
-                        <td style="padding:6px;">Colina OLT1 Primario 81</td>
-                        <td style="padding:6px;text-align:center;">ACTIVO</td>
-                        <td style="padding:6px;text-align:center;">1200.5</td><td style="padding:6px;text-align:center;">2</td>
-                        <td style="padding:6px;text-align:center;">1</td><td style="padding:6px;text-align:center;">45.5</td>
-                        <td style="padding:6px;text-align:center;">144 fibras</td><td style="padding:6px;text-align:center;">ADSS</td>
-                        <td style="padding:6px;text-align:center;">ODF TR01</td><td style="padding:6px;text-align:center;">LMLO123-F</td>
-                        <td style="padding:6px;text-align:center;">Los Olivos</td><td style="padding:6px;text-align:center;">Cable FO Troncal</td>
-                        <td style="padding:6px;text-align:center;">N/A</td>
-                    </tr>
-                </tbody>
-            </table>
+    </div>
+    {% elif tipo_csv == 'coordenadas_csv' %}
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Geometría de Tramos</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Carga opcional. Solo vincula coordenadas con troncales y tramos existentes; no modifica el inventario técnico.</p>
+        <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);">
+            <span class="badge badge--success">ruta</span><span class="badge badge--success">codigo_tramo</span><span class="badge badge--accent">tramo_secuencia</span><span class="badge badge--accent">orden_punto</span><span class="badge badge--accent">Latitude</span><span class="badge badge--accent">Longitude</span><span class="badge badge--accent">tipo_trazado</span>
         </div>
     </div>
     {% elif tipo_csv == 'asociar_puertos' %}

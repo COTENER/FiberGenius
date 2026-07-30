@@ -23,6 +23,15 @@ DATABASES = {
 ROOT_URLCONF = "fibergenius.urls"
 MEDIA_ROOT = Path(BASE_DIR) / "media_pruebas"
 STATIC_ROOT = Path(BASE_DIR) / "staticfiles_pruebas"
+
+# En desarrollo las plantillas deben reflejar los cambios del workspace sin
+# conservar la primera versión cargada por el proceso de Django.
+TEMPLATES[0]["APP_DIRS"] = False
+TEMPLATES[0]["OPTIONS"]["loaders"] = [
+    "django.template.loaders.filesystem.Loader",
+    "django.template.loaders.app_directories.Loader",
+]
+
 PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.PBKDF2PasswordHasher",
     "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",

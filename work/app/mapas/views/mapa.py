@@ -14,6 +14,7 @@ from django.db import connection
 from django.templatetags.static import static
 import csv
 
+from ..distancias import redondear_km, resolver_distancia_ruta
 from ..models import OTU, Ruta, Reserva, CoordenadaRuta
 from .utils import clasificar_tipo_evento, get_geo_bounds, get_color_evento
 
@@ -92,8 +93,13 @@ def mapa_alarmas(request):
             except (ValueError, TypeError):
                 continue
         
-        tramos = r.tramos_inventario.all()
+        tramos = [
+            tramo
+            for tramo in r.tramos_inventario.all()
+            if tramo.vigente
+        ]
         tipo_trazado = tramos[0].tipo_trazado if tramos else 'Sin Clasificar'
+        distancia = resolver_distancia_ruta(r, tramos)
         
         # Calcular el hub_origen (site) de forma automática con paridad al dashboard de inventario
         hub_origen = 'No disponible'
@@ -108,7 +114,12 @@ def mapa_alarmas(request):
             'nombre': r.nombre,
             'coordenadas': [[float(c.latitud), float(c.longitud)] for c in r.coordenadas.all()],
             'otu': hub_origen,
-            'distancia': round(r.distancia_m / 1000, 3) if r.distancia_m else 'No disponible',
+            'distancia': (
+                redondear_km(distancia, 3)
+                if distancia.valor_m is not None
+                else 'No disponible'
+            ),
+            'distancia_fuente': distancia.fuente,
             'olt': r.olt or 'No disponible',
             'pon': r.pon or 'No disponible',
             'enlace': r.enlace or '',
