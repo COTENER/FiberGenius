@@ -1,0 +1,4 @@
+Ruta,ID Fibra,Fibra,Codigo Fibra,Nodo A,ODF Extremo A,Puerto Extremo A,Conector A,Nodo B,ODF Extremo B,Puerto Extremo B,Conector B,Estado Global,Condicion Fisica,Servicio,Observaciones
+MEL-TC-001,,F1,F1,SITE-A,MEL-SITE-A-ODF-01,1,LC,SITE-B,MEL-SITE-B-ODF-01,1,LC,Ocupado,Operativa,Servicio principal,
+MEL-TC-001,,F2,F2,SITE-A,MEL-SITE-A-ODF-01,2,LC,SITE-B,,,,Disponible,Sin verificar,,Reserva técnica disponible
+,,F3,F3,SITE-A,MEL-SITE-A-ODF-01,3,LC,,,,,Malo,Con falla,,Requiere verificación

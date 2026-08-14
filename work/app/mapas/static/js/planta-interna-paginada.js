@@ -25,6 +25,24 @@
         newPort: document.getElementById('ports-new'),
         editor: document.getElementById('port-editor'),
         editorForm: document.getElementById('port-editor-form'),
+        management: document.getElementById('port-management'),
+        managementForm: document.getElementById('port-management-form'),
+        bulkOpen: document.getElementById('ports-bulk-open'),
+        bulkDialog: document.getElementById('ports-bulk-import'),
+        bulkForm: document.getElementById('ports-bulk-form'),
+        bulkFile: document.getElementById('ports-bulk-file'),
+        bulkValidate: document.getElementById('ports-bulk-validate'),
+        bulkApply: document.getElementById('ports-bulk-apply'),
+        bulkBody: document.getElementById('ports-bulk-body'),
+        bulkSummary: document.getElementById('ports-bulk-summary'),
+        bulkMessage: document.getElementById('ports-bulk-message'),
+        bulkReport: document.getElementById('ports-bulk-report'),
+        historyOpen: document.getElementById('ports-history-open'),
+        historyDialog: document.getElementById('ports-history'),
+        historyTitle: document.getElementById('ports-history-title'),
+        historySummary: document.getElementById('ports-history-summary'),
+        historyBody: document.getElementById('ports-history-body'),
+        historyMessage: document.getElementById('ports-history-message'),
     };
     const stats = {
         total: document.getElementById('ports-stat-total'),
@@ -40,6 +58,7 @@
     let debounceTimer = null;
     let currentRows = [];
     let exportObjectUrl = null;
+    let managedPort = null;
     const inspector = document.getElementById('network-inspector');
     const inspectorToggle = document.getElementById('network-inspector-toggle');
     const inspectorSummary = document.getElementById('ports-inspector-summary');
@@ -184,7 +203,22 @@
                 row?.classList.remove('is-selected');
             }
         });
-        actions.append(asset, edit);
+        actions.append(asset);
+        if (root.dataset.canViewHistory === 'true') {
+            const history = document.createElement('button');
+            history.type = 'button';
+            history.textContent = 'Ver historial';
+            history.addEventListener('click', () => openHistory(port));
+            actions.append(history);
+        }
+        if (root.dataset.canEdit === 'true') {
+            const manage = document.createElement('button');
+            manage.type = 'button';
+            manage.textContent = 'Gestionar conexión';
+            manage.addEventListener('click', () => openManagement(port));
+            actions.append(manage);
+        }
+        actions.append(edit);
         inspectorDetail.replaceChildren(title, status, grid, actions);
     }
 
@@ -256,6 +290,73 @@
         if (className) cell.className = className;
         cell.textContent = text ?? '—';
         return cell;
+    }
+
+    function closeHistory() {
+        if (elements.historyDialog?.open) elements.historyDialog.close();
+    }
+
+    async function openHistory(port = null) {
+        if (!elements.historyDialog || !elements.historyBody) return;
+        elements.historyTitle.textContent = port
+            ? `Historial · ${port.odf} / Puerto ${port.puerto}`
+            : 'Historial de puertos ODF';
+        elements.historySummary.textContent = 'Consultando eventos…';
+        elements.historyMessage.textContent = '';
+        const loadingRow = document.createElement('tr');
+        const loadingCell = td('Cargando historial…');
+        loadingCell.colSpan = 8;
+        loadingRow.appendChild(loadingCell);
+        elements.historyBody.replaceChildren(loadingRow);
+        elements.historyDialog.showModal();
+        try {
+            const url = new URL(root.dataset.historyUrl, window.location.origin);
+            url.searchParams.set('page_size', '100');
+            if (port?.id) url.searchParams.set('puerto_id', String(port.id));
+            const response = await fetch(url, {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+            });
+            const payload = await response.json();
+            if (!response.ok || payload.status !== 'success') {
+                throw new Error(payload.message || 'No se pudo consultar el historial.');
+            }
+            elements.historyBody.replaceChildren();
+            (payload.data || []).forEach(evento => {
+                const row = document.createElement('tr');
+                const fecha = evento.fecha
+                    ? new Intl.DateTimeFormat('es-PE', {
+                        dateStyle: 'short', timeStyle: 'medium',
+                    }).format(new Date(evento.fecha))
+                    : '—';
+                const fibra = [evento.fibra, evento.extremo ? `Extremo ${evento.extremo}` : '']
+                    .filter(Boolean).join(' · ');
+                const estado = `${evento.estado_anterior || '—'} → ${evento.estado_nuevo || '—'}`;
+                [
+                    fecha, evento.usuario, evento.origen, evento.accion_nombre,
+                    fibra, evento.puerto_anterior, evento.puerto_nuevo, estado,
+                ].forEach(value => row.appendChild(td(value || '—')));
+                elements.historyBody.appendChild(row);
+            });
+            if (!payload.data?.length) {
+                const row = document.createElement('tr');
+                const cell = td('No existen cambios auditados para esta selección.');
+                cell.colSpan = 8;
+                row.appendChild(cell);
+                elements.historyBody.appendChild(row);
+            }
+            const total = payload.pagination?.total || 0;
+            elements.historySummary.textContent = `${numberFormat.format(total)} eventos registrados`;
+            if (total > 100) {
+                elements.historyMessage.textContent = 'Se muestran los 100 eventos más recientes.';
+            }
+        } catch (error) {
+            elements.historyMessage.textContent = error.message;
+            const row = document.createElement('tr');
+            const cell = td('No fue posible cargar el historial.');
+            cell.colSpan = 8;
+            row.appendChild(cell);
+            elements.historyBody.replaceChildren(row);
+        }
     }
 
     function svgButton(label, path, handler) {
@@ -360,7 +461,19 @@
                 '<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.5"/>',
                 () => window.FiberGenius.openAsset360(port.detail_url),
             ));
+            if (root.dataset.canViewHistory === 'true') {
+                actions.appendChild(svgButton(
+                    `Ver historial de ${port.odf}, puerto ${port.puerto}`,
+                    '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/>',
+                    () => openHistory(port),
+                ));
+            }
             if (root.dataset.canEdit === 'true') {
+                actions.appendChild(svgButton(
+                    `Gestionar conexión de ${port.odf}, puerto ${port.puerto}`,
+                    '<path d="M8 12h8M12 8v8"/><circle cx="12" cy="12" r="9"/>',
+                    () => openManagement(port),
+                ));
                 actions.appendChild(svgButton(
                     `Editar ${port.odf}, puerto ${port.puerto}`,
                     '<path d="m4 20 4-.8L19 8.2a2 2 0 0 0-3-3L5 16.2 4 20Z"/><path d="m14.5 6.5 3 3"/>',
@@ -466,7 +579,9 @@
         editorValue('port-editor-number').value = port?.puerto || '';
         editorValue('port-editor-tray').value = port?.bandeja === '—' ? '' : (port?.bandeja || '');
         editorValue('port-editor-status').value = port?.estado || 'Libre';
+        editorValue('port-editor-status').disabled = Boolean(port);
         editorValue('port-editor-fiber').value = port?.fibra === '—' ? '' : (port?.fibra || '');
+        editorValue('port-editor-fiber').readOnly = true;
         editorValue('port-editor-connector').value = port?.conector === '—' ? '' : (port?.conector || '');
         editorValue('port-editor-patchcord').value = ['—', 'No'].includes(port?.patchcord) ? '' : (port?.patchcord || '');
         editorValue('port-editor-destination').value = port?.destino === '—' ? '' : (port?.destino || '');
@@ -481,6 +596,212 @@
         if (elements.editor?.open) elements.editor.close();
     }
 
+    function managementValue(id) {
+        return document.getElementById(id);
+    }
+
+    function updateEndpointLabels() {
+        const endpoint = managementValue('port-management-end');
+        if (!endpoint) return;
+        const optionA = endpoint.querySelector('option[value="A"]');
+        const optionB = endpoint.querySelector('option[value="B"]');
+        if (optionA) optionA.textContent = 'Extremo técnico A';
+        if (optionB) optionB.textContent = 'Extremo técnico B';
+    }
+
+    function updateProvisionalFiberField() {
+        const select = managementValue('port-management-fiber');
+        const field = managementValue('port-management-new-fiber-field');
+        const input = managementValue('port-management-new-fiber');
+        const creating = select?.value === '__NUEVA__';
+        if (field) field.hidden = !creating;
+        if (input) {
+            input.required = creating;
+            if (!creating) input.value = '';
+        }
+        updateEndpointLabels();
+    }
+
+    function setManagementMessage(text, success = false) {
+        const message = managementValue('port-management-message');
+        message.textContent = text || '';
+        message.classList.toggle('is-success', success);
+    }
+
+    function closeManagement() {
+        if (elements.management?.open) elements.management.close();
+        managedPort = null;
+    }
+
+    async function loadFibersForRoute() {
+        const route = managementValue('port-management-route').value;
+        const select = managementValue('port-management-fiber');
+        select.replaceChildren();
+        updateProvisionalFiberField();
+        updateEndpointLabels();
+        if (!route) {
+            select.disabled = true;
+            select.appendChild(new Option('Primero seleccione una ruta', ''));
+            return;
+        }
+        select.disabled = true;
+        select.appendChild(new Option('Cargando fibras…', ''));
+        try {
+            const url = new URL(root.dataset.fibersUrl, window.location.origin);
+            if (route === '__PENDIENTE__') {
+                url.searchParams.set('ruta_pendiente', '1');
+            } else {
+                url.searchParams.set('ruta', route);
+            }
+            url.searchParams.set('page_size', '200');
+            const response = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.message || 'No se pudieron consultar las fibras');
+            select.replaceChildren(new Option('Seleccionar fibra', ''));
+            if (route === '__PENDIENTE__') {
+                select.appendChild(new Option('Registrar hilo con troncal pendiente', '__NUEVA__'));
+            }
+            (payload.data || []).forEach(fiber => {
+                const ubicaciones = [fiber.origen, fiber.destino]
+                    .filter(value => value && !value.startsWith('Pendiente de orientación'))
+                    .join(' ↔ ');
+                const option = new Option(
+                    `${fiber.numero} · ${ubicaciones || fiber.estado}`,
+                    String(fiber.id),
+                );
+                option.dataset.trace = JSON.stringify(fiber.trazabilidad || {});
+                option.dataset.state = fiber.estado || '';
+                option.dataset.number = fiber.numero || '';
+                option.dataset.routePending = fiber.troncal_pendiente ? 'true' : 'false';
+                select.appendChild(option);
+            });
+            select.disabled = false;
+            if (route === '__PENDIENTE__') select.value = '__NUEVA__';
+            updateProvisionalFiberField();
+        } catch (error) {
+            select.replaceChildren(new Option('Consulta no disponible', ''));
+            setManagementMessage(error.message);
+        }
+    }
+
+    function openManagement(port) {
+        if (!elements.management) return;
+        managedPort = port;
+        elements.managementForm.reset();
+        managementValue('port-management-id').value = String(port.id);
+        managementValue('port-management-title').textContent = `${port.odf} · Puerto ${port.puerto}`;
+        managementValue('port-management-mode').textContent = `Estado actual: ${port.estado}`;
+        const current = managementValue('port-management-current');
+        const connectionText = port.conexion
+            ? `${port.conexion.ruta} / ${port.conexion.fibra} · Extremo ${port.conexion.extremo}`
+            : (port.requiere_regularizacion ? 'Ocupado sin terminación oficial: requiere vinculación' : 'Sin fibra conectada');
+        current.textContent = connectionText;
+
+        const canConnect = root.dataset.canConnect === 'true' && (
+            port.estado === 'Libre' || port.estado === 'Reservado'
+            || (port.estado === 'Ocupado' && !port.conexion)
+        );
+        managementValue('port-connect-section').hidden = !canConnect;
+        managementValue('port-disconnect-section').hidden = !port.conexion
+            || root.dataset.canDisconnect !== 'true';
+        managementValue('port-reservation-section').hidden = !['Libre', 'Reservado'].includes(port.estado);
+        managementValue('port-management-reserve').hidden = port.estado !== 'Libre';
+        managementValue('port-management-cancel-reserve').hidden = port.estado !== 'Reservado';
+        managementValue('port-reservation-help').textContent = port.estado === 'Reservado'
+            ? 'Puede cancelar la reserva o conectar una fibra para consumirla.'
+            : 'Reserve el puerto sin crear una conexión de fibra.';
+        managementValue('port-management-fiber').replaceChildren(new Option('Primero seleccione una ruta', ''));
+        managementValue('port-management-fiber').disabled = true;
+        updateProvisionalFiberField();
+        setManagementMessage('');
+        elements.management.showModal();
+    }
+
+    async function postManagement(accion, extra = {}, permitirMover = false) {
+        if (!managedPort) return;
+        const csrf = elements.managementForm.querySelector('[name="csrfmiddlewaretoken"]').value;
+        const response = await fetch(root.dataset.manageUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+            body: JSON.stringify({
+                accion,
+                puerto_id: managedPort.id,
+                permitir_mover: permitirMover,
+                ...extra,
+            }),
+        });
+        const result = await response.json();
+        if (result.status === 'confirmation_required' && result.code === 'MOVER_TERMINACION') {
+            if (window.confirm(`${result.message}\n\n¿Desea moverla a este puerto?`)) {
+                return postManagement(accion, extra, true);
+            }
+            return;
+        }
+        if (!response.ok || result.status !== 'success') throw new Error(result.message || 'No se pudo completar la operación');
+        setManagementMessage(result.message, true);
+        window.setTimeout(() => { closeManagement(); load(); }, 550);
+    }
+
+    async function connectManagedPort() {
+        const fiberSelect = managementValue('port-management-fiber');
+        const fiberId = fiberSelect.value;
+        if (!fiberId) {
+            setManagementMessage('Seleccione una fibra.');
+            return;
+        }
+        const creatingProvisional = fiberId === '__NUEVA__';
+        const provisionalNumber = managementValue('port-management-new-fiber')?.value.trim();
+        if (creatingProvisional && !provisionalNumber) {
+            setManagementMessage('Indique el número del hilo.');
+            managementValue('port-management-new-fiber')?.focus();
+            return;
+        }
+        const selectedFiber = fiberSelect.selectedOptions[0];
+        let sincronizarFibra = false;
+        if (!creatingProvisional && (selectedFiber?.dataset.state || '').toLowerCase() === 'libre') {
+            sincronizarFibra = window.confirm(
+                `La fibra ${selectedFiber.dataset.number} está Libre. `
+                + '¿Desea informar también su estado global como Ocupado?'
+            );
+        }
+        setManagementMessage('Conectando…');
+        try {
+            await postManagement('conectar', {
+                fibra_id: creatingProvisional ? null : fiberId,
+                fibra_numero: creatingProvisional ? provisionalNumber : '',
+                extremo: managementValue('port-management-end').value,
+                sincronizar_fibra: sincronizarFibra,
+            });
+        } catch (error) {
+            setManagementMessage(error.message);
+        }
+    }
+
+    async function disconnectManagedPort() {
+        if (!window.confirm('¿Desea desconectar la fibra y liberar este puerto?')) return;
+        const fiberNumber = managedPort?.conexion?.fibra || 'conectada';
+        const sincronizarFibra = window.confirm(
+            `¿Desea informar también el estado global de ${fiberNumber} como Disponible?`
+        );
+        setManagementMessage('Desconectando…');
+        try {
+            await postManagement('desconectar', {
+                sincronizar_fibra: sincronizarFibra,
+            });
+        } catch (error) {
+            setManagementMessage(error.message);
+        }
+    }
+
+    async function simpleManagementAction(accion) {
+        setManagementMessage('Aplicando cambio…');
+        try {
+            await postManagement(accion);
+        } catch (error) {
+            setManagementMessage(error.message);
+        }
+    }
+
     async function saveEditor(event) {
         event.preventDefault();
         const id = editorValue('port-editor-id').value;
@@ -490,7 +811,6 @@
             puerto_odf: editorValue('port-editor-number').value.trim(),
             bandeja: editorValue('port-editor-tray').value.trim(),
             estado_puerto: editorValue('port-editor-status').value,
-            fibra: editorValue('port-editor-fiber').value.trim(),
             tipo_conector: editorValue('port-editor-connector').value.trim(),
             patchcord: editorValue('port-editor-patchcord').value.trim(),
             destino: editorValue('port-editor-destination').value.trim(),
@@ -516,6 +836,91 @@
         }
     }
 
+    function closeBulkImport() {
+        if (elements.bulkDialog?.open) elements.bulkDialog.close();
+    }
+
+    function resetBulkResult() {
+        if (!elements.bulkBody) return;
+        elements.bulkBody.replaceChildren();
+        const row = document.createElement('tr');
+        const empty = document.createElement('td');
+        empty.colSpan = 6;
+        empty.textContent = 'Sin resultados.';
+        row.appendChild(empty);
+        elements.bulkBody.appendChild(row);
+        elements.bulkApply.disabled = true;
+        elements.bulkReport.hidden = true;
+        elements.bulkMessage.textContent = '';
+        elements.bulkSummary.textContent = 'Seleccione y valide un archivo.';
+    }
+
+    function renderBulkResult(payload) {
+        const rows = payload.rows || [];
+        elements.bulkBody.replaceChildren();
+        rows.slice(0, 250).forEach(item => {
+            const row = document.createElement('tr');
+            row.className = item.resultado === 'ERROR' ? 'is-error' : 'is-valid';
+            [
+                item.fila,
+                item.resultado,
+                item.accion,
+                [item.site, item.odf, item.puerto].filter(Boolean).join(' / '),
+                [item.troncal, item.fibra, item.extremo].filter(Boolean).join(' / '),
+                item.mensaje,
+            ].forEach(value => row.appendChild(td(value || '—')));
+            elements.bulkBody.appendChild(row);
+        });
+        if (rows.length > 250) {
+            const row = document.createElement('tr');
+            const more = document.createElement('td');
+            more.colSpan = 6;
+            more.textContent = `Se muestran 250 de ${rows.length} filas. El reporte descargable contiene todas.`;
+            row.appendChild(more);
+            elements.bulkBody.appendChild(row);
+        }
+        const summary = payload.summary || {};
+        elements.bulkSummary.textContent = `${summary.total || 0} filas · ${summary.errores || 0} errores · ${summary.sin_cambios || 0} sin cambios`;
+        elements.bulkMessage.textContent = payload.message || '';
+        elements.bulkMessage.classList.toggle('is-success', payload.status === 'valid' || payload.status === 'success');
+        elements.bulkApply.disabled = !payload.can_apply;
+        if (payload.report_url) {
+            elements.bulkReport.href = payload.report_url;
+            elements.bulkReport.hidden = false;
+        }
+    }
+
+    async function submitBulkImport(mode) {
+        const file = elements.bulkFile?.files?.[0];
+        if (!file) {
+            elements.bulkMessage.textContent = 'Seleccione un archivo .xlsx.';
+            return;
+        }
+        if (mode === 'aplicar' && !window.confirm('¿Desea aplicar todas las operaciones validadas?')) return;
+        elements.bulkValidate.disabled = true;
+        elements.bulkApply.disabled = true;
+        elements.bulkMessage.textContent = mode === 'aplicar' ? 'Aplicando archivo…' : 'Validando archivo…';
+        const data = new FormData();
+        data.append('archivo', file);
+        data.append('modo', mode);
+        const csrf = elements.bulkForm.querySelector('[name="csrfmiddlewaretoken"]').value;
+        try {
+            const response = await fetch(root.dataset.bulkImportUrl, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': csrf, 'X-Requested-With': 'XMLHttpRequest' },
+                body: data,
+            });
+            const payload = await response.json();
+            renderBulkResult(payload);
+            if (payload.status === 'success') load();
+        } catch (_error) {
+            elements.bulkMessage.classList.remove('is-success');
+            elements.bulkMessage.textContent = 'No se pudo procesar el archivo.';
+        } finally {
+            elements.bulkValidate.disabled = false;
+        }
+    }
+
     elements.form.addEventListener('submit', event => { event.preventDefault(); page = 1; load(); });
     elements.query.addEventListener('input', () => {
         window.clearTimeout(debounceTimer);
@@ -533,9 +938,26 @@
     elements.previous.addEventListener('click', () => { page = Math.max(1, page - 1); load(); });
     elements.next.addEventListener('click', () => { page += 1; load(); });
     elements.newPort?.addEventListener('click', () => openEditor());
+    elements.historyOpen?.addEventListener('click', () => openHistory());
+    document.getElementById('ports-history-close')?.addEventListener('click', closeHistory);
+    document.getElementById('ports-history-dismiss')?.addEventListener('click', closeHistory);
+    elements.bulkOpen?.addEventListener('click', () => { resetBulkResult(); elements.bulkDialog.showModal(); });
+    elements.bulkFile?.addEventListener('change', resetBulkResult);
+    elements.bulkValidate?.addEventListener('click', () => submitBulkImport('validar'));
+    elements.bulkApply?.addEventListener('click', () => submitBulkImport('aplicar'));
+    document.getElementById('ports-bulk-close')?.addEventListener('click', closeBulkImport);
+    document.getElementById('ports-bulk-cancel')?.addEventListener('click', closeBulkImport);
     elements.editorForm?.addEventListener('submit', saveEditor);
     document.getElementById('port-editor-close')?.addEventListener('click', closeEditor);
     document.getElementById('port-editor-cancel')?.addEventListener('click', closeEditor);
+    managementValue('port-management-close')?.addEventListener('click', closeManagement);
+    managementValue('port-management-cancel')?.addEventListener('click', closeManagement);
+    managementValue('port-management-route')?.addEventListener('change', loadFibersForRoute);
+    managementValue('port-management-fiber')?.addEventListener('change', updateProvisionalFiberField);
+    managementValue('port-management-connect')?.addEventListener('click', connectManagedPort);
+    managementValue('port-management-disconnect')?.addEventListener('click', disconnectManagedPort);
+    managementValue('port-management-reserve')?.addEventListener('click', () => simpleManagementAction('reservar'));
+    managementValue('port-management-cancel-reserve')?.addEventListener('click', () => simpleManagementAction('cancelar_reserva'));
 
     const incoming = new URLSearchParams(window.location.search);
     elements.query.value = incoming.get('q') || '';

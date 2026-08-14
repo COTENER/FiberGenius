@@ -3,30 +3,56 @@ Vistas de importación de datos CSV y configuración del sistema.
 """
 import os
 import io
+import csv
 import hashlib
 import logging
+import re
+import unicodedata
 import zipfile
+from collections import defaultdict
 from decimal import Decimal, InvalidOperation
 
 import pandas as pd
 from django.conf import settings
 from django.shortcuts import render, redirect
+from django.http import HttpResponse
 from django.contrib.auth.decorators import login_required, permission_required
 from django.contrib import messages
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.validators import URLValidator
 from django.db import transaction
+from django.db.models import Count, Q
 from django.utils.timezone import now
 from django.views.decorators.http import require_POST
 import math
 from ..models import (
     OTU, Ruta, PuertoOTU, CoordenadaRuta, Reserva, IDRuta,
-    InventarioTramo, InventarioFibra, LoteImportacion,
+    InventarioTramo, InventarioFibra, InventarioODF, LoteImportacion, NodoRed,
+    FibraTramo, TerminacionFibra, DetallePuertoODF,
+)
+from ..services.topologia import (
+    inferir_tipo_nodo,
+    nodo_identifica_texto,
+    normalizar_tipo_nodo,
+    resolver_nodo,
 )
 
-logger = logging.getLogger('mapas')
+logger = logging.getLogger('fibergenius.import')
 
 VALORES_VACIOS = {'', '-', 'nan', 'none', 'null', 'sin_dato', 'no_aplica', 'n/a'}
+
+TIPOS_NODO_CSV = {
+    'SITE', 'ODF', 'MUFA', 'CAMARA', 'POSTE', 'CAJA_EMPALME', 'PUNTO', 'OTRO',
+}
+
+ESTADOS_FIBRA_CSV = {
+    'libre': 'Libre',
+    'ocupado': 'Ocupado',
+    'ocupada': 'Ocupado',
+    'reservado': 'Reservado',
+    'reservada': 'Reservado',
+    'desconocido': 'Desconocido',
+}
 
 
 def _validar_archivo_subido(archivo, *, es_zip=False):
@@ -71,6 +97,18 @@ def _texto(valor, default=''):
     return default if texto.casefold() in VALORES_VACIOS else texto
 
 
+def _texto_extremo(valor):
+    """Descarta marcadores operativos que no identifican un nodo real."""
+    texto = _texto(valor)
+    clave = re.sub(r'[\s\-/]+', '_', texto.casefold()).strip('_')
+    if clave in {
+        'sin_dato', 'sin_informacion', 'por_levantar',
+        'pendiente', 'desconocido', 'no_aplica',
+    }:
+        return ''
+    return texto
+
+
 def _decimal(valor, default=None):
     texto = _texto(valor)
     if not texto:
@@ -111,6 +149,87 @@ def _resultado(total=0, creadas=0, actualizadas=0, rechazadas=0):
         'rechazadas': int(rechazadas),
     }
 
+
+def _normalizar_columna_csv(nombre):
+    """Convierte encabezados humanos a una clave estable sin acentos."""
+    texto = unicodedata.normalize('NFKD', str(nombre or '').strip())
+    texto = ''.join(caracter for caracter in texto if not unicodedata.combining(caracter))
+    return re.sub(r'[^a-z0-9]+', '_', texto.casefold()).strip('_')
+
+
+def _normalizar_dataframe_csv(df, aliases=None):
+    aliases = aliases or {}
+    columnas = {}
+    repetidas = []
+    for original in df.columns:
+        normalizada = aliases.get(
+            _normalizar_columna_csv(original),
+            _normalizar_columna_csv(original),
+        )
+        if normalizada in columnas.values():
+            repetidas.append(normalizada)
+        columnas[original] = normalizada
+    if repetidas:
+        raise ValueError(
+            'El CSV contiene encabezados equivalentes repetidos: '
+            + ', '.join(sorted(set(repetidas)))
+        )
+    return df.rename(columns=columnas)
+
+
+def _leer_csv_normalizado(file, aliases=None):
+    try:
+        contenido = file.read().decode('utf-8-sig')
+    except UnicodeDecodeError as exc:
+        raise ValueError('El archivo debe estar codificado en UTF-8.') from exc
+    try:
+        df = pd.read_csv(
+            io.StringIO(contenido),
+            dtype=str,
+            keep_default_na=False,
+        )
+    except pd.errors.ParserError as exc:
+        raise ValueError(f'No se pudo interpretar el CSV: {exc}') from exc
+    if df.empty:
+        raise ValueError('El CSV no contiene filas de datos.')
+    return _normalizar_dataframe_csv(df, aliases=aliases)
+
+
+def _capacidad_hilos(valor, *, permitir_vacio=True):
+    """Acepta 48, 48.0, "48 Hilos" o "48 fibras" y devuelve un entero."""
+    texto = _texto(valor)
+    if not texto:
+        if permitir_vacio:
+            return None
+        raise ValueError('la capacidad es obligatoria')
+    coincidencia = re.fullmatch(
+        r'(\d+)(?:[.,]0+)?(?:\s*(?:hilos?|fibras?))?',
+        texto,
+        flags=re.IGNORECASE,
+    )
+    if not coincidencia:
+        raise ValueError(f'capacidad inválida: {valor}')
+    return int(coincidencia.group(1))
+
+
+def _numero_no_negativo(valor, nombre, *, entero=True, default=None):
+    try:
+        numero = _entero(valor, default) if entero else _float(valor, default)
+    except ValueError as exc:
+        raise ValueError(f'{nombre}: {exc}') from exc
+    if numero is not None and numero < 0:
+        raise ValueError(f'{nombre} no puede ser negativo')
+    return numero
+
+
+def _errores_csv(errores, etiqueta):
+    if not errores:
+        return
+    muestra = '; '.join(errores[:20])
+    restante = len(errores) - 20
+    sufijo = f'; y {restante} error(es) adicional(es)' if restante > 0 else ''
+    raise ValueError(f'{etiqueta}: {muestra}{sufijo}. No se realizó ningún cambio.')
+
 def calcular_distancia_haversine(lat1, lon1, lat2, lon2):
     """Calcula la distancia en metros entre dos puntos geográficos (Haversine)."""
     R = 6371000  # radio terrestre en metros
@@ -126,7 +245,135 @@ def calcular_distancia_haversine(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
-logger = logging.getLogger('mapas')
+
+def _normalizar_tipo_trazado(valor):
+    """Normaliza el dato cartográfico sin mezclarlo con el inventario técnico."""
+    return _texto(valor, default='DESCONOCIDO').upper()
+
+
+def _preparar_coordenadas_geograficas(df, ruta, lote=None):
+    """
+    Valida y construye el trazado sin escribir todavía en la base de datos.
+
+    `tramo_secuencia` se conserva como compatibilidad temporal; la geografía
+    nueva usa `inicio_segmento` y no se enlaza con InventarioTramo.
+    """
+    df = df.copy()
+    df.columns = [str(columna).strip().lower() for columna in df.columns]
+    faltantes = [
+        columna for columna in ('latitude', 'longitude')
+        if columna not in df.columns
+    ]
+    if faltantes:
+        raise ValueError(
+            f"Ruta '{ruta.nombre}': faltan columnas requeridas: "
+            f"{', '.join(faltantes)}."
+        )
+    if len(df) < 2:
+        raise ValueError(
+            f"La ruta '{ruta.nombre}' necesita al menos dos coordenadas."
+        )
+
+    coordenadas = []
+    distancia_total = 0.0
+    lat_anterior = None
+    lon_anterior = None
+    tipo_anterior = None
+    segmento_secuencia = 1
+
+    for posicion, (_, fila) in enumerate(df.iterrows(), start=1):
+        numero_fila = posicion + 1
+        latitud = _decimal(fila.get('latitude'))
+        longitud = _decimal(fila.get('longitude'))
+        if latitud is None or longitud is None:
+            raise ValueError(
+                f"Ruta '{ruta.nombre}', fila {numero_fila}: "
+                "latitude y longitude son obligatorias."
+            )
+        if not Decimal('-90') <= latitud <= Decimal('90'):
+            raise ValueError(
+                f"Ruta '{ruta.nombre}', fila {numero_fila}: "
+                f"latitude fuera de rango ({latitud})."
+            )
+        if not Decimal('-180') <= longitud <= Decimal('180'):
+            raise ValueError(
+                f"Ruta '{ruta.nombre}', fila {numero_fila}: "
+                f"longitude fuera de rango ({longitud})."
+            )
+
+        tipo_trazado = _normalizar_tipo_trazado(
+            fila.get('tipo_trazado')
+        )
+        valor_corte = _texto(
+            fila.get('new_seg'),
+            default='false',
+        ).casefold()
+        if valor_corte not in {'true', '1', 'false', '0'}:
+            raise ValueError(
+                f"Ruta '{ruta.nombre}', fila {numero_fila}: "
+                f"new_seg inválido ({fila.get('new_seg')})."
+            )
+        marca_corte = valor_corte in {'true', '1'}
+        inicio_segmento = (
+            posicion == 1
+            or marca_corte
+            or tipo_trazado != tipo_anterior
+        )
+        if posicion > 1 and inicio_segmento:
+            segmento_secuencia += 1
+
+        lat_float = float(latitud)
+        lon_float = float(longitud)
+        if lat_anterior is not None and lon_anterior is not None:
+            distancia_total += calcular_distancia_haversine(
+                lat_anterior,
+                lon_anterior,
+                lat_float,
+                lon_float,
+            )
+        lat_anterior = lat_float
+        lon_anterior = lon_float
+        tipo_anterior = tipo_trazado
+
+        coordenadas.append(CoordenadaRuta(
+            ruta=ruta,
+            latitud=latitud,
+            longitud=longitud,
+            orden=posicion,
+            tipo_trazado=tipo_trazado,
+            inicio_segmento=inicio_segmento,
+            tramo_secuencia=segmento_secuencia,
+            tramo=None,
+            lote_importacion=lote,
+        ))
+
+    return coordenadas, distancia_total
+
+
+def _reemplazar_geografia_ruta(ruta, df, lote=None):
+    """
+    Reemplaza solo la geometría. Toda la validación precede al borrado para
+    evitar que un CSV inválido deje la ruta sin coordenadas.
+    """
+    ruta = Ruta.objects.select_for_update().get(pk=ruta.pk)
+    coordenadas, distancia_total = _preparar_coordenadas_geograficas(
+        df,
+        ruta,
+        lote,
+    )
+    CoordenadaRuta.objects.filter(ruta=ruta).delete()
+    CoordenadaRuta.objects.bulk_create(coordenadas, batch_size=2000)
+
+    ruta.distancia_m = distancia_total
+    campos_actualizados = ['distancia_m']
+    if lote is not None:
+        ruta.lote_importacion = lote
+        campos_actualizados.append('lote_importacion')
+    ruta.save(update_fields=campos_actualizados)
+    return len(coordenadas)
+
+
+logger = logging.getLogger('fibergenius.import')
 
 
 def save_uploaded_file(uploaded_file, destination_path):
@@ -151,6 +398,90 @@ def configuracion(request):
         'configuracion/configuracion_index.html',
         {'rutas': rutas, 'lotes_importacion': lotes},
     )
+
+
+@login_required
+def descargar_plantilla_terminaciones_fibra(request):
+    """Genera una plantilla con una fila por fibra lógica del inventario."""
+    permisos = (
+        'mapas.view_terminacionfibra',
+        'mapas.add_terminacionfibra',
+        'mapas.change_terminacionfibra',
+    )
+    if not request.user.is_superuser and not any(
+        request.user.has_perm(permiso) for permiso in permisos
+    ):
+        raise PermissionDenied
+
+    response = HttpResponse(content_type='text/csv; charset=utf-8')
+    response['Content-Disposition'] = (
+        'attachment; filename="terminaciones_fibra_plantilla.csv"'
+    )
+    response.write('\ufeff')
+    writer = csv.writer(response)
+    writer.writerow([
+        'Ruta',
+        'ID Fibra',
+        'Fibra',
+        'Codigo Fibra',
+        'Nodo A',
+        'ODF Extremo A',
+        'Puerto Extremo A',
+        'Conector A',
+        'Nodo B',
+        'ODF Extremo B',
+        'Puerto Extremo B',
+        'Conector B',
+        'Estado Global',
+        'Condicion Fisica',
+        'Servicio',
+        'Observaciones',
+    ])
+
+    fibras = (
+        InventarioFibra.objects
+        .select_related('ruta', 'origen_nodo', 'destino_nodo')
+        .prefetch_related('terminaciones__puerto_odf__odf_obj')
+        .order_by('ruta__nombre', 'fibra_numero', 'pk')
+    )
+    for fibra in fibras:
+        terminaciones = {
+            item.extremo: item
+            for item in fibra.terminaciones.all()
+        }
+        extremo_a = terminaciones.get('A')
+        extremo_b = terminaciones.get('B')
+        writer.writerow([
+            fibra.ruta.nombre if fibra.ruta_id else '',
+            fibra.pk,
+            fibra.fibra_numero,
+            fibra.fibra_numero,
+            (
+                fibra.origen_nodo.codigo
+                if fibra.origen_nodo_id
+                else (fibra.origen_odf or '')
+            ),
+            extremo_a.puerto_odf.odf_obj.odf if extremo_a else '',
+            extremo_a.puerto_odf.puerto_odf if extremo_a else '',
+            extremo_a.tipo_conector if extremo_a else '',
+            (
+                fibra.destino_nodo.codigo
+                if fibra.destino_nodo_id
+                else (fibra.destino or '')
+            ),
+            extremo_b.puerto_odf.odf_obj.odf if extremo_b else '',
+            extremo_b.puerto_odf.puerto_odf if extremo_b else '',
+            extremo_b.tipo_conector if extremo_b else '',
+            (
+                ('Disponible' if fibra.estado == 'Libre' else fibra.estado)
+                if fibra.origen_estado == 'INFORMADO'
+                else ''
+            ),
+            fibra.get_condicion_fisica_display(),
+            fibra.nombre_fibra or '',
+            fibra.observaciones or '',
+        ])
+    return response
 
 
 @login_required
@@ -265,86 +596,186 @@ def _asociar_puertos_a_rutas(file, lote=None):
 @transaction.atomic
 def _procesar_ruta_otu(file, lote=None):
     """Actualiza o crea Rutas desde un CSV."""
-    decoded_file = file.read().decode('utf-8')
-    df = pd.read_csv(io.StringIO(decoded_file))
-
+    df = _leer_csv_normalizado(file, aliases={
+        'nombre_ruta': 'ruta',
+        'troncal': 'ruta',
+        'distancia': 'distancia_m',
+        'enlace_pon_traxium': 'enlace',
+        'enlace_pon_view': 'enlace',
+        'capacidad_hilos': 'capacidad',
+        'capacidad_declarada': 'capacidad',
+        'capacidad_declarada_hilos': 'capacidad',
+        'hilos_ocupados_declarados': 'hilos_ocupados',
+        'hilos_reservados_declarados': 'hilos_reservados',
+        'hilos_libres_declarados': 'hilos_libres',
+        'reserva_m': 'reservas_m',
+        'reservas_declaradas_m': 'reservas_m',
+    })
+    columnas = set(df.columns)
+    if 'ruta' not in columnas:
+        raise ValueError(
+            'Troncales y datos generales: falta la columna Ruta.'
+        )
     creadas = actualizadas = rechazadas = 0
-    for row in df.to_dict('records'):
-        ruta_nombre = _texto(row.get('Ruta'))
+    advertencias = []
+    for numero_fila, row in enumerate(df.to_dict('records'), start=2):
+        ruta_nombre = _texto(row.get('ruta'))
         if not ruta_nombre:
             rechazadas += 1
+            advertencias.append(
+                f'Fila {numero_fila}: falta el nombre de la troncal.'
+            )
             continue
-        otu_nombre = _texto(row.get('OTU'))
-        otu_obj = OTU.objects.filter(nombre__iexact=otu_nombre).first() if otu_nombre else None
-        ruta_identificador = {'nombre': ruta_nombre}
-        ruta_datos = {
-            'otu': otu_obj,
-            'distancia_m': _float(row.get('Distancia (m)')),
-            'olt': _texto(row.get('OLT')) or None,
-            'slot_olt': _entero(row.get('SLOT OLT')),
-            'puerto_olt': _entero(row.get('PUERTO OLT')),
-            'pon': _texto(row.get('PON')) or None,
-            'enlace': _url_o_none(row.get('Enlace')),
-            'lote_importacion': lote,
-        }
-        _, creada = Ruta.objects.update_or_create(
-            defaults=ruta_datos,
-            **ruta_identificador
-        )
-        creadas += int(creada)
-        actualizadas += int(not creada)
+        try:
+            ruta_datos = {'lote_importacion': lote}
+            if 'otu' in columnas:
+                otu_nombre = _texto(row.get('otu'))
+                otu = (
+                    OTU.objects.filter(nombre__iexact=otu_nombre).first()
+                    if otu_nombre else None
+                )
+                if otu_nombre and otu is None:
+                    raise ValueError(f"OTU '{otu_nombre}' no existe")
+                ruta_datos['otu'] = otu
+            if 'distancia_m' in columnas:
+                distancia = _numero_no_negativo(
+                    row.get('distancia_m'),
+                    'Distancia (m)',
+                    entero=False,
+                )
+                ruta_datos['distancia_m'] = distancia
+                ruta_datos['distancia_declarada_m'] = distancia
+            if 'olt' in columnas:
+                ruta_datos['olt'] = _texto(row.get('olt')) or None
+            if 'slot_olt' in columnas:
+                ruta_datos['slot_olt'] = _numero_no_negativo(
+                    row.get('slot_olt'),
+                    'SLOT OLT',
+                )
+            if 'puerto_olt' in columnas:
+                ruta_datos['puerto_olt'] = _numero_no_negativo(
+                    row.get('puerto_olt'),
+                    'PUERTO OLT',
+                )
+            if 'pon' in columnas:
+                ruta_datos['pon'] = _texto(row.get('pon')) or None
+            if 'enlace' in columnas:
+                ruta_datos['enlace'] = _url_o_none(row.get('enlace'))
 
-    return _resultado(len(df), creadas, actualizadas, rechazadas)
+            if 'capacidad' in columnas:
+                capacidad = _capacidad_hilos(row.get('capacidad'))
+                if capacidad == 0:
+                    raise ValueError(
+                        'Capacidad debe ser mayor que cero o quedar vacía'
+                    )
+                ruta_datos['capacidad_declarada_hilos'] = capacidad
+            for columna, campo, etiqueta in (
+                (
+                    'hilos_ocupados',
+                    'hilos_ocupados_declarados',
+                    'Hilos Ocupados',
+                ),
+                (
+                    'hilos_reservados',
+                    'hilos_reservados_declarados',
+                    'Hilos Reservados',
+                ),
+                (
+                    'hilos_libres',
+                    'hilos_libres_declarados',
+                    'Hilos Libres',
+                ),
+            ):
+                if columna in columnas:
+                    ruta_datos[campo] = _numero_no_negativo(
+                        row.get(columna),
+                        etiqueta,
+                    )
+            if 'reservas_m' in columnas:
+                ruta_datos['reservas_declaradas_m'] = (
+                    _numero_no_negativo(
+                        row.get('reservas_m'),
+                        'Reservas (m)',
+                        entero=False,
+                    )
+                )
+
+            campos_declarados = {
+                'distancia_declarada_m',
+                'capacidad_declarada_hilos',
+                'hilos_ocupados_declarados',
+                'hilos_reservados_declarados',
+                'hilos_libres_declarados',
+                'reservas_declaradas_m',
+            }
+            if campos_declarados & set(ruta_datos):
+                ruta_datos.update({
+                    'fuente_declaracion': (
+                        lote.archivo_origen
+                        if lote is not None
+                        else 'Carga CSV'
+                    ),
+                    'fecha_declaracion': (
+                        lote.fecha_origen
+                        if lote is not None and lote.fecha_origen is not None
+                        else now()
+                    ),
+                    'declarado_por': (
+                        lote.usuario if lote is not None else None
+                    ),
+                })
+
+            ruta = Ruta.objects.filter(
+                nombre__iexact=ruta_nombre,
+            ).first()
+            creada = ruta is None
+            if creada:
+                Ruta.objects.create(
+                    nombre=ruta_nombre,
+                    **ruta_datos,
+                )
+            else:
+                for campo, valor in ruta_datos.items():
+                    setattr(ruta, campo, valor)
+                ruta.save()
+            creadas += int(creada)
+            actualizadas += int(not creada)
+        except (ValueError, ValidationError) as exc:
+            rechazadas += 1
+            advertencias.append(f'Fila {numero_fila}: {exc}')
+
+    resultado = _resultado(
+        len(df),
+        creadas,
+        actualizadas,
+        rechazadas,
+    )
+    if advertencias:
+        resultado['advertencias'] = advertencias
+    return resultado
 
 
 @transaction.atomic
 def _procesar_coordenadas_zip(file, lote=None):
-    """Para cada ruta en el ZIP, reemplaza sus coordenadas."""
+    """Para cada ruta en el ZIP, reemplaza únicamente su geometría."""
     total = creadas = rechazadas = 0
     with zipfile.ZipFile(file, 'r') as zip_ref:
         for filename in zip_ref.namelist():
-            if filename.endswith('.csv'):
+            if filename.lower().endswith('.csv'):
                 ruta_nombre = os.path.splitext(os.path.basename(filename))[0]
                 ruta_obj = Ruta.objects.filter(nombre=ruta_nombre).first()
 
                 if ruta_obj:
-                    CoordenadaRuta.objects.filter(ruta=ruta_obj).delete()
                     with zip_ref.open(filename) as csv_file:
-                        csv_content = csv_file.read().decode('utf-8')
+                        csv_content = csv_file.read().decode('utf-8-sig')
                         df_coords = pd.read_csv(io.StringIO(csv_content))
-                        coords_a_crear = []
-                        distancia_total = 0.0
-                        prev_lat = None
-                        prev_lon = None
-
-                        for i, row_coord in df_coords.iterrows():
-                            lat = float(row_coord['Latitude'])
-                            lon = float(row_coord['Longitude'])
-                            
-                            if prev_lat is not None and prev_lon is not None:
-                                distancia_total += calcular_distancia_haversine(prev_lat, prev_lon, lat, lon)
-                                
-                            prev_lat = lat
-                            prev_lon = lon
-
-                            coords_a_crear.append(
-                                CoordenadaRuta(
-                                    ruta=ruta_obj,
-                                    latitud=Decimal(str(lat)),
-                                    longitud=Decimal(str(lon)),
-                                    orden=i + 1,
-                                    lote_importacion=lote,
-                                )
-                            )
-                        CoordenadaRuta.objects.bulk_create(coords_a_crear)
-                        total += len(df_coords)
-                        creadas += len(coords_a_crear)
-                        ruta_obj.distancia_m = distancia_total
-                        if lote is not None:
-                            ruta_obj.lote_importacion = lote
-                            ruta_obj.save(update_fields=['distancia_m', 'lote_importacion'])
-                        else:
-                            ruta_obj.save(update_fields=['distancia_m'])
+                    cantidad = _reemplazar_geografia_ruta(
+                        ruta_obj,
+                        df_coords,
+                        lote,
+                    )
+                    total += cantidad
+                    creadas += cantidad
                 else:
                     rechazadas += 1
 
@@ -430,179 +861,106 @@ def _procesar_id_rutas(file, lote=None):
 @transaction.atomic
 def _procesar_coordenadas_inventario_zip(file, lote=None):
     """
-    Importa coordenadas y metadatos de inventario simultáneamente.
-    Se crea un nuevo "tramo" si `new_seg` es True o si el `tipo_trazado` cambia.
+    Importa el trazado geográfico segmentado sin modificar tramos técnicos.
+
+    Un segmento visual comienza cuando `new_seg` es verdadero o cambia
+    `tipo_trazado`. Se conserva el archivo y el resultado visual existentes,
+    pero este proceso ya no crea, elimina ni actualiza InventarioTramo.
     """
     total = creadas = rechazadas = 0
     with zipfile.ZipFile(file, 'r') as zip_ref:
         for filename in zip_ref.namelist():
-            if filename.endswith('.csv'):
+            if filename.lower().endswith('.csv'):
                 ruta_nombre = os.path.splitext(os.path.basename(filename))[0]
                 ruta_obj = Ruta.objects.filter(nombre=ruta_nombre).first()
 
                 if ruta_obj:
-                    # Respaldar datos manuales previos (del primer tramo) para no perder "Capacidad", "Hub", etc.
-                    tramo_previo = InventarioTramo.objects.filter(ruta=ruta_obj).order_by('tramo_secuencia').first()
-                    datos_respaldo = {}
-                    if tramo_previo:
-                        datos_respaldo = {
-                            'estado': tramo_previo.estado,
-                            'capacidad': tramo_previo.capacidad,
-                            'hub_site': tramo_previo.hub_site,
-                            'destino': tramo_previo.destino,
-                            'marca_modelo': tramo_previo.marca_modelo,
-                            'tipo_fibra': tramo_previo.tipo_fibra,
-                            'serial': tramo_previo.serial,
-                            'mufas': tramo_previo.mufas,
-                            'splitters': tramo_previo.splitters,
-                            'odf_nombre': tramo_previo.odf_nombre,
-                            'hilos_ocupados': tramo_previo.hilos_ocupados,
-                            'hilos_libres': tramo_previo.hilos_libres,
-                            'distancia_m': tramo_previo.distancia_m,
-                            'reservas_m': tramo_previo.reservas_m
-                        }
-
-                    # Limpiamos coordenadas antiguas e inventario para evitar traslapes
-                    CoordenadaRuta.objects.filter(ruta=ruta_obj).delete()
-                    InventarioTramo.objects.filter(ruta=ruta_obj).delete()
-                    
                     with zip_ref.open(filename) as csv_file:
-                        csv_content = csv_file.read().decode('utf-8')
+                        csv_content = csv_file.read().decode('utf-8-sig')
                         df_coords = pd.read_csv(io.StringIO(csv_content))
-                        
-                        coords_a_crear = []
-                        tramos_data = {}
-                        
-                        tramo_actual = 1
-                        tipo_trazado_actual = None
-                        
-                        distancia_total = 0.0
-                        prev_lat = None
-                        prev_lon = None
-                        
-                        for i, row_coord in df_coords.iterrows():
-                            new_seg = str(row_coord.get('new_seg', 'False')).strip().lower()
-                            es_new_seg = new_seg in ['true', '1']
-                            
-                            tipo_trazado_raw = str(row_coord.get('tipo_trazado', '')).strip().upper()
-                            if not tipo_trazado_raw or tipo_trazado_raw == 'NAN':
-                                tipo_trazado_raw = 'DESCONOCIDO'
-                                
-                            if i == 0:
-                                tipo_trazado_actual = tipo_trazado_raw
-                            else:
-                                if tipo_trazado_raw != tipo_trazado_actual:
-                                    es_new_seg = True
-                                    tipo_trazado_actual = tipo_trazado_raw
-                                    
-                            if es_new_seg and i > 0:
-                                tramo_actual += 1
-
-                            if tramo_actual not in tramos_data:
-                                tramos_data[tramo_actual] = {
-                                    'tipo_trazado': tipo_trazado_actual if pd.notna(row_coord.get('tipo_trazado')) else None,
-                                    'distancia_m': 0.0
-                                }
-                                
-                            lat = float(row_coord['Latitude'])
-                            lon = float(row_coord['Longitude'])
-                            
-                            distancia_segmento = 0.0
-                            if prev_lat is not None and prev_lon is not None:
-                                distancia_segmento = calcular_distancia_haversine(prev_lat, prev_lon, lat, lon)
-                                distancia_total += distancia_segmento
-                                tramos_data[tramo_actual]['distancia_m'] += distancia_segmento
-                                
-                            prev_lat = lat
-                            prev_lon = lon
-                                
-                            coords_a_crear.append(
-                                CoordenadaRuta(
-                                    ruta=ruta_obj,
-                                    latitud=Decimal(str(lat)),
-                                    longitud=Decimal(str(lon)),
-                                    orden=i + 1,
-                                    tramo_secuencia=tramo_actual,
-                                    lote_importacion=lote,
-                                )
-                            )
-                            
-                        # Guardamos Coordenadas
-                        CoordenadaRuta.objects.bulk_create(coords_a_crear)
-                        total += len(df_coords)
-                        creadas += len(coords_a_crear)
-                        
-                        # Actualizar distancia de la ruta
-                        ruta_obj.distancia_m = distancia_total
-                        if lote is not None:
-                            ruta_obj.lote_importacion = lote
-                            ruta_obj.save(update_fields=['distancia_m', 'lote_importacion'])
-                        else:
-                            ruta_obj.save(update_fields=['distancia_m'])
-                        
-                        # Guardamos InventarioTramos (solo inicial con tipo_trazado)
-                        inventario_a_crear = []
-                        for num_tramo, meta in tramos_data.items():
-                            tramo_datos = dict(datos_respaldo)
-                            if num_tramo != 1:
-                                tramo_datos.update({
-                                    'mufas': 0,
-                                    'splitters': 0,
-                                    'reservas_m': 0.0,
-                                    'hilos_ocupados': 0,
-                                    'hilos_libres': 0,
-                                })
-                            tramo_datos['distancia_m'] = meta['distancia_m']
-                            inventario_a_crear.append(
-                                InventarioTramo(
-                                    ruta=ruta_obj,
-                                    tramo_secuencia=num_tramo,
-                                    tipo_trazado=meta['tipo_trazado'],
-                                    lote_importacion=lote,
-                                    **tramo_datos
-                                )
-                            )
-                        InventarioTramo.objects.bulk_create(inventario_a_crear)
-                        tramos_por_secuencia = {
-                            tramo.tramo_secuencia: tramo
-                            for tramo in InventarioTramo.objects.filter(ruta=ruta_obj)
-                        }
-                        for secuencia, tramo in tramos_por_secuencia.items():
-                            CoordenadaRuta.objects.filter(
-                                ruta=ruta_obj,
-                                tramo_secuencia=secuencia,
-                            ).update(tramo=tramo)
+                    cantidad = _reemplazar_geografia_ruta(
+                        ruta_obj,
+                        df_coords,
+                        lote,
+                    )
+                    total += cantidad
+                    creadas += cantidad
                 else:
                     rechazadas += 1
 
     return _resultado(total + rechazadas, creadas, rechazadas=rechazadas)
 
-@transaction.atomic
-def _procesar_tramos_inventario(file, lote=None):
-    """Carga metadatos de troncal sin sobrescribir la distancia de cada segmento."""
-    decoded_file = file.read().decode('utf-8')
-    df = pd.read_csv(io.StringIO(decoded_file))
+def _procesar_tramos_legacy_validado(df, lote=None):
+    """Adapta RC1/V5 a un solo tramo sin modificar los demás."""
+    if 'ruta' not in df.columns:
+        raise ValueError(
+            'Detalles técnicos legacy: falta la columna ruta o ident.'
+        )
 
-    actualizadas = rechazadas = 0
-    for row in df.to_dict('records'):
-        # Aceptar columna "ruta" o "ident"
-        ruta_nombre_raw = row.get('ruta') if 'ruta' in row else row.get('ident')
-        ruta_nombre = _texto(ruta_nombre_raw)
-        if not ruta_nombre:
-            rechazadas += 1
-            continue
-        ruta_obj = Ruta.objects.filter(nombre__iexact=ruta_nombre).first()
-        
-        if ruta_obj:
-            distancia_total = _float(row.get('distancia'))
-            if distancia_total is not None:
-                ruta_obj.distancia_m = distancia_total
-            if lote is not None:
-                ruta_obj.lote_importacion = lote
-
-            inventario_datos = {
+    rutas = {
+        ruta.nombre.casefold(): ruta
+        for ruta in Ruta.objects.all().only('pk', 'nombre')
+    }
+    preparadas = []
+    rechazadas = 0
+    advertencias = []
+    informaciones = [
+        'Se conservó el formato habitual de Detalles Técnicos '
+        'Complementarios. Las columnas de identificación de tramo solo son '
+        'necesarias para rutas con varios tramos.'
+    ]
+    for indice, row in enumerate(df.to_dict('records'), start=2):
+        ruta_nombre = _texto(row.get('ruta'))
+        ruta = rutas.get(ruta_nombre.casefold()) if ruta_nombre else None
+        try:
+            if not ruta_nombre:
+                raise ValueError('ruta vacía')
+            if not ruta:
+                raise ValueError(f"la ruta '{ruta_nombre}' no existe")
+            capacidad = _capacidad_hilos(row.get('capacidad'))
+            if capacidad == 0:
+                capacidad = None
+                advertencias.append(
+                    f'{ruta.nombre}: capacidad 0 tratada como desconocida.'
+                )
+            hilos_ocupados = _numero_no_negativo(
+                row.get('hilos_ocupados'),
+                'hilos_ocupados',
+                default=0,
+            )
+            hilos_libres = _numero_no_negativo(
+                row.get('hilos_libres'),
+                'hilos_libres',
+                default=0,
+            )
+            if (
+                capacidad is not None
+                and hilos_ocupados + hilos_libres > capacidad
+            ):
+                raise ValueError(
+                    'los contadores legacy '
+                    f'({hilos_ocupados} ocupados + {hilos_libres} libres) '
+                    f'exceden la capacidad declarada ({capacidad})'
+                )
+            preparadas.append({
+                'fila': indice,
+                'ruta': ruta,
+                'distancia_m': _numero_no_negativo(
+                    row.get('distancia_m'), 'distancia',
+                    entero=False, default=None,
+                ),
+                'mufas': _numero_no_negativo(
+                    row.get('mufas'), 'mufas', default=0
+                ),
+                'splitters': _numero_no_negativo(
+                    row.get('splitters'), 'splitters', default=0
+                ),
+                'reservas_m': _numero_no_negativo(
+                    row.get('reservas_m'), 'reservas_m',
+                    entero=False, default=0.0,
+                ),
+                'capacidad_hilos': capacidad,
                 'estado': _texto(row.get('estado')) or None,
-                'capacidad': _texto(row.get('capacidad')) or None,
                 'tipo_fibra': _texto(row.get('tipo_fibra')) or None,
                 'origen': _texto(row.get('origen')) or None,
                 'destino': _texto(row.get('destino')) or None,
@@ -610,130 +968,1400 @@ def _procesar_tramos_inventario(file, lote=None):
                 'marca_modelo': _texto(row.get('marca_modelo')) or None,
                 'serial': _texto(row.get('serial')) or None,
                 'odf_nombre': _texto(row.get('odf_nombre')) or None,
-                'lote_importacion': lote,
-            }
-            
-            cap = inventario_datos.get('capacidad')
-            if cap and cap.isdigit():
-                inventario_datos['capacidad'] = f"{cap} Hilos"
-
-            # Los datos descriptivos pueden repetirse; las cantidades globales se guardan
-            # una sola vez para que no se multipliquen al sumar segmentos.
-            InventarioTramo.objects.filter(ruta=ruta_obj).update(**inventario_datos)
-            primer_tramo = InventarioTramo.objects.filter(ruta=ruta_obj).order_by('tramo_secuencia').first()
-            if primer_tramo:
-                InventarioTramo.objects.filter(ruta=ruta_obj).exclude(pk=primer_tramo.pk).update(
-                    mufas=0,
-                    splitters=0,
-                    reservas_m=0.0,
-                    hilos_ocupados=0,
-                    hilos_libres=0,
-                )
-                primer_tramo.mufas = _entero(row.get('mufas'), 0)
-                primer_tramo.splitters = _entero(row.get('splitters'), 0)
-                primer_tramo.reservas_m = _float(row.get('reservas_m'), 0.0)
-                primer_tramo.hilos_ocupados = _entero(row.get('hilos_ocupados'), 0)
-                primer_tramo.hilos_libres = _entero(row.get('hilos_libres'), 0)
-                primer_tramo.save(update_fields=[
-                    'mufas', 'splitters', 'reservas_m',
-                    'hilos_ocupados', 'hilos_libres',
-                ])
-
-            odf_nombre = inventario_datos['odf_nombre']
-            if odf_nombre and ruta_obj.odf_origen_id is None:
-                from ..models import InventarioODF
-                odf = InventarioODF.objects.filter(odf__iexact=odf_nombre).first()
-                if odf:
-                    ruta_obj.odf_origen = odf
-            ruta_obj.save()
-            actualizadas += 1
-        else:
+                'hilos_ocupados': hilos_ocupados,
+                'hilos_libres': hilos_libres,
+            })
+        except Exception as exc:
             rechazadas += 1
+            advertencias.append(f'Fila {indice} rechazada: {exc}')
 
-    return _resultado(len(df), actualizadas=actualizadas, rechazadas=rechazadas)
+    ids_ruta = sorted({item['ruta'].pk for item in preparadas})
+    list(Ruta.objects.select_for_update().filter(pk__in=ids_ruta))
+    tramos_por_ruta = defaultdict(list)
+    for tramo_existente in (
+        InventarioTramo.objects.select_for_update()
+        .filter(ruta_id__in=ids_ruta)
+        .order_by('ruta_id', 'tramo_secuencia', 'pk')
+    ):
+        tramos_por_ruta[tramo_existente.ruta_id].append(tramo_existente)
+    cantidad_tramos_por_ruta = {
+        ruta_id: len(tramos)
+        for ruta_id, tramos in tramos_por_ruta.items()
+    }
+    creadas = actualizadas = 0
+    for item in preparadas:
+        ruta = item['ruta']
+        tramos_existentes = tramos_por_ruta.get(ruta.pk, [])
+        if len(tramos_existentes) > 1:
+            rechazadas += 1
+            advertencias.append(
+                f'{ruta.nombre}: el archivo anterior no identifica a cuál '
+                f'de sus {len(tramos_existentes)} tramos aplicar los datos; '
+                'use las columnas de tramo aprobadas para esta ruta.'
+            )
+            continue
+        tramo = tramos_existentes[0] if tramos_existentes else None
+        creada = tramo is None
+        if creada:
+            tramo = InventarioTramo(
+                ruta=ruta,
+                tramo_secuencia=1,
+                codigo_tramo=None,
+            )
+
+        tiene_detalle = (
+            not creada
+            and FibraTramo.objects.filter(tramo=tramo).exists()
+        )
+        for campo in (
+            'estado', 'mufas', 'splitters', 'reservas_m',
+            'capacidad_hilos', 'tipo_fibra', 'origen', 'destino', 'hub_site',
+            'marca_modelo', 'serial', 'odf_nombre',
+        ):
+            setattr(tramo, campo, item[campo])
+        if cantidad_tramos_por_ruta.get(ruta.pk, 0) <= 1:
+            tramo.distancia_m = item['distancia_m']
+        elif item['distancia_m'] is not None:
+            advertencias.append(
+                f'{ruta.nombre}: la distancia legacy es total de ruta y no '
+                'reemplazó las distancias de sus tramos existentes.'
+            )
+        if tramo.origen_nodo_id is None:
+            origen_codigo = _texto_extremo(
+                item['origen'] or item['hub_site']
+            )
+            if origen_codigo:
+                tramo.origen_nodo = resolver_nodo(
+                    tipo=inferir_tipo_nodo(origen_codigo),
+                    codigo=origen_codigo,
+                    nombre=origen_codigo,
+                    lote=lote,
+                )
+        if tramo.destino_nodo_id is None:
+            destino_codigo = _texto_extremo(item['destino'])
+            if destino_codigo:
+                destino_nodo = resolver_nodo(
+                    tipo=inferir_tipo_nodo(destino_codigo),
+                    codigo=destino_codigo,
+                    nombre=destino_codigo,
+                    lote=lote,
+                )
+                if destino_nodo.pk != getattr(
+                    tramo.origen_nodo,
+                    'pk',
+                    None,
+                ):
+                    tramo.destino_nodo = destino_nodo
+        tramo.capacidad = (
+            f"{item['capacidad_hilos']} Hilos"
+            if item['capacidad_hilos'] is not None
+            else None
+        )
+        tramo.lote_importacion = lote
+        if tiene_detalle:
+            informaciones.append(
+                f'{ruta.nombre}: se conservaron los contadores calculados '
+                'desde fibras por tramo.'
+            )
+        else:
+            tramo.hilos_ocupados = item['hilos_ocupados']
+            tramo.hilos_libres = item['hilos_libres']
+            tramo.hilos_reservados = None
+        tramo.save()
+
+        if item['distancia_m'] is not None and not ruta.coordenadas.exists():
+            ruta.distancia_m = item['distancia_m']
+        if lote is not None:
+            ruta.lote_importacion = lote
+        ruta.save()
+        creadas += int(creada)
+        actualizadas += int(not creada)
+
+    # El contrato legacy cuenta filas procesadas como actualizadas, incluso
+    # cuando tuvo que crear el registro provisional de secuencia 1.
+    resultado = _resultado(
+        len(df),
+        actualizadas=creadas + actualizadas,
+        rechazadas=rechazadas,
+    )
+    resultado['advertencias'] = sorted(set(advertencias))
+    resultado['formato'] = 'legacy'
+    resultado['informaciones'] = sorted(set(informaciones))
+    return resultado
+
+
+@transaction.atomic
+def _procesar_tramos_inventario(file, lote=None):
+    """Carga inventario por tramo y conserva el adaptador legacy RC1/V5."""
+    df = _leer_csv_normalizado(file, aliases={
+        'ident': 'ruta',
+        'troncal': 'ruta',
+        'distancia': 'distancia_m',
+        'codigo_de_tramo': 'codigo_tramo',
+        'numero_de_tramo': 'secuencia',
+        'n_de_tramo': 'secuencia',
+    })
+    columnas = set(df.columns)
+    discriminadoras = {
+        'codigo_tramo', 'secuencia', 'origen_tipo', 'origen_codigo',
+        'destino_tipo', 'destino_codigo',
+    }
+    if not (columnas & discriminadoras):
+        return _procesar_tramos_legacy_validado(df, lote=lote)
+
+    requeridas = {
+        'ruta', 'codigo_tramo', 'secuencia',
+        'origen_tipo', 'origen_codigo',
+        'destino_tipo', 'destino_codigo',
+        'estado', 'distancia_m', 'capacidad', 'tipo_fibra',
+    }
+    faltantes = sorted(requeridas - columnas)
+    if faltantes:
+        raise ValueError(
+            'Inventario técnico de tramos: faltan columnas obligatorias: '
+            + ', '.join(faltantes)
+        )
+
+    rutas = {
+        ruta.nombre.casefold(): ruta
+        for ruta in Ruta.objects.all().only('pk', 'nombre')
+    }
+    preparadas = []
+    errores = []
+    codigos_archivo = set()
+    secuencias_archivo = set()
+    nombres_nodo_archivo = {}
+    por_ruta = defaultdict(list)
+
+    for indice, row in enumerate(df.to_dict('records'), start=2):
+        ruta_nombre = _texto(row.get('ruta'))
+        codigo = _texto(row.get('codigo_tramo')).upper()
+        origen_codigo = _texto(row.get('origen_codigo')).upper()
+        destino_codigo = _texto(row.get('destino_codigo')).upper()
+        try:
+            ruta = rutas.get(ruta_nombre.casefold()) if ruta_nombre else None
+            if not ruta_nombre:
+                raise ValueError('ruta es obligatoria')
+            if not ruta:
+                raise ValueError(f"la ruta '{ruta_nombre}' no existe")
+            if not codigo:
+                raise ValueError('codigo_tramo es obligatorio')
+            secuencia = _numero_no_negativo(
+                row.get('secuencia'), 'secuencia'
+            )
+            if not secuencia:
+                raise ValueError('secuencia debe ser mayor que cero')
+            origen_tipo_raw = _texto(row.get('origen_tipo'))
+            destino_tipo_raw = _texto(row.get('destino_tipo'))
+            if not origen_tipo_raw or not destino_tipo_raw:
+                raise ValueError(
+                    'origen_tipo y destino_tipo son obligatorios'
+                )
+            origen_tipo = normalizar_tipo_nodo(origen_tipo_raw)
+            destino_tipo = normalizar_tipo_nodo(destino_tipo_raw)
+            if not origen_codigo or not destino_codigo:
+                raise ValueError(
+                    'origen_codigo y destino_codigo son obligatorios'
+                )
+            if (
+                origen_tipo == destino_tipo
+                and origen_codigo.casefold() == destino_codigo.casefold()
+            ):
+                raise ValueError('el origen y el destino deben ser diferentes')
+
+            capacidad = _capacidad_hilos(row.get('capacidad'))
+            if capacidad == 0:
+                raise ValueError(
+                    'capacidad debe ser mayor que cero o quedar vacía'
+                )
+            cantidades = {
+                'mufas': _numero_no_negativo(
+                    row.get('mufas'), 'mufas', default=0
+                ) if 'mufas' in columnas else None,
+                'splitters': _numero_no_negativo(
+                    row.get('splitters'), 'splitters', default=0
+                ) if 'splitters' in columnas else None,
+                'reservas_m': _numero_no_negativo(
+                    row.get('reservas_m'), 'reservas_m',
+                    entero=False, default=0.0,
+                ) if 'reservas_m' in columnas else None,
+                'hilos_ocupados': _numero_no_negativo(
+                    row.get('hilos_ocupados'), 'hilos_ocupados'
+                ) if 'hilos_ocupados' in columnas else None,
+                'hilos_reservados': _numero_no_negativo(
+                    row.get('hilos_reservados'), 'hilos_reservados'
+                ) if 'hilos_reservados' in columnas else None,
+                'hilos_libres': _numero_no_negativo(
+                    row.get('hilos_libres'), 'hilos_libres'
+                ) if 'hilos_libres' in columnas else None,
+            }
+            if capacidad is not None:
+                suma = sum(
+                    cantidades[campo] or 0
+                    for campo in (
+                        'hilos_ocupados', 'hilos_reservados', 'hilos_libres'
+                    )
+                )
+                if suma > capacidad:
+                    raise ValueError(
+                        f'los contadores ({suma}) superan la capacidad '
+                        f'({capacidad})'
+                    )
+
+            clave_codigo = (ruta.pk, codigo.casefold())
+            clave_secuencia = (ruta.pk, secuencia)
+            if clave_codigo in codigos_archivo:
+                raise ValueError(f"codigo_tramo '{codigo}' repetido")
+            if clave_secuencia in secuencias_archivo:
+                raise ValueError(f'secuencia {secuencia} repetida')
+            codigos_archivo.add(clave_codigo)
+            secuencias_archivo.add(clave_secuencia)
+            origen_nombre = _texto(row.get('origen_nombre')) or None
+            destino_nombre = _texto(row.get('destino_nombre')) or None
+            for tipo_nodo, codigo_nodo, nombre_nodo in (
+                (origen_tipo, origen_codigo, origen_nombre),
+                (destino_tipo, destino_codigo, destino_nombre),
+            ):
+                clave_nodo = (tipo_nodo, codigo_nodo.casefold())
+                nombre_anterior = nombres_nodo_archivo.get(clave_nodo)
+                if (
+                    nombre_anterior
+                    and nombre_nodo
+                    and nombre_anterior.casefold() != nombre_nodo.casefold()
+                ):
+                    raise ValueError(
+                        f"el nodo {tipo_nodo}/{codigo_nodo} tiene nombres "
+                        'incoherentes dentro del archivo'
+                    )
+                if nombre_nodo:
+                    nombres_nodo_archivo[clave_nodo] = nombre_nodo
+                else:
+                    nombres_nodo_archivo.setdefault(clave_nodo, None)
+            preparada = {
+                'fila': indice,
+                'ruta': ruta,
+                'codigo_tramo': codigo,
+                'secuencia': secuencia,
+                'origen_tipo': origen_tipo,
+                'origen_codigo': origen_codigo,
+                'origen_nombre': origen_nombre,
+                'destino_tipo': destino_tipo,
+                'destino_codigo': destino_codigo,
+                'destino_nombre': destino_nombre,
+                'estado': _texto(row.get('estado')) or None,
+                'distancia_m': _numero_no_negativo(
+                    row.get('distancia_m'), 'distancia_m',
+                    entero=False, default=None,
+                ),
+                'capacidad_hilos': capacidad,
+                'tipo_fibra': _texto(row.get('tipo_fibra')) or None,
+                'marca_modelo': _texto(row.get('marca_modelo')) or None,
+                'serial': _texto(row.get('serial')) or None,
+                'observaciones': _texto(row.get('observaciones')),
+                'tipo_trazado': (
+                    _texto(row.get('tipo_trazado')).upper() or None
+                ),
+                **cantidades,
+            }
+            preparadas.append(preparada)
+            por_ruta[ruta.pk].append(preparada)
+        except Exception as exc:
+            errores.append(f'fila {indice}: {exc}')
+
+    for filas in por_ruta.values():
+        ordenadas = sorted(filas, key=lambda item: item['secuencia'])
+        secuencias = [item['secuencia'] for item in ordenadas]
+        if secuencias != list(range(1, max(secuencias) + 1)):
+            errores.append(
+                f"ruta '{ordenadas[0]['ruta'].nombre}': secuencias "
+                f'{secuencias} no consecutivas'
+            )
+        for anterior, siguiente in zip(ordenadas, ordenadas[1:]):
+            if (
+                anterior['destino_tipo'],
+                anterior['destino_codigo'].casefold(),
+            ) != (
+                siguiente['origen_tipo'],
+                siguiente['origen_codigo'].casefold(),
+            ):
+                errores.append(
+                    f"ruta '{anterior['ruta'].nombre}': el destino de "
+                    f"{anterior['codigo_tramo']} no coincide con el origen "
+                    f"de {siguiente['codigo_tramo']}"
+                )
+    _errores_csv(errores, 'Inventario técnico de tramos')
+
+    ids_ruta = sorted(por_ruta)
+    list(Ruta.objects.select_for_update().filter(pk__in=ids_ruta))
+    existentes = list(
+        InventarioTramo.objects.select_for_update()
+        .filter(ruta_id__in=ids_ruta)
+        .order_by('ruta_id', 'tramo_secuencia', 'pk')
+    )
+    por_ruta_existentes = defaultdict(list)
+    for tramo in existentes:
+        por_ruta_existentes[tramo.ruta_id].append(tramo)
+
+    objetivos = {}
+    objetivos_ids = set()
+    for item in preparadas:
+        candidatos = por_ruta_existentes[item['ruta'].pk]
+        objetivo = next(
+            (
+                tramo for tramo in candidatos
+                if tramo.codigo_tramo
+                and tramo.codigo_tramo.casefold()
+                == item['codigo_tramo'].casefold()
+            ),
+            None,
+        )
+        if objetivo is None:
+            objetivo = next(
+                (
+                    tramo for tramo in candidatos
+                    if not tramo.codigo_tramo
+                    and tramo.tramo_secuencia == item['secuencia']
+                ),
+                None,
+            )
+        objetivos[item['fila']] = objetivo
+        if objetivo:
+            objetivos_ids.add(objetivo.pk)
+
+    conflictos = []
+    for ruta_id, tramos_existentes in por_ruta_existentes.items():
+        omitidos = [
+            tramo for tramo in tramos_existentes
+            if tramo.pk not in objetivos_ids
+        ]
+        if omitidos:
+            ruta = por_ruta[ruta_id][0]['ruta']
+            conflictos.append(
+                f"ruta '{ruta.nombre}': el archivo omite tramos existentes "
+                + ', '.join(
+                    tramo.codigo_tramo or f'secuencia {tramo.tramo_secuencia}'
+                    for tramo in omitidos
+                )
+                + '; la Fase 2 exige el snapshot técnico completo de cada '
+                'ruta incluida'
+            )
+    for item in preparadas:
+        objetivo = objetivos[item['fila']]
+        conflicto = next(
+            (
+                tramo
+                for tramo in por_ruta_existentes[item['ruta'].pk]
+                if tramo.tramo_secuencia == item['secuencia']
+                and tramo.pk != getattr(objetivo, 'pk', None)
+                and tramo.pk not in objetivos_ids
+            ),
+            None,
+        )
+        if conflicto:
+            conflictos.append(
+                f"fila {item['fila']}: secuencia {item['secuencia']} "
+                f"ocupada por '{conflicto.codigo_tramo or conflicto.pk}'"
+            )
+        tiene_detalle = (
+            objetivo is not None
+            and FibraTramo.objects.filter(tramo=objetivo).exists()
+        )
+        if item['capacidad_hilos'] is not None and objetivo is not None:
+            excedidas = []
+            for numero_hilo in FibraTramo.objects.filter(
+                tramo=objetivo
+            ).values_list('numero_hilo', flat=True):
+                coincidencia = re.fullmatch(
+                    r'F([1-9]\d*)', (numero_hilo or '').strip().upper()
+                )
+                if (
+                    coincidencia
+                    and int(coincidencia.group(1))
+                    > item['capacidad_hilos']
+                ):
+                    excedidas.append(numero_hilo)
+            if excedidas:
+                conflictos.append(
+                    f"fila {item['fila']}: la capacidad "
+                    f"{item['capacidad_hilos']} dejaría fuera "
+                    f"{', '.join(excedidas[:10])}"
+                )
+
+        if tiene_detalle:
+            conteos_finales = {
+                fila['estado']: fila['total']
+                for fila in FibraTramo.objects.filter(tramo=objetivo)
+                .values('estado')
+                .annotate(total=Count('pk'))
+            }
+            suma_final = sum(
+                conteos_finales.get(estado, 0)
+                for estado in ('Ocupado', 'Reservado', 'Libre')
+            )
+        else:
+            suma_final = 0
+            for campo in (
+                'hilos_ocupados', 'hilos_reservados', 'hilos_libres'
+            ):
+                if campo in columnas:
+                    valor = item[campo]
+                elif objetivo is not None:
+                    valor = getattr(objetivo, campo)
+                else:
+                    valor = 0
+                suma_final += valor or 0
+        if (
+            item['capacidad_hilos'] is not None
+            and suma_final > item['capacidad_hilos']
+        ):
+            conflictos.append(
+                f"fila {item['fila']}: el estado final conservaría "
+                f'{suma_final} hilos contabilizados para una capacidad de '
+                f"{item['capacidad_hilos']}"
+            )
+    _errores_csv(conflictos, 'Inventario técnico de tramos')
+
+    max_secuencia = max(
+        [tramo.tramo_secuencia for tramo in existentes] + [0]
+    )
+    for posicion, tramo in enumerate(
+        [item for item in existentes if item.pk in objetivos_ids],
+        start=1,
+    ):
+        InventarioTramo.objects.filter(pk=tramo.pk).update(
+            tramo_secuencia=max_secuencia + 1000 + posicion
+        )
+
+    creadas = actualizadas = 0
+    advertencias = []
+    nodos_resueltos = {}
+    for item in sorted(
+        preparadas,
+        key=lambda fila: (fila['ruta'].pk, fila['secuencia']),
+    ):
+        tramo = objetivos[item['fila']]
+        creada = tramo is None
+        if creada:
+            tramo = InventarioTramo(ruta=item['ruta'])
+        tramo.codigo_tramo = item['codigo_tramo']
+        tramo.tramo_secuencia = item['secuencia']
+        clave_origen = (
+            item['origen_tipo'],
+            item['origen_codigo'].casefold(),
+        )
+        if clave_origen not in nodos_resueltos:
+            nodos_resueltos[clave_origen] = resolver_nodo(
+                tipo=item['origen_tipo'],
+                codigo=item['origen_codigo'],
+                nombre=nombres_nodo_archivo.get(clave_origen),
+                lote=lote,
+            )
+        tramo.origen_nodo = nodos_resueltos[clave_origen]
+        clave_destino = (
+            item['destino_tipo'],
+            item['destino_codigo'].casefold(),
+        )
+        if clave_destino not in nodos_resueltos:
+            nodos_resueltos[clave_destino] = resolver_nodo(
+                tipo=item['destino_tipo'],
+                codigo=item['destino_codigo'],
+                nombre=nombres_nodo_archivo.get(clave_destino),
+                lote=lote,
+            )
+        tramo.destino_nodo = nodos_resueltos[clave_destino]
+        tramo.origen = item['origen_codigo']
+        tramo.destino = item['destino_codigo']
+        tramo.estado = item['estado']
+        tramo.distancia_m = item['distancia_m']
+        tramo.capacidad_hilos = item['capacidad_hilos']
+        tramo.capacidad = (
+            f"{item['capacidad_hilos']} Hilos"
+            if item['capacidad_hilos'] is not None else None
+        )
+        tramo.tipo_fibra = item['tipo_fibra']
+        tramo.marca_modelo = item['marca_modelo']
+        tramo.serial = item['serial']
+        tramo.observaciones = item['observaciones']
+        tramo.lote_importacion = lote
+        for campo in ('tipo_trazado', 'mufas', 'splitters', 'reservas_m'):
+            if campo in columnas:
+                setattr(tramo, campo, item[campo])
+
+        tiene_detalle = (
+            not creada and FibraTramo.objects.filter(tramo=tramo).exists()
+        )
+        if tiene_detalle:
+            if columnas & {
+                'hilos_ocupados', 'hilos_reservados', 'hilos_libres',
+            }:
+                advertencias.append(
+                    f"{item['ruta'].nombre}/{item['codigo_tramo']}: "
+                    'se conservaron los contadores calculados desde fibras.'
+                )
+        else:
+            for campo in (
+                'hilos_ocupados', 'hilos_reservados', 'hilos_libres'
+            ):
+                if campo in columnas:
+                    setattr(tramo, campo, item[campo])
+        tramo.save()
+        creadas += int(creada)
+        actualizadas += int(not creada)
+        if lote is not None:
+            Ruta.objects.filter(pk=item['ruta'].pk).update(
+                lote_importacion=lote
+            )
+
+    resultado = _resultado(len(df), creadas, actualizadas)
+    if advertencias:
+        resultado['advertencias'] = sorted(set(advertencias))
+    return resultado
+
 
 @transaction.atomic
 def _procesar_fibras_inventario(file, lote=None):
-    """Carga el detalle individual de fibras/hilos por ruta desde un CSV (Archivo C)"""
-    decoded_file = file.read().decode('utf-8')
-    df = pd.read_csv(io.StringIO(decoded_file))
+    """Actualiza exclusivamente la posición/estado de fibras por tramo."""
+    df = _leer_csv_normalizado(file, aliases={
+        'troncal': 'ruta',
+        'codigo_de_tramo': 'codigo_tramo',
+        'codigo_de_fibra': 'codigo_fibra',
+        'numero_de_fibra': 'fibra',
+        'n_de_fibra': 'fibra',
+    })
+    requeridas = {'ruta', 'fibra', 'estado'}
+    faltantes = sorted(requeridas - set(df.columns))
+    if faltantes:
+        raise ValueError(
+            'Detalle de fibras por tramo: faltan columnas obligatorias: '
+            + ', '.join(faltantes)
+        )
 
-    rutas_actualizadas = set()
-    creadas = actualizadas = rechazadas = 0
-    for row in df.to_dict('records'):
-        ruta_nombre = _texto(row.get('Ruta'))
-        if not ruta_nombre:
-            rechazadas += 1
-            continue
-            
-        ruta_obj = Ruta.objects.filter(nombre__iexact=ruta_nombre).first()
-        if ruta_obj:
-            estado_raw = _texto(row.get('Estado')).capitalize()
-            if estado_raw in ['Ocupada', 'Ocupado', 'Active', 'Activo']:
-                estado = 'Ocupado'
-            elif estado_raw in ['Reservada', 'Reservado']:
-                estado = 'Reservado'
-            else:
-                estado = 'Libre'
-            
-            fibra_datos = {
-                'estado': estado,
-                'nombre_fibra': _texto(row.get('Fibra')) if estado in ['Ocupado', 'Reservado'] else 'Libre',
-                'origen_odf': _texto(row.get('Origen')) or None,
-                'destino': _texto(row.get('Destino')) or None,
-                'tipo_conector': _texto(row.get('Conector') if 'Conector' in row else row.get('Tipo de conector', row.get('Tipo conector'))),
-                'lote_importacion': lote,
-            }
-            
-            fibra_numero = _texto(row.get('Fibra')).upper()
-            if not fibra_numero:
-                rechazadas += 1
-                continue
-            
-            fibra_obj = InventarioFibra.objects.filter(
-                ruta=ruta_obj,
-                fibra_numero__iexact=fibra_numero,
-            ).first()
-            creada = fibra_obj is None
-            if creada:
-                InventarioFibra.objects.create(
-                    ruta=ruta_obj,
-                    fibra_numero=fibra_numero,
-                    **fibra_datos,
+    rutas = {
+        ruta.nombre.casefold(): ruta
+        for ruta in Ruta.objects.all().only('pk', 'nombre')
+    }
+    tramos = list(
+        InventarioTramo.objects.filter(
+            ruta_id__in=[
+                ruta.pk for ruta in rutas.values()
+                if ruta.nombre.casefold() in {
+                    _texto(nombre).casefold()
+                    for nombre in df['ruta']
+                    if _texto(nombre)
+                }
+            ]
+        ).select_related('ruta')
+    )
+    tramos_por_ruta = defaultdict(list)
+    for tramo in tramos:
+        tramos_por_ruta[tramo.ruta_id].append(tramo)
+    for ruta_id in tramos_por_ruta:
+        tramos_por_ruta[ruta_id].sort(
+            key=lambda item: (item.tramo_secuencia, item.pk)
+        )
+
+    preparadas = []
+    errores = []
+    claves_fisicas = set()
+    claves_logicas_tramo = set()
+    for indice, row in enumerate(df.to_dict('records'), start=2):
+        ruta_nombre = _texto(row.get('ruta'))
+        numero_hilo = _texto(row.get('fibra')).upper()
+        codigo_logico = (
+            _texto(row.get('codigo_fibra')).upper()
+            if 'codigo_fibra' in df.columns
+            else numero_hilo
+        ) or numero_hilo
+        try:
+            ruta = rutas.get(ruta_nombre.casefold()) if ruta_nombre else None
+            if not ruta_nombre:
+                raise ValueError('ruta es obligatoria')
+            if not ruta:
+                raise ValueError(f"la ruta '{ruta_nombre}' no existe")
+            if not re.fullmatch(r'F[1-9]\d*', numero_hilo):
+                raise ValueError(
+                    f"Fibra '{numero_hilo or '[vacía]'}' debe usar F<n>"
                 )
+            if not re.fullmatch(r'F[1-9]\d*', codigo_logico):
+                raise ValueError(
+                    f"Codigo Fibra '{codigo_logico}' debe usar F<n>"
+                )
+
+            estado = ESTADOS_FIBRA_CSV.get(
+                _texto(row.get('estado')).casefold()
+            )
+            if not estado:
+                raise ValueError(
+                    f"estado '{_texto(row.get('estado'))}' no válido; "
+                    'use Libre, Ocupado, Reservado o Desconocido'
+                )
+
+            codigo_tramo = _texto(row.get('codigo_tramo')).upper()
+            candidatos = tramos_por_ruta[ruta.pk]
+            if codigo_tramo:
+                tramo = next(
+                    (
+                        item for item in candidatos
+                        if item.codigo_tramo
+                        and item.codigo_tramo.casefold()
+                        == codigo_tramo.casefold()
+                    ),
+                    None,
+                )
+                if not tramo:
+                    raise ValueError(
+                        f"el tramo '{codigo_tramo}' no existe en la ruta"
+                    )
+            elif len(candidatos) == 1:
+                tramo = candidatos[0]
+            elif not candidatos:
+                raise ValueError('la ruta no tiene inventario técnico')
             else:
-                for campo, valor in fibra_datos.items():
-                    setattr(fibra_obj, campo, valor)
-                fibra_obj.fibra_numero = fibra_numero
-                fibra_obj.save()
-            creadas += int(creada)
-            actualizadas += int(not creada)
-            rutas_actualizadas.add(ruta_obj.id)
-        else:
-            rechazadas += 1
-            
-    # Recalcular conteo de hilos (libres/ocupados) para las rutas modificadas
-    from ..models import InventarioTramo
-    for ruta_id in rutas_actualizadas:
-        ocupados = InventarioFibra.objects.filter(ruta_id=ruta_id, estado__in=['Ocupado', 'Active', 'Activo']).count()
-        libres = InventarioFibra.objects.filter(ruta_id=ruta_id, estado='Libre').count()
-        tramos = InventarioTramo.objects.filter(ruta_id=ruta_id).order_by('tramo_secuencia')
-        primer_tramo = tramos.first()
-        tramos.update(hilos_ocupados=0, hilos_libres=0)
-        if primer_tramo:
-            InventarioTramo.objects.filter(pk=primer_tramo.pk).update(
-                hilos_ocupados=ocupados,
-                hilos_libres=libres,
+                raise ValueError(
+                    'Codigo Tramo es obligatorio porque la ruta tiene '
+                    f'{len(candidatos)} tramos'
+                )
+
+            if (
+                tramo.capacidad_hilos is not None
+                and int(numero_hilo[1:]) > tramo.capacidad_hilos
+            ):
+                raise ValueError(
+                    f'{numero_hilo} supera la capacidad '
+                    f'{tramo.capacidad_hilos} de '
+                    f'{tramo.codigo_tramo or tramo.pk}'
+                )
+            clave_fisica = (tramo.pk, numero_hilo.casefold())
+            if clave_fisica in claves_fisicas:
+                raise ValueError(
+                    f'{numero_hilo} está repetida en el mismo tramo'
+                )
+            claves_fisicas.add(clave_fisica)
+            clave_logica_tramo = (tramo.pk, codigo_logico.casefold())
+            if clave_logica_tramo in claves_logicas_tramo:
+                raise ValueError(
+                    f"Codigo Fibra '{codigo_logico}' está repetido "
+                    'en el mismo tramo'
+                )
+            claves_logicas_tramo.add(clave_logica_tramo)
+            preparadas.append({
+                'fila': indice,
+                'ruta': ruta,
+                'tramo': tramo,
+                'numero_hilo': numero_hilo,
+                'codigo_logico': codigo_logico,
+                'estado': estado,
+                'observaciones': (
+                    _texto(row.get('observaciones'))
+                    if 'observaciones' in df.columns else None
+                ),
+            })
+        except Exception as exc:
+            errores.append(f'fila {indice}: {exc}')
+    _errores_csv(errores, 'Detalle de fibras por tramo')
+
+    ids_ruta = sorted({item['ruta'].pk for item in preparadas})
+    ids_tramo = sorted({item['tramo'].pk for item in preparadas})
+    fibras_consultadas = {
+        (fibra.ruta_id, fibra.fibra_numero.casefold()): fibra
+        for fibra in InventarioFibra.objects.filter(ruta_id__in=ids_ruta)
+    }
+    faltan_fibras = []
+    for item in preparadas:
+        clave = (item['ruta'].pk, item['codigo_logico'].casefold())
+        if clave not in fibras_consultadas:
+            faltan_fibras.append(
+                f"fila {item['fila']}: la fibra global "
+                f"{item['ruta'].nombre} / {item['codigo_logico']} no existe; "
+                'cárguela previamente en el inventario de fibras'
+            )
+    _errores_csv(faltan_fibras, 'Detalle de fibras por tramo')
+
+    ids_fibra = sorted({
+        fibras_consultadas[
+            (item['ruta'].pk, item['codigo_logico'].casefold())
+        ].pk
+        for item in preparadas
+    })
+    fibras_bloqueadas = {
+        fibra.pk: fibra
+        for fibra in InventarioFibra.objects.select_for_update()
+        .filter(pk__in=ids_fibra)
+        .order_by('pk')
+    }
+    tramos_bloqueados = {
+        tramo.pk: tramo
+        for tramo in InventarioTramo.objects.select_for_update().filter(
+            pk__in=ids_tramo
+        ).order_by('pk')
+    }
+    fibras_existentes = {
+        (fibra.ruta_id, fibra.fibra_numero.casefold()): fibra
+        for fibra in fibras_bloqueadas.values()
+    }
+    asignaciones = list(
+        FibraTramo.objects.select_for_update()
+        .filter(tramo_id__in=ids_tramo)
+        .select_related('fibra')
+        .order_by('pk')
+    )
+    asignaciones_por_posicion = {
+        (item.tramo_id, item.numero_hilo.casefold()): item
+        for item in asignaciones
+    }
+    asignaciones_por_logica = {
+        (item.tramo_id, item.fibra.fibra_numero.casefold()): item
+        for item in asignaciones
+        if item.fibra_id
+    }
+
+    conflictos = []
+    for item in preparadas:
+        fibra = fibras_existentes.get(
+            (item['ruta'].pk, item['codigo_logico'].casefold())
+        )
+        posicion = asignaciones_por_posicion.get(
+            (item['tramo'].pk, item['numero_hilo'].casefold())
+        )
+        if (
+            posicion
+            and posicion.fibra_id
+            and (
+                fibra is None
+                or posicion.fibra_id != fibra.pk
+            )
+        ):
+            conflictos.append(
+                f"fila {item['fila']}: {item['numero_hilo']} ya pertenece "
+                'a otra fibra lógica'
+            )
+    _errores_csv(conflictos, 'Detalle de fibras por tramo')
+
+    asignaciones_creadas = asignaciones_actualizadas = 0
+    fibras_tocadas = {}
+    for item in preparadas:
+        tramo = tramos_bloqueados[item['tramo'].pk]
+        clave_logica = (
+            item['ruta'].pk, item['codigo_logico'].casefold()
+        )
+        fibra = fibras_existentes.get(clave_logica)
+        fibras_tocadas[fibra.pk] = fibra
+
+        clave_posicion = (
+            tramo.pk, item['numero_hilo'].casefold()
+        )
+        asignacion = asignaciones_por_posicion.get(clave_posicion)
+        clave_asignacion_logica = (
+            tramo.pk,
+            item['codigo_logico'].casefold(),
+        )
+        asignacion_logica = asignaciones_por_logica.get(
+            clave_asignacion_logica
+        )
+        if asignacion is None:
+            if asignacion_logica is not None:
+                clave_anterior = (
+                    tramo.pk,
+                    asignacion_logica.numero_hilo.casefold(),
+                )
+                asignaciones_por_posicion.pop(clave_anterior, None)
+                asignacion = asignacion_logica
+                asignacion.numero_hilo = item['numero_hilo']
+            else:
+                asignacion = FibraTramo(
+                    tramo=tramo,
+                    numero_hilo=item['numero_hilo'],
+                )
+        elif (
+            asignacion_logica is not None
+            and asignacion_logica.pk != asignacion.pk
+        ):
+            asignacion_logica.fibra = None
+            asignacion_logica.estado = 'Desconocido'
+            asignacion_logica._omitir_sincronizacion_estado = True
+            asignacion_logica.save(
+                update_fields=['fibra', 'estado']
+            )
+        creada = asignacion.pk is None
+        asignacion.fibra = fibra
+        asignacion.estado = item['estado']
+        if item['observaciones'] is not None:
+            asignacion.observaciones = item['observaciones']
+        asignacion.lote_importacion = lote
+        asignacion._omitir_sincronizacion_estado = True
+        asignacion.save()
+        asignaciones_creadas += int(creada)
+        asignaciones_actualizadas += int(not creada)
+        asignaciones_por_posicion[clave_posicion] = asignacion
+        asignaciones_por_logica[clave_asignacion_logica] = asignacion
+
+    from ..services.fibras import sincronizar_estado_fibra
+
+    for fibra in fibras_tocadas.values():
+        if fibra.origen_estado != 'INFORMADO':
+            sincronizar_estado_fibra(
+                fibra,
+                origen='EXCEL',
+                lote_importacion=lote,
+                causa='IMPORTACION_FIBRA_TRAMO',
             )
 
-    return _resultado(len(df), creadas, actualizadas, rechazadas)
+    for tramo_id in ids_tramo:
+        conteos = {
+            fila['estado']: fila['total']
+            for fila in FibraTramo.objects.filter(tramo_id=tramo_id)
+            .values('estado')
+            .annotate(total=Count('pk'))
+        }
+        InventarioTramo.objects.filter(pk=tramo_id).update(
+            hilos_ocupados=conteos.get('Ocupado', 0),
+            hilos_reservados=conteos.get('Reservado', 0),
+            hilos_libres=conteos.get('Libre', 0),
+        )
+
+    resultado = _resultado(
+        len(df),
+        creadas=asignaciones_creadas,
+        actualizadas=asignaciones_actualizadas,
+    )
+    resultado['modo'] = 'parche'
+    resultado['informaciones'] = [
+        'La carga se aplicó en modo parche exclusivamente sobre FibraTramo; '
+        'no creó fibras globales ni modificó sus metadatos.'
+    ]
+    return resultado
+
+
+TERMINACIONES_ALIASES_CSV = {
+    'troncal': 'ruta',
+    'ruta_troncal': 'ruta',
+    'hilo': 'fibra',
+    'numero_hilo': 'fibra',
+    'fibra_logica': 'codigo_fibra',
+    'odf_origen': 'odf_a',
+    'odf_extremo_a': 'odf_a',
+    'puerto_origen': 'puerto_a',
+    'puerto_extremo_a': 'puerto_a',
+    'tipo_conector_a': 'conector_a',
+    'odf_destino': 'odf_b',
+    'odf_extremo_b': 'odf_b',
+    'puerto_destino': 'puerto_b',
+    'puerto_extremo_b': 'puerto_b',
+    'tipo_conector_b': 'conector_b',
+    'tipo_conector': 'conector',
+    'tipo_de_conector': 'conector',
+    'id_fibra': 'fibra_id',
+    'estado_global': 'estado',
+    'estado_de_uso': 'estado',
+    'condicion_fisica': 'condicion',
+    'condicion': 'condicion',
+    'tipo_de_servicio': 'servicio',
+    'nombre_servicio': 'servicio',
+    'notas': 'observaciones',
+    'puerto_odf': 'puerto',
+    'sitio': 'site',
+    'hub_site': 'site',
+    'site_extremo_a': 'site_a',
+    'sitio_extremo_a': 'site_a',
+    'site_extremo_b': 'site_b',
+    'sitio_extremo_b': 'site_b',
+}
+
+
+def _site_id_de_nodo(nodo):
+    if not nodo:
+        return None
+    if nodo.hub_site_obj_id:
+        return nodo.hub_site_obj_id
+    if nodo.odf_obj_id:
+        return nodo.odf_obj.rack_obj.sala.hub_site_id
+    return None
+
+
+@transaction.atomic
+def _procesar_terminaciones_fibra(file, lote=None):
+    """Registra terminaciones oficiales con la troncal informada o pendiente.
+
+    Cuando Ruta viene vacía se crea una fibra con troncal pendiente. Como el
+    número de hilo puede repetirse, una recarga la identifica por su ID interno
+    o por sus puertos ya terminados, nunca solo por el texto F1/F2/etc.
+    """
+    from ..services.fibras import (
+        establecer_estado_fibra_informado,
+        normalizar_condicion_fisica,
+        normalizar_estado_fibra,
+        restablecer_estado_fibra,
+    )
+    from ..services.puertos import conectar_puerto
+
+    df = _leer_csv_normalizado(file, aliases=TERMINACIONES_ALIASES_CSV)
+    if not {'fibra', 'codigo_fibra'}.intersection(df.columns):
+        raise ValueError(
+            'Terminaciones de fibra: falta la columna Fibra o Codigo Fibra.'
+        )
+
+    formato_largo = {'odf', 'puerto'}.issubset(df.columns)
+    rutas = {ruta.nombre.casefold(): ruta for ruta in Ruta.objects.all()}
+    fibras_por_id = {
+        fibra.pk: fibra
+        for fibra in InventarioFibra.objects.select_related('ruta').all()
+    }
+    fibras_por_ruta = {
+        (fibra.ruta_id, fibra.fibra_numero.casefold()): fibra
+        for fibra in InventarioFibra.objects.select_related('ruta').filter(
+            ruta__isnull=False
+        )
+    }
+    odfs = {
+        odf.odf.casefold(): odf
+        for odf in InventarioODF.objects.select_related(
+            'rack_obj__sala__hub_site'
+        )
+    }
+
+    preparadas = []
+    errores = []
+    claves_puerto = set()
+    for numero_fila, row in enumerate(df.to_dict('records'), start=2):
+        try:
+            ruta_nombre = _texto(row.get('ruta'))
+            ruta = None
+            if ruta_nombre:
+                ruta = rutas.get(ruta_nombre.casefold())
+                if not ruta:
+                    raise ValueError(f"la ruta '{ruta_nombre}' no existe")
+
+            numero_fibra = _texto(row.get('fibra')).upper()
+            codigo_fibra = _texto(row.get('codigo_fibra')).upper()
+            if numero_fibra and codigo_fibra and numero_fibra != codigo_fibra:
+                raise ValueError(
+                    'Fibra y Codigo Fibra deben identificar el mismo hilo lógico'
+                )
+            numero_logico = codigo_fibra or numero_fibra
+            if not numero_logico:
+                raise ValueError('Fibra es obligatoria')
+            if len(numero_logico) > 50:
+                raise ValueError('Fibra no puede superar 50 caracteres')
+
+            extremos = []
+            extremos_fuente = ('A', 'B')
+            if formato_largo:
+                extremo_informado = _texto(row.get('extremo')).upper() or 'A'
+                if extremo_informado not in {'A', 'B'}:
+                    raise ValueError('Extremo debe ser A o B')
+                extremos_fuente = (extremo_informado,)
+            for extremo in extremos_fuente:
+                sufijo = extremo.casefold()
+                odf_nombre = _texto(
+                    row.get('odf') if formato_largo else row.get(f'odf_{sufijo}')
+                )
+                puerto_numero = _texto(
+                    row.get('puerto') if formato_largo else row.get(f'puerto_{sufijo}')
+                ).upper()
+                conector = _texto(
+                    row.get('conector') if formato_largo else row.get(f'conector_{sufijo}')
+                )
+                site_informado = _texto(
+                    row.get('site') if formato_largo else row.get(f'site_{sufijo}')
+                )
+                if bool(odf_nombre) != bool(puerto_numero):
+                    raise ValueError(
+                        f'el extremo {extremo} debe declarar juntos ODF y puerto'
+                    )
+                if not odf_nombre:
+                    continue
+                odf = odfs.get(odf_nombre.casefold())
+                if not odf:
+                    raise ValueError(
+                        f"el ODF del extremo {extremo} '{odf_nombre}' no existe"
+                    )
+                site_real = odf.rack_obj.sala.hub_site.nombre
+                if (
+                    site_informado
+                    and site_informado.casefold() != site_real.casefold()
+                ):
+                    raise ValueError(
+                        f"el Site '{site_informado}' no corresponde al ODF "
+                        f"{odf.odf}; pertenece a '{site_real}'"
+                    )
+                clave = (odf.pk, puerto_numero.casefold())
+                if clave in claves_puerto:
+                    raise ValueError(
+                        f'el puerto {odf.odf} / {puerto_numero} está repetido '
+                        'en el archivo'
+                    )
+                claves_puerto.add(clave)
+                extremos.append({
+                    'extremo': extremo,
+                    'odf': odf,
+                    'puerto_numero': puerto_numero,
+                    'conector': conector,
+                    'site': site_real,
+                    'clave': clave,
+                })
+            if not extremos:
+                raise ValueError(
+                    'debe declarar al menos un extremo completo (ODF y puerto)'
+                )
+            fibra_id_texto = _texto(row.get('fibra_id'))
+            fibra_id = None
+            if fibra_id_texto:
+                try:
+                    fibra_id = int(float(fibra_id_texto))
+                except (TypeError, ValueError):
+                    raise ValueError('ID Fibra debe ser numérico')
+                fibra_id_obj = fibras_por_id.get(fibra_id)
+                if not fibra_id_obj:
+                    raise ValueError(f'la fibra ID {fibra_id} no existe')
+                if fibra_id_obj.fibra_numero.casefold() != numero_logico.casefold():
+                    raise ValueError(
+                        f'el ID {fibra_id} pertenece a {fibra_id_obj.fibra_numero}'
+                    )
+                if ruta and fibra_id_obj.ruta_id not in {None, ruta.pk}:
+                    raise ValueError('el ID Fibra pertenece a otra troncal')
+
+            estado_texto = _texto(row.get('estado')) if 'estado' in df.columns else ''
+            estado_informado = None
+            restablecer_estado = False
+            condicion_informada = None
+            if estado_texto:
+                normalizado = estado_texto.casefold()
+                if normalizado in {'malo', 'mala'}:
+                    condicion_informada = 'CON_FALLA'
+                    restablecer_estado = True
+                elif normalizado in {
+                    'sin informacion', 'sin información', 'desconocido',
+                    'desconocida',
+                }:
+                    restablecer_estado = True
+                else:
+                    estado_informado = normalizar_estado_fibra(estado_texto)
+            condicion_texto = (
+                _texto(row.get('condicion')) if 'condicion' in df.columns else ''
+            )
+            if condicion_texto:
+                condicion_informada = normalizar_condicion_fisica(condicion_texto)
+
+            preparadas.append({
+                'fila': numero_fila,
+                'ruta': ruta,
+                'ruta_nombre': ruta_nombre,
+                'numero': numero_logico,
+                'extremos': extremos,
+                'fibra_id': fibra_id,
+                'estado_informado': estado_informado,
+                'restablecer_estado': restablecer_estado,
+                'condicion_informada': condicion_informada,
+                'servicio': _texto(row.get('servicio')) if 'servicio' in df.columns else '',
+                'observaciones': _texto(row.get('observaciones')) if 'observaciones' in df.columns else '',
+            })
+        except Exception as exc:
+            errores.append(f'fila {numero_fila}: {exc}')
+    _errores_csv(errores, 'Terminaciones de fibra')
+
+    odf_ids = {clave[0] for clave in claves_puerto}
+    puertos = {
+        (puerto.odf_obj_id, puerto.puerto_odf.casefold()): puerto
+        for puerto in (
+            DetallePuertoODF.objects
+            .select_related('odf_obj__rack_obj__sala__hub_site')
+            .filter(odf_obj_id__in=odf_ids)
+        )
+    }
+    errores = []
+    for item in preparadas:
+        for extremo in item['extremos']:
+            puerto = puertos.get(extremo['clave'])
+            if not puerto:
+                errores.append(
+                    f"fila {item['fila']}: el puerto "
+                    f"{extremo['odf'].odf} / {extremo['puerto_numero']} no existe"
+                )
+            else:
+                extremo['puerto'] = puerto
+    _errores_csv(errores, 'Terminaciones de fibra')
+
+    ids_puerto = [puerto.pk for puerto in puertos.values()]
+    terminaciones_objetivo = list(
+        TerminacionFibra.objects
+        .select_related('fibra__ruta', 'puerto_odf__odf_obj')
+        .filter(puerto_odf_id__in=ids_puerto)
+    )
+    por_puerto = {
+        terminacion.puerto_odf_id: terminacion
+        for terminacion in terminaciones_objetivo
+    }
+
+    errores = []
+    extremos_archivo = set()
+    grupos_globales = {}
+    grupos_pendientes = set()
+    for item in preparadas:
+        fibra = fibras_por_id.get(item['fibra_id']) if item['fibra_id'] else None
+        if fibra is None and item['ruta'] is not None:
+            fibra = fibras_por_ruta.get(
+                (item['ruta'].pk, item['numero'].casefold())
+            )
+        elif fibra is None:
+            candidatas = {
+                por_puerto[extremo['puerto'].pk].fibra
+                for extremo in item['extremos']
+                if extremo['puerto'].pk in por_puerto
+            }
+            if len(candidatas) > 1:
+                errores.append(
+                    f"fila {item['fila']}: los puertos declarados pertenecen "
+                    'a fibras diferentes'
+                )
+                continue
+            if candidatas:
+                fibra = next(iter(candidatas))
+                if fibra.fibra_numero.casefold() != item['numero'].casefold():
+                    errores.append(
+                        f"fila {item['fila']}: el puerto ya pertenece al hilo "
+                        f"{fibra.fibra_numero}, no a {item['numero']}"
+                    )
+                    continue
+        item['fibra'] = fibra
+        if fibra:
+            grupo = ('fibra', fibra.pk)
+        elif item['fibra_id']:
+            grupo = ('fibra', item['fibra_id'])
+        elif item['ruta']:
+            grupo = ('ruta', item['ruta'].pk, item['numero'].casefold())
+        else:
+            # Sin Ruta, ID o terminación existente no existe identidad
+            # suficiente para reconciliar dos F2/F12 iguales. Una fila ancha
+            # conserva sus extremos A/B; filas separadas quedan como fibras
+            # provisionales independientes hasta revisión de campo.
+            grupo = ('pendiente_fila', item['fila'])
+            grupos_pendientes.add(grupo)
+        item['grupo'] = grupo
+
+        globales = grupos_globales.setdefault(grupo, {})
+        estado_operacion = None
+        if item['estado_informado']:
+            estado_operacion = ('INFORMADO', item['estado_informado'])
+        elif item['restablecer_estado']:
+            estado_operacion = ('RESTABLECER', 'Desconocido')
+        valores_globales = {
+            'estado_operacion': estado_operacion,
+            'condicion_informada': item['condicion_informada'],
+            'servicio': item['servicio'],
+            'observaciones': item['observaciones'],
+        }
+        for campo, valor in valores_globales.items():
+            if valor in (None, ''):
+                continue
+            anterior = globales.get(campo)
+            if (
+                anterior not in (None, '')
+                and str(anterior).casefold() != str(valor).casefold()
+            ):
+                errores.append(
+                    f"fila {item['fila']}: {campo.replace('_', ' ')} "
+                    'contradice otra fila A/B de la misma fibra'
+                )
+            else:
+                globales[campo] = valor
+
+        for extremo in item['extremos']:
+            clave_extremo = (grupo, extremo['extremo'])
+            if clave_extremo in extremos_archivo:
+                errores.append(
+                    f"fila {item['fila']}: el extremo {extremo['extremo']} "
+                    'de la fibra está repetido en el archivo'
+                )
+                continue
+            extremos_archivo.add(clave_extremo)
+            ocupante = por_puerto.get(extremo['puerto'].pk)
+            if ocupante and (
+                fibra is None
+                or ocupante.fibra_id != fibra.pk
+                or ocupante.extremo != extremo['extremo']
+            ):
+                errores.append(
+                    f"fila {item['fila']}: el puerto "
+                    f"{extremo['odf'].odf} / {extremo['puerto_numero']} ya "
+                    'está asignado a otra terminación'
+                )
+                continue
+            existente_extremo = (
+                TerminacionFibra.objects.filter(
+                    fibra=fibra,
+                    extremo=extremo['extremo'],
+                ).first()
+                if fibra else None
+            )
+            if (
+                existente_extremo
+                and existente_extremo.puerto_odf_id != extremo['puerto'].pk
+            ):
+                errores.append(
+                    f"fila {item['fila']}: el extremo {extremo['extremo']} ya "
+                    'está conectado en otro puerto; use una operación de movimiento'
+                )
+                continue
+            if (
+                extremo['puerto'].estado_puerto == 'Reservado'
+                and existente_extremo is None
+            ):
+                errores.append(
+                    f"fila {item['fila']}: el puerto "
+                    f"{extremo['odf'].odf} / {extremo['puerto_numero']} está "
+                    'reservado; consuma la reserva mediante una operación explícita'
+                )
+    _errores_csv(errores, 'Terminaciones de fibra')
+
+    for item in preparadas:
+        globales = grupos_globales[item['grupo']]
+        estado_operacion = globales.get('estado_operacion')
+        item['estado_informado'] = (
+            estado_operacion[1]
+            if estado_operacion and estado_operacion[0] == 'INFORMADO'
+            else None
+        )
+        item['restablecer_estado'] = bool(
+            estado_operacion and estado_operacion[0] == 'RESTABLECER'
+        )
+        for campo in ('condicion_informada', 'servicio', 'observaciones'):
+            item[campo] = globales.get(campo) or ''
+
+    from ..services.fibras import asignar_ruta_fibra
+
+    creadas = actualizadas = 0
+    fibras_por_grupo = {
+        item['grupo']: item['fibra']
+        for item in preparadas
+        if item['fibra'] is not None
+    }
+    grupos_aplicados = set()
+    for item in preparadas:
+        fibra = fibras_por_grupo.get(item['grupo'])
+        if fibra is None:
+            fibra = InventarioFibra.objects.create(
+                ruta=None,
+                fibra_numero=item['numero'],
+                estado='Desconocido',
+                origen_estado='NO_INFORMADO',
+                lote_importacion=lote,
+            )
+            fibras_por_grupo[item['grupo']] = fibra
+            if item['ruta']:
+                clave_ruta = (item['ruta'].pk, item['numero'].casefold())
+                fibras_por_ruta[clave_ruta] = fibra
+
+        if item['grupo'] not in grupos_aplicados:
+            cambios_fibra = []
+            if item['condicion_informada']:
+                fibra.condicion_fisica = item['condicion_informada']
+                cambios_fibra.append('condicion_fisica')
+            if item['servicio']:
+                fibra.nombre_fibra = item['servicio']
+                cambios_fibra.append('nombre_fibra')
+            if item['observaciones']:
+                fibra.observaciones = item['observaciones']
+                cambios_fibra.append('observaciones')
+            if getattr(lote, 'pk', None) and fibra.lote_importacion_id != lote.pk:
+                fibra.lote_importacion = lote
+                cambios_fibra.append('lote_importacion')
+            if cambios_fibra:
+                fibra.save(update_fields=sorted(set(cambios_fibra)))
+            if item['estado_informado']:
+                establecer_estado_fibra_informado(
+                    fibra=fibra,
+                    estado=item['estado_informado'],
+                    usuario=getattr(lote, 'usuario', None) if lote else None,
+                    origen='EXCEL',
+                    lote_importacion=lote,
+                )
+            if item['ruta'] and fibra.ruta_id is None:
+                fibra, _, _ = asignar_ruta_fibra(
+                    fibra=fibra,
+                    ruta=item['ruta'],
+                    usuario=getattr(lote, 'usuario', None) if lote else None,
+                    origen='EXCEL',
+                    lote_importacion=lote,
+                )
+            # Sin información se aplica al final. Así la materialización
+            # 1:1 de una Ruta de un tramo no convierte el dato BHP en una
+            # inferencia dentro de la misma acción.
+            if item['restablecer_estado']:
+                restablecer_estado_fibra(
+                    fibra=fibra,
+                    usuario=getattr(lote, 'usuario', None) if lote else None,
+                    origen='EXCEL',
+                    lote_importacion=lote,
+                )
+            grupos_aplicados.add(item['grupo'])
+        item['fibra'] = fibra
+        for extremo in item['extremos']:
+            terminacion, creada = conectar_puerto(
+                puerto_id=extremo['puerto'].pk,
+                fibra_id=fibra.pk,
+                fibra_numero='',
+                extremo=extremo['extremo'],
+                permitir_mover=False,
+                ocupar_fibra=False,
+                usuario=getattr(lote, 'usuario', None) if lote else None,
+                origen='EXCEL',
+                lote_importacion=lote,
+            )
+            fibra = terminacion.fibra
+            item['fibra'] = fibra
+            if creada:
+                creadas += 1
+            else:
+                actualizadas += 1
+
+            conector = (
+                extremo['conector']
+                or terminacion.tipo_conector
+                or extremo['puerto'].tipo_conector
+                or extremo['puerto'].odf_obj.tipo_conector
+                or fibra.tipo_conector
+                or ''
+            )
+            cambios = []
+            if terminacion.tipo_conector != conector:
+                terminacion.tipo_conector = conector
+                cambios.append('tipo_conector')
+            if terminacion.lote_importacion_id != getattr(lote, 'pk', None):
+                terminacion.lote_importacion = lote
+                cambios.append('lote_importacion')
+            if cambios:
+                terminacion.save(update_fields=cambios)
+
+    resultado = _resultado(
+        len(df),
+        creadas=creadas,
+        actualizadas=actualizadas,
+    )
+    resultado['modo'] = 'parche'
+    resultado['informaciones'] = [
+        'La carga no eliminó terminaciones omitidas. Cada puerto declarado '
+        'quedó Ocupado mediante una terminación oficial.'
+    ]
+    pendientes_nuevas = len(grupos_pendientes)
+    if pendientes_nuevas:
+        resultado['informaciones'].append(
+            f'{pendientes_nuevas} hilo(s) se crearon con troncal pendiente. '
+            'Cada fila sin ID, Ruta o terminación previa se mantuvo '
+            'independiente y requiere revisión antes de asociar su troncal.'
+        )
+    return resultado
+
 
 @transaction.atomic
 def _procesar_odfs_inventario(file, lote=None):
     """Carga la información general de ODFs desde un CSV (Archivo D)"""
     decoded_file = file.read().decode('utf-8')
     df = pd.read_csv(io.StringIO(decoded_file))
-    from ..services.inventario import guardar_odf_normalizado, limpiar_texto
+    from ..services.inventario import (
+        ajustar_puertos_a_capacidad,
+        guardar_odf_normalizado,
+        limpiar_texto,
+    )
 
     creadas = actualizadas = rechazadas = 0
     for row in df.to_dict('records'):
@@ -751,13 +2379,17 @@ def _procesar_odfs_inventario(file, lote=None):
             'observaciones': row.get('observaciones'),
         }
         
-        _, creada = guardar_odf_normalizado(
+        odf_obj, creada = guardar_odf_normalizado(
             odf_nombre=odf_nombre,
             hub_nombre=hub_site,
             sala_nombre=sala,
             rack_nombre=rack,
             defaults=odf_datos,
             lote=lote,
+        )
+        ajustar_puertos_a_capacidad(
+            odf_obj,
+            odf_datos['capacidad_puertos'],
         )
         creadas += int(creada)
         actualizadas += int(not creada)
@@ -817,10 +2449,17 @@ def _procesar_puertos_odf_inventario(file, lote=None):
         )
         if not estado:
             raise ValueError(f'Fila {numero_fila}: estado de puerto inválido: {estado_original}.')
+        if estado == 'Ocupado':
+            raise ValueError(
+                f'Fila {numero_fila}: un puerto no se importa como Ocupado. '
+                'Cárguelo como Libre y cree la ocupación mediante la '
+                'terminación oficial de la fibra.'
+            )
         filas.append((odf_obj, puerto_num, {
-            'odf': odf_nombre,
+            # La relación es la fuente oficial; no conserve variantes de
+            # mayúsculas o alias procedentes del CSV.
+            'odf': odf_obj.odf,
             'bandeja': limpio(row.get('bandeja')),
-            'fibra': limpio(row.get('fibra')),
             'estado_puerto': estado,
             'tipo_conector': limpio(row.get('tipo_conector')),
             'patchcord': limpio(row.get('patchcord')),
@@ -847,12 +2486,17 @@ def _procesar_puertos_odf_inventario(file, lote=None):
     crear = []
     actualizar = []
     campos = [
-        'odf', 'bandeja', 'fibra', 'estado_puerto', 'tipo_conector',
+        'odf', 'bandeja', 'estado_puerto', 'tipo_conector',
         'patchcord', 'destino', 'observaciones', 'lote_importacion',
     ]
     for odf_obj, puerto_num, valores in filas:
         obj = existentes.get((odf_obj.pk, puerto_num.casefold()))
         if obj:
+            # Una recarga de inventario actualiza metadatos, pero no ejecuta
+            # transiciones operativas ni consume/cancela reservas. El estado
+            # existente se conserva y se gestiona mediante los servicios de
+            # conexión o la plantilla de operaciones.
+            valores['estado_puerto'] = obj.estado_puerto
             for campo, valor in valores.items():
                 setattr(obj, campo, valor)
             actualizar.append(obj)
@@ -900,174 +2544,77 @@ def _procesar_puertos_odf_inventario(file, lote=None):
 @transaction.atomic
 def _procesar_coordenadas_csv(file, lote=None):
     """
-    Importa coordenadas y segmentación en un solo archivo CSV para múltiples rutas.
+    Importa geometría y segmentación visual para múltiples rutas.
+
+    La carga puede crear la entidad básica Ruta, pero no crea ni modifica
+    InventarioTramo. Los campos técnicos se cargan en su flujo independiente.
     Columnas requeridas: Ruta, Latitude, Longitude
     Columnas opcionales: tipo_trazado, new_seg
     """
-    decoded_file = file.read().decode('utf-8')
+    decoded_file = file.read().decode('utf-8-sig')
     df = pd.read_csv(io.StringIO(decoded_file))
-    
-    # Normalizar nombres de columnas a minúsculas
-    df.columns = [c.strip().lower() for c in df.columns]
-    
-    # Verificar columnas mínimas
-    req_cols = ['ruta', 'latitude', 'longitude']
-    for col in req_cols:
-        if col not in df.columns:
-            raise ValueError(f"Falta la columna requerida en el CSV: {col}")
-            
+    df.columns = [str(columna).strip().lower() for columna in df.columns]
+
+    for columna in ('ruta', 'latitude', 'longitude'):
+        if columna not in df.columns:
+            raise ValueError(
+                f"Falta la columna requerida en el CSV: {columna}"
+            )
+    rutas_normalizadas = df['ruta'].map(_texto)
+    filas_sin_ruta = [
+        str(indice + 2)
+        for indice, nombre in enumerate(rutas_normalizadas)
+        if not nombre
+    ]
+    if filas_sin_ruta:
+        raise ValueError(
+            'El CSV contiene filas sin nombre de ruta: '
+            f"{', '.join(filas_sin_ruta[:10])}."
+        )
+    df['ruta'] = rutas_normalizadas
+    df['_ruta_clave'] = rutas_normalizadas.str.casefold()
+    hub_site_ignorado = (
+        'hub_site' in df.columns
+        and any(_texto(valor) for valor in df['hub_site'])
+    )
+    if hub_site_ignorado:
+        logger.warning(
+            'La columna hub_site del trazado geográfico se acepta solo por '
+            'compatibilidad y no modifica el inventario técnico.'
+        )
+
     rutas_actualizadas = 0
     coordenadas_creadas = 0
-    # Agrupar por ruta para procesar
-    for ruta_nombre, df_coords in df.groupby('ruta'):
-        ruta_nombre = str(ruta_nombre).strip()
-        if not ruta_nombre or ruta_nombre == 'nan':
-            continue
-            
-        ruta_obj = Ruta.objects.filter(nombre=ruta_nombre).first()
+
+    # sort=False mantiene el orden de aparición de las rutas y cada grupo
+    # conserva el orden de sus puntos en el archivo.
+    for _, df_coords in df.groupby('_ruta_clave', sort=False):
+        ruta_nombre = _texto(df_coords.iloc[0]['ruta'])
+        ruta_obj = Ruta.objects.filter(nombre__iexact=ruta_nombre).first()
         if not ruta_obj:
-            ruta_obj = Ruta.objects.create(nombre=ruta_nombre, lote_importacion=lote)
-            logger.info(f"Ruta '{ruta_nombre}' creada automáticamente al cargar coordenadas.")
-            
-        # Respaldar datos manuales previos del primer tramo
-        tramo_previo = InventarioTramo.objects.filter(ruta=ruta_obj).order_by('tramo_secuencia').first()
-        datos_respaldo = {}
-        if tramo_previo:
-            datos_respaldo = {
-                'estado': tramo_previo.estado,
-                'capacidad': tramo_previo.capacidad,
-                'hub_site': tramo_previo.hub_site,
-                'destino': tramo_previo.destino,
-                'marca_modelo': tramo_previo.marca_modelo,
-                'tipo_fibra': tramo_previo.tipo_fibra,
-                'serial': tramo_previo.serial,
-                'mufas': tramo_previo.mufas,
-                'splitters': tramo_previo.splitters,
-                'odf_nombre': tramo_previo.odf_nombre,
-                'hilos_ocupados': tramo_previo.hilos_ocupados,
-                'hilos_libres': tramo_previo.hilos_libres,
-                'distancia_m': tramo_previo.distancia_m,
-                'reservas_m': tramo_previo.reservas_m
-            }
-            
-        # Extraer hub_site del CSV si existe para asignarlo inmediatamente
-        if 'hub_site' in df_coords.columns:
-            primer_valor = df_coords['hub_site'].dropna().first_valid_index()
-            if primer_valor is not None:
-                val = str(df_coords.at[primer_valor, 'hub_site']).strip()
-                if val and val.lower() != 'nan':
-                    datos_respaldo['hub_site'] = val
-            
-        # Limpiar anteriores de esta ruta
-        CoordenadaRuta.objects.filter(ruta=ruta_obj).delete()
-        InventarioTramo.objects.filter(ruta=ruta_obj).delete()
-        
-        coords_a_crear = []
-        tramos_data = {}
-        
-        tramo_actual = 1
-        tipo_trazado_actual = None
-        
-        distancia_total = 0.0
-        prev_lat = None
-        prev_lon = None
-        
-        df_coords = df_coords.reset_index(drop=True)
-        
-        for i, row_coord in df_coords.iterrows():
-            new_seg_val = str(row_coord.get('new_seg', 'False')).strip().lower()
-            es_new_seg = new_seg_val in ['true', '1']
-            
-            tipo_trazado_raw = str(row_coord.get('tipo_trazado', '')).strip().upper()
-            if not tipo_trazado_raw or tipo_trazado_raw == 'NAN':
-                tipo_trazado_raw = 'DESCONOCIDO'
-                
-            if i == 0:
-                tipo_trazado_actual = tipo_trazado_raw
-            else:
-                if tipo_trazado_raw != tipo_trazado_actual:
-                    es_new_seg = True
-                    tipo_trazado_actual = tipo_trazado_raw
-                    
-            if es_new_seg and i > 0:
-                tramo_actual += 1
-                
-            if tramo_actual not in tramos_data:
-                tramos_data[tramo_actual] = {
-                    'tipo_trazado': tipo_trazado_actual,
-                    'distancia_m': 0.0
-                }
-                
-            lat = float(row_coord['latitude'])
-            lon = float(row_coord['longitude'])
-            
-            distancia_segmento = 0.0
-            if prev_lat is not None and prev_lon is not None:
-                distancia_segmento = calcular_distancia_haversine(prev_lat, prev_lon, lat, lon)
-                distancia_total += distancia_segmento
-                tramos_data[tramo_actual]['distancia_m'] += distancia_segmento
-                
-            prev_lat = lat
-            prev_lon = lon
-                
-            coords_a_crear.append(
-                CoordenadaRuta(
-                    ruta=ruta_obj,
-                    latitud=Decimal(str(lat)),
-                    longitud=Decimal(str(lon)),
-                    orden=i + 1,
-                    tramo_secuencia=tramo_actual,
-                    lote_importacion=lote,
-                )
+            ruta_obj = Ruta.objects.create(
+                nombre=ruta_nombre,
+                lote_importacion=lote,
             )
-            
-        # Guardar en base de datos
-        CoordenadaRuta.objects.bulk_create(coords_a_crear)
-        coordenadas_creadas += len(coords_a_crear)
-        
-        # Guardar distancia total
-        ruta_obj.distancia_m = distancia_total
-        if lote is not None:
-            ruta_obj.lote_importacion = lote
-            ruta_obj.save(update_fields=['distancia_m', 'lote_importacion'])
-        else:
-            ruta_obj.save(update_fields=['distancia_m'])
-        
-        inventario_a_crear = []
-        for num_tramo, meta in tramos_data.items():
-            tramo_datos = dict(datos_respaldo)
-            if num_tramo != 1:
-                tramo_datos.update({
-                    'mufas': 0,
-                    'splitters': 0,
-                    'reservas_m': 0.0,
-                    'hilos_ocupados': 0,
-                    'hilos_libres': 0,
-                })
-            tramo_datos['distancia_m'] = meta['distancia_m']
-            inventario_a_crear.append(
-                InventarioTramo(
-                    ruta=ruta_obj,
-                    tramo_secuencia=num_tramo,
-                    tipo_trazado=meta['tipo_trazado'],
-                    lote_importacion=lote,
-                    **tramo_datos
-                )
+            logger.info(
+                "Ruta '%s' creada automáticamente al cargar coordenadas.",
+                ruta_nombre,
             )
-        InventarioTramo.objects.bulk_create(inventario_a_crear)
-        tramos_por_secuencia = {
-            tramo.tramo_secuencia: tramo
-            for tramo in InventarioTramo.objects.filter(ruta=ruta_obj)
-        }
-        for secuencia, tramo in tramos_por_secuencia.items():
-            CoordenadaRuta.objects.filter(
-                ruta=ruta_obj,
-                tramo_secuencia=secuencia,
-            ).update(tramo=tramo)
+
+        coordenadas_creadas += _reemplazar_geografia_ruta(
+            ruta_obj,
+            df_coords.reset_index(drop=True),
+            lote,
+        )
         rutas_actualizadas += 1
-        
+
     resultado = _resultado(len(df), coordenadas_creadas)
     resultado['rutas_actualizadas'] = rutas_actualizadas
+    if hub_site_ignorado:
+        resultado['informaciones'] = [
+            'La columna hub_site no se guardó desde esta carga geográfica; '
+            'adminístrala mediante Inventario Técnico de Tramos.'
+        ]
     return resultado
 
 
@@ -1078,16 +2625,20 @@ def cargar_csv(request, tipo_csv):
     """Vista que maneja la carga de diferentes archivos y los procesa."""
     PROCESADORES = {
         'reservas': (_procesar_reservas, "Reservas"),
-        'ruta_otu': (_procesar_ruta_otu, "Relación Ruta/OTU"),
+        'ruta_otu': (_procesar_ruta_otu, "Troncales y Datos Generales"),
         'equipos_otu': (_procesar_equipos_otu, "Equipos OTU"),
         'coordenadas_rutas': (_procesar_coordenadas_zip, "Coordenadas de Rutas (ZIP)"),
 
         'asociar_puertos': (_asociar_puertos_a_rutas, "Asociar Puertos a Rutas"),
         'id_rutas': (_procesar_id_rutas, "Cargar IDs de Rutas (ONMSI)"),
-        'coordenadas_inventario': (_procesar_coordenadas_inventario_zip, "Coordenadas Segmentadas (.zip)"),
-        'coordenadas_csv': (_procesar_coordenadas_csv, "Cargar Coordenadas e Inventario Unificado (.csv)"),
-        'tramos_inventario': (_procesar_tramos_inventario, "Inventario Técnico Tramos (.csv)"),
-        'fibras_inventario': (_procesar_fibras_inventario, "Detalle de Fibras / Hilos (.csv)"),
+        'coordenadas_inventario': (_procesar_coordenadas_inventario_zip, "Trazado Geográfico Segmentado (.zip)"),
+        'coordenadas_csv': (_procesar_coordenadas_csv, "Coordenadas y Tipo de Trazado (.csv)"),
+        'tramos_inventario': (_procesar_tramos_inventario, "Inventario Técnico de Tramos (.csv)"),
+        'fibras_inventario': (_procesar_fibras_inventario, "Fibras por Tramo (.csv)"),
+        'terminaciones_fibra': (
+            _procesar_terminaciones_fibra,
+            "Terminaciones de Fibra (.csv)",
+        ),
         'odf_inventario': (_procesar_odfs_inventario, "Inventario de ODFs (.csv)"),
         'puertos_odf_inventario': (_procesar_puertos_odf_inventario, "Detalle de Puertos ODF (.csv)"),
     }
@@ -1107,6 +2658,10 @@ def cargar_csv(request, tipo_csv):
         'coordenadas_csv': ('mapas.add_coordenadaruta', 'mapas.change_coordenadaruta'),
         'tramos_inventario': ('mapas.add_inventariotramo', 'mapas.change_inventariotramo'),
         'fibras_inventario': ('mapas.add_inventariofibra', 'mapas.change_inventariofibra'),
+        'terminaciones_fibra': (
+            'mapas.add_terminacionfibra',
+            'mapas.change_terminacionfibra',
+        ),
         'odf_inventario': ('mapas.add_inventarioodf', 'mapas.change_inventarioodf'),
         'puertos_odf_inventario': (
             'mapas.add_detallepuertoodf',
@@ -1154,7 +2709,13 @@ def cargar_csv(request, tipo_csv):
                 if not isinstance(resultado, dict):
                     resultado = _resultado()
                 filas_rechazadas = int(resultado.get('rechazadas', 0) or 0)
-                notificar = messages.warning if filas_rechazadas else messages.success
+                advertencias = resultado.get('advertencias') or []
+                informaciones = resultado.get('informaciones') or []
+                notificar = (
+                    messages.warning
+                    if filas_rechazadas or advertencias
+                    else messages.success
+                )
 
                 if tipo_csv == 'asociar_puertos':
                     notificar(
@@ -1162,10 +2723,13 @@ def cargar_csv(request, tipo_csv):
                         f"Proceso completado. Se asociaron {resultado['actualizadas']} puertos a sus rutas."
                     )
                 elif tipo_csv == 'coordenadas_csv':
+                    avisos = advertencias + informaciones
+                    aviso = f" {' '.join(avisos)}" if avisos else ''
                     notificar(
                         request,
-                        'Carga unificada exitosa. Se actualizaron las coordenadas de '
+                        'Carga de trazado geográfico exitosa. Se actualizaron las coordenadas de '
                         f"{resultado.get('rutas_actualizadas', 0)} rutas."
+                        f'{aviso}'
                     )
                 elif tipo_csv == 'coordenadas_rutas_csv':
                     notificar(
@@ -1177,6 +2741,19 @@ def cargar_csv(request, tipo_csv):
                     mensaje = f"Los datos de '{nombre_amigable}' han sido actualizados correctamente."
                     if filas_rechazadas:
                         mensaje += f' {filas_rechazadas} filas fueron rechazadas y requieren revisión.'
+                    if advertencias:
+                        mensaje += ' Avisos: ' + ' '.join(
+                            str(aviso) for aviso in advertencias[:3]
+                        )
+                        if len(advertencias) > 3:
+                            mensaje += (
+                                f' Hay {len(advertencias) - 3} aviso(s) '
+                                'adicional(es) en el lote.'
+                            )
+                    elif informaciones:
+                        mensaje += ' ' + ' '.join(
+                            str(aviso) for aviso in informaciones[:1]
+                        )
                     notificar(request, mensaje)
 
                 lote.estado = 'COMPLETADO_CON_ERRORES' if filas_rechazadas else 'COMPLETADO'

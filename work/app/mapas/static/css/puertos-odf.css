@@ -298,6 +298,20 @@
 .port-dialog footer { position: sticky; bottom: 0; z-index: 2; border-top: 1px solid var(--ports-line); border-bottom: 0; background: var(--bg-surface); }
 .port-dialog footer > p { margin: 0; color: var(--text-tertiary); font-size: 9px; }
 .port-dialog footer > div { display: flex; gap: 8px; }
+.ports-heading__actions { display: flex; align-items: center; gap: 9px; }
+.port-dialog--wide { width: min(1040px, calc(100vw - 64px)); }
+.ports-bulk-file-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.ports-bulk-file-row input { min-width: 280px; flex: 1; padding: 9px; border: 1px solid var(--ports-line); border-radius: 8px; color: var(--text-primary); background: var(--bg-surface-2); }
+.ports-bulk-preview { max-height: 320px; margin-top: 14px; overflow: auto; border: 1px solid var(--ports-line); border-radius: 9px; }
+.ports-bulk-preview table { width: 100%; min-width: 820px; border-collapse: collapse; font-size: 10px; }
+.ports-bulk-preview th, .ports-bulk-preview td { padding: 8px 9px; border-bottom: 1px solid var(--ports-line); text-align: left; vertical-align: top; }
+.ports-bulk-preview th { position: sticky; top: 0; z-index: 1; color: var(--text-secondary); background: var(--bg-surface-2); }
+.ports-bulk-preview tr.is-error td { color: var(--danger); background: rgba(228, 63, 69, .05); }
+.ports-bulk-preview tr.is-valid td:nth-child(2) { color: var(--success); font-weight: 750; }
+.ports-history-dialog { max-height: inherit; overflow-y: auto; }
+.ports-history-preview { max-height: min(58vh, 620px); }
+.ports-history-preview th:first-child,
+.ports-history-preview td:first-child { white-space: nowrap; }
 
 @media (max-width: 1320px) {
     .ports-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }

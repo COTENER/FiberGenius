@@ -1,10 +1,11 @@
+import re
 import uuid
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Count, F, Q
-from django.db.models.functions import Lower
+from django.db.models.functions import Coalesce, Lower
 
 
 # =============================================================================
@@ -76,28 +77,61 @@ class Ruta(models.Model):
     nombre = models.CharField(max_length=150, unique=True, db_index=True, verbose_name="Nombre de Ruta")
     otu = models.ForeignKey(OTU, on_delete=models.SET_NULL, null=True, blank=True, related_name='rutas', verbose_name="OTU Asociado")
     distancia_m = models.FloatField(null=True, blank=True, verbose_name="Distancia (m)")
+    distancia_declarada_m = models.FloatField(
+        null=True,
+        blank=True,
+        verbose_name='Distancia oficial declarada (m)',
+    )
+    capacidad_declarada_hilos = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name='Capacidad oficial declarada',
+    )
+    hilos_ocupados_declarados = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name='Hilos ocupados declarados',
+    )
+    hilos_reservados_declarados = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name='Hilos reservados declarados',
+    )
+    hilos_libres_declarados = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name='Hilos libres declarados',
+    )
+    reservas_declaradas_m = models.FloatField(
+        null=True,
+        blank=True,
+        verbose_name='Reserva oficial declarada (m)',
+    )
+    fuente_declaracion = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        verbose_name='Fuente de la declaración',
+    )
+    fecha_declaracion = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name='Fecha de la declaración',
+    )
+    declarado_por = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='rutas_declaradas',
+        verbose_name='Declarado por',
+    )
     olt = models.CharField(max_length=100, blank=True, null=True, verbose_name="OLT")
     slot_olt = models.IntegerField(null=True, blank=True)
     puerto_olt = models.IntegerField(null=True, blank=True)
     pon = models.CharField(max_length=50, blank=True, null=True, verbose_name="PON")
     enlace = models.URLField(max_length=255, blank=True, null=True, verbose_name="Enlace PON View")
     perfil_umbral = models.ForeignKey(PerfilUmbral, on_delete=models.SET_NULL, null=True, blank=True, related_name='rutas', verbose_name="Perfil de Umbrales")
-    odf_origen = models.ForeignKey(
-        'InventarioODF',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='rutas_como_origen',
-        verbose_name='ODF extremo A',
-    )
-    odf_destino = models.ForeignKey(
-        'InventarioODF',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='rutas_como_destino',
-        verbose_name='ODF extremo B',
-    )
     lote_importacion = models.ForeignKey(
         'LoteImportacion',
         on_delete=models.SET_NULL,
@@ -111,6 +145,22 @@ class Ruta(models.Model):
 
     def clean(self):
         super().clean()
+        declarados = (
+            self.hilos_ocupados_declarados,
+            self.hilos_reservados_declarados,
+            self.hilos_libres_declarados,
+        )
+        if (
+            self.capacidad_declarada_hilos is not None
+            and sum(valor or 0 for valor in declarados)
+            > self.capacidad_declarada_hilos
+        ):
+            raise ValidationError({
+                'capacidad_declarada_hilos': (
+                    'La suma de hilos ocupados, reservados y libres '
+                    'declarados no puede superar la capacidad declarada.'
+                ),
+            })
         if not self.pk:
             return
         puerto = PuertoOTU.objects.filter(ruta_asociada_id=self.pk).select_related('otu').first()
@@ -129,6 +179,46 @@ class Ruta(models.Model):
         verbose_name = "Ruta de Fibra"
         verbose_name_plural = "Rutas de Fibra"
         ordering = ['nombre']
+        constraints = [
+            models.UniqueConstraint(
+                Lower('nombre'),
+                name='uq_ruta_nombre_ci',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(distancia_declarada_m__isnull=True)
+                    | Q(distancia_declarada_m__gte=0)
+                ),
+                name='ck_ruta_dist_declarada_no_neg',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(capacidad_declarada_hilos__isnull=True)
+                    | Q(capacidad_declarada_hilos__gt=0)
+                ),
+                name='ck_ruta_cap_declarada_positiva',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(reservas_declaradas_m__isnull=True)
+                    | Q(reservas_declaradas_m__gte=0)
+                ),
+                name='ck_ruta_reserva_declarada_no_neg',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(capacidad_declarada_hilos__isnull=True)
+                    | Q(
+                        capacidad_declarada_hilos__gte=(
+                            Coalesce('hilos_ocupados_declarados', 0)
+                            + Coalesce('hilos_reservados_declarados', 0)
+                            + Coalesce('hilos_libres_declarados', 0)
+                        )
+                    )
+                ),
+                name='ck_ruta_contadores_en_capacidad',
+            ),
+        ]
         permissions = [
             ("can_view_reports", "Puede ver Reportes (Dashboard/Ranking)"),
         ]
@@ -190,6 +280,20 @@ class CoordenadaRuta(models.Model):
     latitud = models.DecimalField(max_digits=10, decimal_places=7)
     longitud = models.DecimalField(max_digits=10, decimal_places=7)
     orden = models.PositiveIntegerField(verbose_name="Orden del trazado")
+    tipo_trazado = models.CharField(
+        max_length=50,
+        null=True,
+        blank=True,
+        verbose_name="Tipo de trazado geográfico",
+    )
+    inicio_segmento = models.BooleanField(
+        default=False,
+        verbose_name="Inicio de segmento geográfico",
+        help_text="Indica que este punto inicia un nuevo segmento visual del trazado.",
+    )
+    # Campos de compatibilidad durante la transición. La segmentación geográfica
+    # nueva no depende de InventarioTramo, pero se conservan temporalmente para
+    # poder desplegar y revertir la fase 1 sin perder relaciones históricas.
     tramo_secuencia = models.PositiveIntegerField(null=True, blank=True, verbose_name="Secuencia del Tramo", help_text="Identificador de sub-tramo dentro de la ruta.")
     tramo = models.ForeignKey(
         'InventarioTramo',
@@ -370,14 +474,196 @@ class IDRuta(models.Model):
         ]
 
 
+class NodoRed(models.Model):
+    """Identidad estable de un punto de la topología técnica de la red."""
+
+    TIPOS = [
+        ('SITE', 'Site'),
+        ('ODF', 'ODF'),
+        ('MUFA', 'Mufa'),
+        ('CAMARA', 'Cámara'),
+        ('POSTE', 'Poste'),
+        ('CAJA_EMPALME', 'Caja de empalme'),
+        ('PUNTO', 'Punto intermedio'),
+        ('OTRO', 'Otro'),
+    ]
+
+    tipo = models.CharField(max_length=30, choices=TIPOS)
+    codigo = models.CharField(max_length=150)
+    nombre = models.CharField(max_length=180, blank=True)
+    odf_obj = models.OneToOneField(
+        'InventarioODF',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='nodo_red',
+        verbose_name='ODF canónico',
+    )
+    hub_site_obj = models.OneToOneField(
+        'HubSite',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='nodo_red',
+        verbose_name='Site canónico',
+    )
+    lote_importacion = models.ForeignKey(
+        'LoteImportacion',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='nodos_red',
+    )
+
+    def __str__(self):
+        return self.nombre or f'{self.get_tipo_display()} {self.codigo}'
+
+    def clean(self):
+        super().clean()
+        if self.odf_obj_id and self.hub_site_obj_id:
+            raise ValidationError(
+                'Un nodo no puede representar simultáneamente un ODF y un Site.'
+            )
+        if self.odf_obj_id and self.tipo != 'ODF':
+            raise ValidationError({
+                'tipo': 'Un nodo relacionado con un ODF debe ser de tipo ODF.'
+            })
+        if self.hub_site_obj_id and self.tipo != 'SITE':
+            raise ValidationError({
+                'tipo': 'Un nodo relacionado con un Site debe ser de tipo SITE.'
+            })
+        if not self.pk:
+            return
+        anterior = type(self).objects.filter(pk=self.pk).only(
+            'tipo',
+            'codigo',
+        ).first()
+        if not anterior:
+            return
+        identidad_cambio = (
+            anterior.tipo != self.tipo
+            or anterior.codigo.casefold() != self.codigo.casefold()
+        )
+        if identidad_cambio and (
+            self.tramos_como_origen.exists()
+            or self.tramos_como_destino.exists()
+            or self.fibras_como_origen.exists()
+            or self.fibras_como_destino.exists()
+        ):
+            raise ValidationError({
+                'codigo': (
+                    'No se puede cambiar el tipo o código de un nodo que '
+                    'ya está referenciado por un tramo.'
+                ),
+            })
+
+    def save(self, *args, **kwargs):
+        self.tipo = (self.tipo or '').strip().upper()
+        self.codigo = (self.codigo or '').strip().upper()
+        self.nombre = (self.nombre or '').strip()
+        if not self.odf_obj_id and not self.hub_site_obj_id:
+            if self.tipo == 'ODF' and self.codigo:
+                self.odf_obj = InventarioODF.objects.filter(
+                    odf__iexact=self.codigo,
+                ).first()
+            elif self.tipo == 'SITE' and self.codigo:
+                self.hub_site_obj = HubSite.objects.filter(
+                    nombre__iexact=self.codigo,
+                ).first()
+        if self.odf_obj_id:
+            self.tipo = 'ODF'
+            self.codigo = self.odf_obj.odf.strip().upper()
+            self.nombre = self.odf_obj.odf.strip()
+        elif self.hub_site_obj_id:
+            self.tipo = 'SITE'
+            self.codigo = self.hub_site_obj.nombre.strip().upper()
+            self.nombre = self.hub_site_obj.nombre.strip()
+        update_fields = kwargs.get('update_fields')
+        if update_fields is not None:
+            kwargs['update_fields'] = set(update_fields) | {
+                'tipo', 'codigo', 'nombre', 'odf_obj', 'hub_site_obj',
+            }
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    class Meta:
+        db_table = 'inv_nodos_red'
+        verbose_name = 'Nodo de red'
+        verbose_name_plural = 'Nodos de red'
+        ordering = ['tipo', 'codigo']
+        constraints = [
+            models.UniqueConstraint(
+                F('tipo'),
+                Lower('codigo'),
+                name='uq_nodo_tipo_codigo_ci',
+            ),
+            models.CheckConstraint(
+                condition=~Q(codigo=''),
+                name='ck_nodo_codigo_no_vacio',
+            ),
+            models.CheckConstraint(
+                condition=Q(tipo__in=(
+                    'SITE',
+                    'ODF',
+                    'MUFA',
+                    'CAMARA',
+                    'POSTE',
+                    'CAJA_EMPALME',
+                    'PUNTO',
+                    'OTRO',
+                )),
+                name='ck_nodo_tipo_valido',
+            ),
+            models.CheckConstraint(
+                condition=Q(odf_obj__isnull=True) | Q(tipo='ODF'),
+                name='ck_nodo_odf_tipo',
+            ),
+            models.CheckConstraint(
+                condition=Q(hub_site_obj__isnull=True) | Q(tipo='SITE'),
+                name='ck_nodo_site_tipo',
+            ),
+            models.CheckConstraint(
+                condition=Q(odf_obj__isnull=True) | Q(hub_site_obj__isnull=True),
+                name='ck_nodo_canonico_unico',
+            ),
+        ]
+
+
 class InventarioTramo(models.Model):
     """
     Representa las propiedades técnicas y logísticas de un segmento o tramo específico
     de una ruta de fibra óptica.
     Datos poblados desde el CSV de 'Inventario Técnico'.
     """
+    ESTADOS_INVENTARIO = [
+        ('INCOMPLETO', 'Incompleto'),
+        ('VALIDADO', 'Validado'),
+    ]
+
     ruta = models.ForeignKey(Ruta, on_delete=models.CASCADE, related_name='tramos_inventario', verbose_name="Ruta Asociada")
     tramo_secuencia = models.PositiveIntegerField(verbose_name="Secuencia del Tramo")
+    codigo_tramo = models.CharField(
+        max_length=100,
+        null=True,
+        blank=True,
+        verbose_name='Código del tramo',
+    )
+    origen_nodo = models.ForeignKey(
+        NodoRed,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='tramos_como_origen',
+        verbose_name='Nodo de origen',
+    )
+    destino_nodo = models.ForeignKey(
+        NodoRed,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='tramos_como_destino',
+        verbose_name='Nodo de destino',
+    )
     tipo_trazado = models.CharField(max_length=50, blank=True, null=True, verbose_name="Tipo de Trazado (Ej: AEREO, SOTERRADO)")
     estado = models.CharField(max_length=50, blank=True, null=True, verbose_name="Estado")
     distancia_m = models.FloatField(blank=True, null=True, verbose_name="Distancia del Tramo (m)")
@@ -385,6 +671,11 @@ class InventarioTramo(models.Model):
     splitters = models.IntegerField(blank=True, null=True, default=0, verbose_name="Número de Splitters")
     reservas_m = models.FloatField(blank=True, null=True, default=0.0, verbose_name="Metraje de Reservas (m)")
     capacidad = models.CharField(max_length=100, blank=True, null=True, verbose_name="Capacidad (Ej: 144 Hilos)")
+    capacidad_hilos = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name='Capacidad de hilos',
+    )
     tipo_fibra = models.CharField(max_length=100, blank=True, null=True, verbose_name="Tipo de Fibra")
     origen = models.CharField(max_length=150, blank=True, null=True, verbose_name="Origen (Sobrescribe OLT/OTU)")
     destino = models.CharField(max_length=150, blank=True, null=True, verbose_name="Destino (Sobrescribe OLT/OTU)")
@@ -394,6 +685,19 @@ class InventarioTramo(models.Model):
     odf_nombre = models.CharField(max_length=150, blank=True, null=True, verbose_name="Nombre ODF")
     hilos_ocupados = models.IntegerField(blank=True, null=True, default=0, verbose_name="Hilos Ocupados")
     hilos_libres = models.IntegerField(blank=True, null=True, default=0, verbose_name="Hilos Libres")
+    hilos_reservados = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name='Hilos reservados',
+    )
+    observaciones = models.TextField(blank=True, default='')
+    estado_inventario = models.CharField(
+        max_length=20,
+        choices=ESTADOS_INVENTARIO,
+        default='INCOMPLETO',
+        db_index=True,
+        verbose_name='Estado de completitud',
+    )
     lote_importacion = models.ForeignKey(
         'LoteImportacion',
         on_delete=models.SET_NULL,
@@ -404,6 +708,107 @@ class InventarioTramo(models.Model):
     
     def __str__(self):
         return f"{self.ruta.nombre} - Tramo {self.tramo_secuencia} ({self.tipo_trazado})"
+
+    def clean(self):
+        super().clean()
+        if self.estado_inventario == 'VALIDADO':
+            obligatorios = {
+                'codigo_tramo': self.codigo_tramo,
+                'origen_nodo': self.origen_nodo_id,
+                'destino_nodo': self.destino_nodo_id,
+                'distancia_m': self.distancia_m,
+                'capacidad_hilos': self.capacidad_hilos,
+            }
+            faltantes = [
+                campo
+                for campo, valor in obligatorios.items()
+                if valor in (None, '')
+            ]
+            if faltantes:
+                raise ValidationError({
+                    campo: 'Este campo es obligatorio para validar el tramo.'
+                    for campo in faltantes
+                })
+
+        contadores = (
+            self.hilos_ocupados,
+            self.hilos_reservados,
+            self.hilos_libres,
+        )
+        if (
+            self.estado_inventario == 'VALIDADO'
+            and self.capacidad_hilos is not None
+            and sum(valor or 0 for valor in contadores)
+            > self.capacidad_hilos
+        ):
+            raise ValidationError({
+                'capacidad_hilos': (
+                    'La suma de hilos ocupados, reservados y libres '
+                    'no puede superar la capacidad del tramo.'
+                ),
+            })
+
+        if not self.pk:
+            return
+
+        anterior = type(self).objects.filter(pk=self.pk).only(
+            'ruta_id',
+        ).first()
+        if (
+            anterior
+            and anterior.ruta_id != self.ruta_id
+            and self.fibras_tramo.exists()
+        ):
+            raise ValidationError({
+                'ruta': (
+                    'No se puede mover el tramo a otra ruta porque ya tiene '
+                    'posiciones de fibra registradas.'
+                ),
+            })
+
+        if self.capacidad_hilos is None:
+            return
+        excedidas = []
+        for numero_hilo in self.fibras_tramo.values_list(
+            'numero_hilo',
+            flat=True,
+        ):
+            coincidencia = re.fullmatch(
+                r'F([1-9]\d*)',
+                str(numero_hilo or '').strip().upper(),
+            )
+            if (
+                coincidencia
+                and int(coincidencia.group(1)) > self.capacidad_hilos
+            ):
+                excedidas.append(str(numero_hilo))
+        if excedidas:
+            raise ValidationError({
+                'capacidad_hilos': (
+                    f'La capacidad {self.capacidad_hilos} dejaría fuera '
+                    f'posiciones existentes: {", ".join(excedidas[:10])}.'
+                ),
+            })
+
+    def save(self, *args, **kwargs):
+        if self.capacidad_hilos is not None:
+            self.capacidad = f'{self.capacidad_hilos} Hilos'
+        if self.origen_nodo_id:
+            self.origen = self.origen_nodo.codigo
+        if self.destino_nodo_id:
+            self.destino = self.destino_nodo.codigo
+        update_fields = kwargs.get('update_fields')
+        if update_fields is not None:
+            update_fields = set(update_fields)
+            if 'capacidad_hilos' in update_fields:
+                update_fields.add('capacidad')
+            if 'origen_nodo' in update_fields or 'origen_nodo_id' in update_fields:
+                update_fields.add('origen')
+            if 'destino_nodo' in update_fields or 'destino_nodo_id' in update_fields:
+                update_fields.add('destino')
+            kwargs['update_fields'] = update_fields
+        self.full_clean()
+        return super().save(*args, **kwargs)
 
     class Meta:
         db_table = 'inv_tramos'
@@ -436,6 +841,48 @@ class InventarioTramo(models.Model):
                 condition=Q(hilos_libres__isnull=True) | Q(hilos_libres__gte=0),
                 name='ck_tramo_hilos_libres',
             ),
+            models.UniqueConstraint(
+                F('ruta'),
+                Lower('codigo_tramo'),
+                condition=Q(codigo_tramo__isnull=False) & ~Q(codigo_tramo=''),
+                name='uq_tramo_codigo_ci',
+            ),
+            models.CheckConstraint(
+                condition=Q(capacidad_hilos__isnull=True) | Q(capacidad_hilos__gt=0),
+                name='ck_tramo_capacidad_positiva',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(origen_nodo__isnull=True)
+                    | Q(destino_nodo__isnull=True)
+                    | ~Q(origen_nodo=F('destino_nodo'))
+                ),
+                name='ck_tramo_nodos_distintos',
+            ),
+            models.CheckConstraint(
+                condition=Q(hilos_reservados__isnull=True) | Q(hilos_reservados__gte=0),
+                name='ck_tramo_hilos_reservados',
+            ),
+            models.CheckConstraint(
+                condition=Q(estado_inventario__in=(
+                    'INCOMPLETO',
+                    'VALIDADO',
+                )),
+                name='ck_tramo_estado_inventario',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(capacidad_hilos__isnull=True)
+                    | Q(
+                        capacidad_hilos__gte=(
+                            Coalesce('hilos_ocupados', 0)
+                            + Coalesce('hilos_reservados', 0)
+                            + Coalesce('hilos_libres', 0)
+                        )
+                    )
+                ),
+                name='ck_tramo_contadores_en_capacidad',
+            ),
         ]
 
 
@@ -444,12 +891,75 @@ class InventarioFibra(models.Model):
     Representa el estado y detalle de cada hilo/fibra individual dentro de una ruta troncal.
     Datos poblados desde el Archivo C.
     """
-    ruta = models.ForeignKey(Ruta, on_delete=models.CASCADE, related_name='fibras_inventario', verbose_name="Ruta Asociada")
+    ORIGENES_ESTADO = [
+        ('INFORMADO', 'Informado'),
+        ('INFERIDO_TRAMOS', 'Inferido desde tramos'),
+        ('NO_INFORMADO', 'No informado'),
+    ]
+    CONDICIONES_FISICAS = [
+        ('OPERATIVA', 'Operativa'),
+        ('CON_FALLA', 'Con falla'),
+        ('SIN_VERIFICAR', 'Sin verificar'),
+    ]
+
+    ruta = models.ForeignKey(
+        Ruta,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='fibras_inventario',
+        verbose_name="Ruta Asociada",
+        help_text=(
+            "Puede quedar pendiente mientras solo se conoce la terminación "
+            "física ODF/puerto del hilo."
+        ),
+    )
     fibra_numero = models.CharField(max_length=50, verbose_name="Número de Fibra/Hilo")
-    estado = models.CharField(max_length=50, choices=[('Libre', 'Libre'), ('Ocupado', 'Ocupado'), ('Reservado', 'Reservado')], default='Libre', verbose_name="Estado")
+    estado = models.CharField(
+        max_length=50,
+        choices=[
+            ('Libre', 'Libre'),
+            ('Ocupado', 'Ocupado'),
+            ('Reservado', 'Reservado'),
+            ('Desconocido', 'Desconocido'),
+        ],
+        default='Desconocido',
+        verbose_name="Estado",
+    )
+    origen_estado = models.CharField(
+        max_length=20,
+        choices=ORIGENES_ESTADO,
+        default='NO_INFORMADO',
+        db_index=True,
+        verbose_name='Origen del estado',
+    )
+    condicion_fisica = models.CharField(
+        max_length=20,
+        choices=CONDICIONES_FISICAS,
+        default='SIN_VERIFICAR',
+        db_index=True,
+        verbose_name='Condición física',
+    )
     nombre_fibra = models.CharField(max_length=150, blank=True, null=True, verbose_name="Nombre/Descripción (Si está ocupada/reservada)")
+    observaciones = models.TextField(blank=True, default='', verbose_name='Observaciones')
     origen_odf = models.CharField(max_length=150, blank=True, null=True, verbose_name="Origen ODF")
     destino = models.CharField(max_length=150, blank=True, null=True, verbose_name="Destino")
+    origen_nodo = models.ForeignKey(
+        NodoRed,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='fibras_como_origen',
+        verbose_name='Nodo inicial del recorrido',
+    )
+    destino_nodo = models.ForeignKey(
+        NodoRed,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='fibras_como_destino',
+        verbose_name='Nodo final del recorrido',
+    )
     tipo_conector = models.CharField(max_length=100, blank=True, null=True, verbose_name="Tipo de Conector")
     lote_importacion = models.ForeignKey(
         'LoteImportacion',
@@ -460,10 +970,59 @@ class InventarioFibra(models.Model):
     )
 
     def __str__(self):
-        return f"{self.ruta.nombre} - Fibra {self.fibra_numero} ({self.estado})"
+        return (
+            f"{self.nombre_troncal} - Fibra {self.fibra_numero} "
+            f"({self.estado})"
+        )
+
+    @property
+    def nombre_troncal(self):
+        return self.ruta.nombre if self.ruta_id else "Troncal pendiente"
+
+    @property
+    def es_provisional(self):
+        return self.ruta_id is None
+
+    def clean(self):
+        super().clean()
+        if (
+            self.origen_estado == 'NO_INFORMADO'
+            and self.estado != 'Desconocido'
+        ):
+            raise ValidationError({
+                'origen_estado': (
+                    'Una fibra sin origen de estado solo puede tener estado '
+                    'Desconocido.'
+                ),
+            })
+        if (
+            self.origen_nodo_id is not None
+            and self.origen_nodo_id == self.destino_nodo_id
+        ):
+            raise ValidationError({
+                'destino_nodo': (
+                    'El origen y el destino del recorrido deben ser distintos.'
+                ),
+            })
 
     def save(self, *args, **kwargs):
         self.fibra_numero = (self.fibra_numero or '').strip().upper()
+        if self.origen_nodo_id:
+            self.origen_odf = (
+                self.origen_nodo.nombre or self.origen_nodo.codigo
+            )
+        if self.destino_nodo_id:
+            self.destino = (
+                self.destino_nodo.nombre or self.destino_nodo.codigo
+            )
+        update_fields = kwargs.get('update_fields')
+        if update_fields is not None:
+            update_fields = set(update_fields)
+            if 'origen_nodo' in update_fields or 'origen_nodo_id' in update_fields:
+                update_fields.add('origen_odf')
+            if 'destino_nodo' in update_fields or 'destino_nodo_id' in update_fields:
+                update_fields.add('destino')
+            kwargs['update_fields'] = update_fields
         self.full_clean()
         return super().save(*args, **kwargs)
 
@@ -475,7 +1034,164 @@ class InventarioFibra(models.Model):
         constraints = [
             models.UniqueConstraint(
                 F('ruta'), Lower('fibra_numero'),
+                condition=Q(ruta__isnull=False),
                 name='uq_fibra_ruta_numero_ci',
+            ),
+            models.CheckConstraint(
+                condition=Q(estado__in=(
+                    'Libre',
+                    'Ocupado',
+                    'Reservado',
+                    'Desconocido',
+                )),
+                name='ck_inventario_fibra_estado',
+            ),
+            models.CheckConstraint(
+                condition=Q(origen_estado__in=(
+                    'INFORMADO',
+                    'INFERIDO_TRAMOS',
+                    'NO_INFORMADO',
+                )),
+                name='ck_fibra_origen_estado_valido',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    ~Q(origen_estado='NO_INFORMADO')
+                    | Q(estado='Desconocido')
+                ),
+                name='ck_fibra_estado_origen_coherente',
+            ),
+            models.CheckConstraint(
+                condition=Q(condicion_fisica__in=(
+                    'OPERATIVA',
+                    'CON_FALLA',
+                    'SIN_VERIFICAR',
+                )),
+                name='ck_fibra_condicion_fisica_valida',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    Q(origen_nodo__isnull=True)
+                    | Q(destino_nodo__isnull=True)
+                    | ~Q(origen_nodo=F('destino_nodo'))
+                ),
+                name='ck_fibra_recorrido_nodos_dist',
+            ),
+        ]
+
+
+class FibraTramo(models.Model):
+    """Posición física de un hilo dentro de un tramo técnico."""
+
+    ESTADOS = [
+        ('Libre', 'Libre'),
+        ('Ocupado', 'Ocupado'),
+        ('Reservado', 'Reservado'),
+        ('Desconocido', 'Desconocido'),
+    ]
+
+    tramo = models.ForeignKey(
+        InventarioTramo,
+        on_delete=models.CASCADE,
+        related_name='fibras_tramo',
+    )
+    numero_hilo = models.CharField(max_length=50)
+    estado = models.CharField(
+        max_length=20,
+        choices=ESTADOS,
+        default='Desconocido',
+    )
+    fibra = models.ForeignKey(
+        InventarioFibra,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='asignaciones_tramo',
+    )
+    observaciones = models.TextField(blank=True, default='')
+    lote_importacion = models.ForeignKey(
+        'LoteImportacion',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='fibras_tramo',
+    )
+
+    def __str__(self):
+        return f'{self.tramo} - Hilo {self.numero_hilo} ({self.estado})'
+
+    def clean(self):
+        super().clean()
+        numero_hilo = (self.numero_hilo or '').strip().upper()
+        coincidencia = re.fullmatch(r'F([1-9]\d*)', numero_hilo)
+        if coincidencia is None:
+            raise ValidationError({
+                'numero_hilo': 'Use el formato F1, F2, F3...'
+            })
+        if (
+            self.tramo_id
+            and self.tramo.capacidad_hilos is not None
+            and int(coincidencia.group(1)) > self.tramo.capacidad_hilos
+        ):
+            raise ValidationError({
+                'numero_hilo': (
+                    f'{numero_hilo} excede la capacidad '
+                    f'{self.tramo.capacidad_hilos} del tramo.'
+                )
+            })
+        if (
+            self.tramo_id
+            and self.fibra_id
+            and self.tramo.ruta_id != self.fibra.ruta_id
+        ):
+            raise ValidationError({
+                'fibra': 'La fibra y el tramo deben pertenecer a la misma ruta.'
+            })
+
+    def save(self, *args, **kwargs):
+        self.numero_hilo = (self.numero_hilo or '').strip().upper()
+        self.observaciones = (self.observaciones or '').strip()
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    class Meta:
+        db_table = 'inv_fibras_tramos'
+        verbose_name = 'Fibra por tramo'
+        verbose_name_plural = 'Fibras por tramo'
+        ordering = ['tramo', 'numero_hilo']
+        constraints = [
+            models.UniqueConstraint(
+                F('tramo'),
+                Lower('numero_hilo'),
+                name='uq_fibra_tramo_numero_ci',
+            ),
+            models.UniqueConstraint(
+                fields=['tramo', 'fibra'],
+                condition=Q(fibra__isnull=False),
+                name='uq_fibra_tramo_fibra',
+            ),
+            models.CheckConstraint(
+                condition=~Q(numero_hilo=''),
+                name='ck_fibra_tramo_numero',
+            ),
+            models.CheckConstraint(
+                condition=Q(estado__in=(
+                    'Libre',
+                    'Ocupado',
+                    'Reservado',
+                    'Desconocido',
+                )),
+                name='ck_fibra_tramo_estado_valido',
+            ),
+            models.CheckConstraint(
+                condition=Q(numero_hilo__regex=r'^F[1-9][0-9]*$'),
+                name='ck_fibra_tramo_formato',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['tramo', 'estado'],
+                name='ix_fibra_tramo_estado',
             ),
         ]
 
@@ -552,6 +1268,11 @@ class InventarioODF(models.Model):
         self.odf = (self.odf or '').strip()
         self.full_clean()
         super().save(*args, **kwargs)
+        NodoRed.objects.filter(odf_obj=self).update(
+            tipo='ODF',
+            codigo=self.odf.upper(),
+            nombre=self.odf,
+        )
         if nombre_anterior and nombre_anterior != self.odf:
             self.puertos_detalle.update(odf=self.odf)
 
@@ -621,7 +1342,6 @@ class DetallePuertoODF(models.Model):
     odf = models.CharField(max_length=150, verbose_name="Nombre ODF (Texto)")
     bandeja = models.CharField(max_length=50, blank=True, null=True, verbose_name="Bandeja")
     puerto_odf = models.CharField(max_length=50, verbose_name="Puerto ODF")
-    fibra = models.CharField(max_length=100, blank=True, null=True, verbose_name="Fibra")
     estado_puerto = models.CharField(max_length=50, choices=ESTADOS_PUERTO_ODF_CHOICES, default='Libre', verbose_name="Estado")
     tipo_conector = models.CharField(max_length=100, blank=True, null=True, verbose_name="Tipo Conector")
     patchcord = models.CharField(max_length=10, blank=True, null=True, verbose_name="Patchcord (Sí/No)")
@@ -636,12 +1356,31 @@ class DetallePuertoODF(models.Model):
     )
 
     def __str__(self):
-        return f"{self.odf} - Puerto {self.puerto_odf} ({self.estado_puerto})"
+        nombre_odf = self.odf_obj.odf if self.odf_obj_id else self.odf
+        return f"{nombre_odf} - Puerto {self.puerto_odf} ({self.estado_puerto})"
 
     def clean(self):
         super().clean()
         if not self.odf_obj_id:
             raise ValidationError({'odf_obj': 'El puerto debe pertenecer a un ODF existente.'})
+        if not self.pk and self.estado_puerto == 'Ocupado':
+            raise ValidationError({
+                'estado_puerto': (
+                    'Un puerto nuevo debe crearse Libre o Reservado y luego '
+                    'conectarse a una fibra.'
+                ),
+            })
+        if self.pk:
+            estado_anterior = type(self).objects.filter(pk=self.pk).values_list(
+                'estado_puerto', flat=True
+            ).first()
+            if estado_anterior and estado_anterior != self.estado_puerto:
+                raise ValidationError({
+                    'estado_puerto': (
+                        'Use la gestión de conexión para conectar, desconectar, '
+                        'reservar o cancelar una reserva.'
+                    ),
+                })
 
     def save(self, *args, **kwargs):
         self.odf = self.odf_obj.odf
@@ -689,11 +1428,27 @@ class HubSite(models.Model):
     def __str__(self):
         return self.nombre
 
+    def save(self, *args, **kwargs):
+        self.nombre = (self.nombre or '').strip()
+        resultado = super().save(*args, **kwargs)
+        NodoRed.objects.filter(hub_site_obj=self).update(
+            tipo='SITE',
+            codigo=self.nombre.upper(),
+            nombre=self.nombre,
+        )
+        return resultado
+
     class Meta:
         db_table = 'inv_hub_sites'
         verbose_name = "Hub Site"
         verbose_name_plural = "Hub Sites"
         ordering = ['nombre']
+        constraints = [
+            models.UniqueConstraint(
+                Lower('nombre'),
+                name='uq_hub_site_nombre_ci',
+            ),
+        ]
 
 
 class LoteImportacion(models.Model):
@@ -847,42 +1602,8 @@ class TerminacionFibra(models.Model):
 
     def clean(self):
         super().clean()
-        if not self.fibra_id or not self.puerto_odf_id or not self.extremo:
-            return
-
-        ruta = self.fibra.ruta
-        odf_puerto = self.puerto_odf.odf_obj
-        odf_esperado = ruta.odf_origen if self.extremo == 'A' else ruta.odf_destino
-        if odf_esperado:
-            if odf_puerto.pk != odf_esperado.pk:
-                raise ValidationError({
-                    'puerto_odf': (
-                        f'El extremo {self.extremo} de {ruta.nombre} pertenece al '
-                        f'ODF {odf_esperado.odf}, no a {odf_puerto.odf}.'
-                    )
-                })
-            return
-
-        referencias = set()
-        texto_fibra = self.fibra.origen_odf if self.extremo == 'A' else self.fibra.destino
-        if texto_fibra:
-            referencias.add(texto_fibra.strip().casefold())
-        referencias.update(
-            nombre.strip().casefold()
-            for nombre in ruta.tramos_inventario.exclude(odf_nombre__isnull=True)
-            .exclude(odf_nombre='').values_list('odf_nombre', flat=True)
-        )
-        if not referencias:
-            raise ValidationError({
-                'puerto_odf': (
-                    f'Configure el ODF del extremo {self.extremo} en la troncal '
-                    f'{ruta.nombre} antes de crear la terminación.'
-                )
-            })
-        if odf_puerto.odf.strip().casefold() not in referencias:
-            raise ValidationError({
-                'puerto_odf': 'El puerto ODF no corresponde a un extremo documentado de la troncal.'
-            })
+        # El ODF pertenece a esta terminación individual. Una ruta puede
+        # distribuir sus fibras entre varios ODF y no impone un ODF único.
 
     def save(self, *args, **kwargs):
         self.full_clean()
@@ -893,6 +1614,165 @@ class TerminacionFibra(models.Model):
         constraints = [
             models.UniqueConstraint(fields=['fibra', 'extremo'], name='uq_terminacion_fibra_extremo'),
             models.UniqueConstraint(fields=['puerto_odf'], name='uq_terminacion_puerto_odf'),
+            models.CheckConstraint(
+                condition=Q(extremo__in=('A', 'B')),
+                name='ck_terminacion_extremo_valido',
+            ),
+        ]
+
+
+class AuditoriaPuertoODF(models.Model):
+    """Evento inmutable de una operación sobre un puerto ODF."""
+
+    ACCIONES = [
+        ('CONECTAR', 'Conectar'),
+        ('MOVER', 'Mover terminación'),
+        ('DESCONECTAR', 'Desconectar'),
+        ('RESERVAR', 'Reservar'),
+        ('CANCELAR_RESERVA', 'Cancelar reserva'),
+    ]
+    ORIGENES = [
+        ('GUI', 'Interfaz web'),
+        ('EXCEL', 'Actualización masiva por Excel'),
+        ('SISTEMA', 'Proceso interno'),
+    ]
+
+    accion = models.CharField(max_length=30, choices=ACCIONES, db_index=True)
+    origen = models.CharField(max_length=15, choices=ORIGENES, default='SISTEMA', db_index=True)
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='auditorias_puertos_odf',
+    )
+    fibra = models.ForeignKey(
+        InventarioFibra,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='auditorias_puertos_odf',
+    )
+    extremo = models.CharField(max_length=1, blank=True)
+    puerto_anterior = models.ForeignKey(
+        DetallePuertoODF,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='auditorias_como_puerto_anterior',
+    )
+    puerto_nuevo = models.ForeignKey(
+        DetallePuertoODF,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='auditorias_como_puerto_nuevo',
+    )
+    estado_anterior = models.CharField(max_length=50, blank=True)
+    estado_nuevo = models.CharField(max_length=50, blank=True)
+    referencia_puerto_anterior = models.CharField(max_length=500, blank=True)
+    referencia_puerto_nuevo = models.CharField(max_length=500, blank=True)
+    referencia_fibra = models.CharField(max_length=300, blank=True)
+    sincronizo_fibra = models.BooleanField(default=False)
+    lote_importacion = models.ForeignKey(
+        LoteImportacion,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='auditorias_puertos_odf',
+    )
+    metadatos = models.JSONField(default=dict, blank=True)
+    creado_en = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Los eventos de auditoría no pueden modificarse.')
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Los eventos de auditoría no pueden eliminarse.')
+
+    def __str__(self):
+        return f'{self.get_accion_display()} - {self.referencia_puerto_nuevo or self.referencia_puerto_anterior}'
+
+    class Meta:
+        db_table = 'aud_puertos_odf'
+        ordering = ['-creado_en', '-pk']
+        indexes = [
+            models.Index(fields=['puerto_anterior', '-creado_en'], name='idx_aud_puerto_ant_fecha'),
+            models.Index(fields=['puerto_nuevo', '-creado_en'], name='idx_aud_puerto_nvo_fecha'),
+            models.Index(fields=['fibra', '-creado_en'], name='idx_aud_fibra_fecha'),
+        ]
+
+
+class AuditoriaFibra(models.Model):
+    """Evento inmutable para cambios del estado global o la troncal."""
+
+    ACCIONES = [
+        ('CAMBIAR_ESTADO', 'Cambiar estado'),
+        ('INFERIR_ESTADO', 'Inferir estado desde tramos'),
+        ('RESTABLECER_ESTADO', 'Restablecer estado'),
+        ('ASIGNAR_RUTA', 'Asignar troncal'),
+    ]
+    ORIGENES = [
+        ('GUI', 'Interfaz web'),
+        ('EXCEL', 'Importación Excel/CSV'),
+        ('API', 'API'),
+        ('ADMIN', 'Administrador'),
+        ('SISTEMA', 'Proceso interno'),
+    ]
+
+    accion = models.CharField(max_length=30, choices=ACCIONES, db_index=True)
+    origen = models.CharField(
+        max_length=15,
+        choices=ORIGENES,
+        default='SISTEMA',
+        db_index=True,
+    )
+    usuario = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='auditorias_fibras',
+    )
+    fibra = models.ForeignKey(
+        InventarioFibra,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='auditorias',
+    )
+    referencia_fibra = models.CharField(max_length=300, blank=True)
+    valor_anterior = models.CharField(max_length=300, blank=True)
+    valor_nuevo = models.CharField(max_length=300, blank=True)
+    lote_importacion = models.ForeignKey(
+        LoteImportacion,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='auditorias_fibras',
+    )
+    metadatos = models.JSONField(default=dict, blank=True)
+    creado_en = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            raise ValidationError('Los eventos de auditoría no pueden modificarse.')
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Los eventos de auditoría no pueden eliminarse.')
+
+    def __str__(self):
+        return f'{self.get_accion_display()} - {self.referencia_fibra}'
+
+    class Meta:
+        db_table = 'aud_fibras'
+        ordering = ['-creado_en', '-pk']
+        indexes = [
+            models.Index(fields=['fibra', '-creado_en'], name='idx_aud_fibra_evento'),
+            models.Index(fields=['accion', '-creado_en'], name='idx_aud_fibra_accion'),
         ]
 
 
@@ -1244,6 +2124,21 @@ class UserActivity(models.Model):
         db_table = 'sys_user_activity'
         verbose_name = "Actividad de Usuario"
         verbose_name_plural = "Actividades de Usuario"
+
+
+class LoginThrottle(models.Model):
+    """Contador persistente y opaco para limitar intentos de autenticación."""
+
+    key_hash = models.CharField(max_length=64, unique=True)
+    attempts = models.PositiveIntegerField(default=0)
+    window_started = models.DateTimeField()
+    locked_until = models.DateTimeField(null=True, blank=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'sys_login_throttle'
+        verbose_name = "Bloqueo temporal de acceso"
+        verbose_name_plural = "Bloqueos temporales de acceso"
 
 
 class TrazaOnDemand(models.Model):

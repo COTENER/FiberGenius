@@ -68,6 +68,12 @@
         <p style="font-size:12px;color:var(--text-tertiary);margin-top:8px;">
             * El sistema segmentará el tramo automáticamente si detecta un cambio en <code>tipo_trazado</code> o usando <code>new_seg</code>.
         </p>
+        <details style="margin-top:var(--space-2);font-size:var(--text-xs);color:var(--text-secondary);">
+            <summary style="cursor:pointer;font-weight:600;color:var(--text-primary);">Información sobre los cortes del trazado</summary>
+            <p style="margin-top:var(--space-2);">
+                Los cortes se conservan para la representación geográfica y no reemplazan los detalles técnicos cargados por separado.
+            </p>
+        </details>
 
         <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo (Cada archivo CSV)</h5>
         <div style="overflow-x: auto; margin-top: 8px;">
@@ -104,7 +110,7 @@
             <span class="badge badge--accent">hub_site</span> <span class="badge badge--accent">marca_modelo</span>
             <span class="badge badge--accent">serial</span>
         </div>
-        
+
         <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo Completa</h5>
         <div style="overflow-x: auto; margin-top: 8px;">
             <table style="width:100%;border-collapse:collapse;font-size:12px;background:var(--bg-surface);min-width: 1000px;">
@@ -134,6 +140,23 @@
                 </tbody>
             </table>
         </div>
+        <details style="margin-top:var(--space-3);padding-top:var(--space-3);border-top:1px solid var(--border-color);">
+            <summary style="cursor:pointer;font-size:var(--text-sm);font-weight:600;color:var(--text-primary);">Opciones avanzadas para rutas con varios tramos</summary>
+            <div style="margin-top:var(--space-3);">
+                <p style="font-size:var(--text-xs);color:var(--text-secondary);margin-bottom:var(--space-2);">
+                    El archivo habitual continúa funcionando para rutas de un solo tramo. Para varios tramos agrega <code>codigo_tramo</code>, <code>secuencia</code> y los tipos y códigos de sus extremos. Las secuencias empiezan en 1 y deben ser consecutivas.
+                </p>
+                <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
+                    <span class="badge badge--accent">codigo_tramo</span>
+                    <span class="badge badge--accent">secuencia</span>
+                    <span class="badge badge--accent">origen_tipo</span>
+                    <span class="badge badge--accent">origen_codigo</span>
+                    <span class="badge badge--accent">destino_tipo</span>
+                    <span class="badge badge--accent">destino_codigo</span>
+                </div>
+                <a href="/static/ejemplos/inventario_tramos_ejemplo.csv" download class="btn btn--sm btn--secondary">Descargar plantilla opcional para varios tramos</a>
+            </div>
+        </details>
     </div>
     {% elif tipo_csv == 'asociar_puertos' %}
     <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
@@ -150,7 +173,7 @@
             <span class="badge badge--accent">Origen</span> <span class="badge badge--accent">Empalme</span>
             <span class="badge badge--accent">Patch</span> <span class="badge badge--accent">Destino</span>
         </div>
-        
+
         <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo</h5>
         <div style="overflow-x: auto; margin-top: 8px;">
             <table style="width:100%;border-collapse:collapse;font-size:12px;background:var(--bg-surface);min-width: 800px;">
@@ -185,10 +208,37 @@
                         <td style="padding:6px;text-align:center;">ODF TR01</td>
                         <td style="padding:6px;text-align:center;">No</td>
                         <td style="padding:6px;text-align:center;">No</td>
-                        <td style="padding:6px;text-align:center;">Libre</td>
+                        <td style="padding:6px;text-align:center;">-</td>
                     </tr>
                 </tbody>
             </table>
+        </div>
+        <details style="margin-top:var(--space-3);padding-top:var(--space-3);border-top:1px solid var(--border-color);">
+            <summary style="cursor:pointer;font-size:var(--text-sm);font-weight:600;color:var(--text-primary);">Opciones avanzadas para fibras en varios tramos</summary>
+            <div style="margin-top:var(--space-3);">
+                <p style="font-size:var(--text-xs);color:var(--text-secondary);margin-bottom:var(--space-2);">
+                    En rutas de un solo tramo no necesitas cambiar el archivo habitual. Para rutas con varios tramos agrega <code>Codigo Tramo</code>; usa <code>Codigo Fibra</code> cuando la fibra lógica cambie de posición física.
+                </p>
+                <a href="/static/ejemplos/fibras_por_tramo_ejemplo.csv" download class="btn btn--sm btn--secondary">Descargar plantilla opcional para varios tramos</a>
+            </div>
+        </details>
+    </div>
+    {% elif tipo_csv == 'terminaciones_fibra' %}
+    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Terminaciones de Fibra</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Una fila por hilo lógico. Ruta puede quedar vacía; completa al menos un extremo con ODF y puerto:</p>
+        <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
+            <span class="badge badge--info">Ruta (opcional)</span>
+            <span class="badge badge--accent">Fibra</span>
+            <span class="badge badge--accent">ODF Extremo A</span>
+            <span class="badge badge--accent">Puerto Extremo A</span>
+            <span class="badge badge--accent">ODF Extremo B</span>
+            <span class="badge badge--accent">Puerto Extremo B</span>
+            <span class="badge badge--info">Conector A/B (opcional)</span>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;">
+            <a href="{% url 'plantilla_terminaciones_fibra' %}" download class="btn btn--sm btn--secondary">Descargar plantilla precargada</a>
+            <a href="/static/ejemplos/terminaciones_fibra_ejemplo.csv" download class="btn btn--sm btn--secondary">Descargar CSV de ejemplo</a>
         </div>
     </div>
     {% elif tipo_csv == 'odf_inventario' %}
@@ -238,10 +288,10 @@
     {% elif tipo_csv == 'puertos_odf_inventario' %}
     <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
         <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Detalle de Puertos ODF (Archivo E)</h4>
-        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Sube el estado granular de cada puerto dentro de los ODFs. <strong>estado_puerto</strong> acepta Libre, Ocupado o Reservado. Columnas requeridas:</p>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Sube los datos físicos de cada puerto. <strong>estado_puerto</strong> acepta Libre o Reservado; Ocupado se determina al cargar una terminación oficial. Columnas requeridas:</p>
         <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
-            <span class="badge badge--accent">odf</span> <span class="badge badge--accent">bandeja</span>
-            <span class="badge badge--accent">puerto_odf</span> <span class="badge badge--accent">fibra</span>
+            <span class="badge badge--accent">hub_site</span> <span class="badge badge--accent">odf</span> <span class="badge badge--accent">bandeja</span>
+            <span class="badge badge--accent">puerto_odf</span>
             <span class="badge badge--accent">estado_puerto</span> <span class="badge badge--accent">tipo_conector</span>
             <span class="badge badge--accent">patchcord</span> <span class="badge badge--accent">destino</span>
             <span class="badge badge--accent">observaciones</span>
@@ -255,7 +305,6 @@
                         <th style="text-align:left;padding:6px;">odf</th>
                         <th style="padding:6px;">bandeja</th>
                         <th style="padding:6px;">puerto_odf</th>
-                        <th style="padding:6px;">fibra</th>
                         <th style="padding:6px;">estado_puerto</th>
                         <th style="padding:6px;">tipo_conector</th>
                         <th style="padding:6px;">patchcord</th>
@@ -268,11 +317,10 @@
                         <td style="padding:6px;">ODF TR01</td>
                         <td style="padding:6px;">B01</td>
                         <td style="padding:6px;text-align:center;">61</td>
-                        <td style="padding:6px;">F61</td>
-                        <td style="padding:6px;text-align:center;">Ocupado</td>
+                        <td style="padding:6px;text-align:center;">Libre</td>
                         <td style="padding:6px;text-align:center;">SC/APC</td>
                         <td style="padding:6px;text-align:center;">Sí</td>
-                        <td style="padding:6px;">LMLO123-F</td>
+                        <td style="padding:6px;">SW-CORE-01 / Gi1/0/24</td>
                         <td style="padding:6px;">Puerto operativo</td>
                     </tr>
                 </tbody>

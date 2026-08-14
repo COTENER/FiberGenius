@@ -14,6 +14,7 @@
     function badge(value) {
         const span = document.createElement('span'); const state = String(value || '').toLowerCase(); span.className = 'odf-status';
         if (state.includes('reserv') || state.includes('confirmar')) span.classList.add('is-warning');
+        if (state.includes('parcial') || state.startsWith('sin ')) span.classList.add('is-warning');
         if (state.includes('fuera') || state.includes('error')) span.classList.add('is-danger');
         if (!value) span.classList.add('is-neutral'); span.textContent = value || 'Sin estado'; return span;
     }
@@ -72,9 +73,11 @@
         if (donut) {
             const freePct = total ? (free / total) * 100 : 0;
             const usedPct = total ? (used / total) * 100 : 0;
+            const reservedPct = total ? (reserved / total) * 100 : 0;
             const usedEnd = freePct + usedPct;
+            const reservedEnd = usedEnd + reservedPct;
             donut.style.background = total
-                ? `conic-gradient(#18b777 0 ${freePct}%, #2f74ee ${freePct}% ${usedEnd}%, #f59e0b ${usedEnd}% 100%)`
+                ? `conic-gradient(#18b777 0 ${freePct}%, #2f74ee ${freePct}% ${usedEnd}%, #f59e0b ${usedEnd}% ${reservedEnd}%, #94a3b8 ${reservedEnd}% 100%)`
                 : 'conic-gradient(#e8edf5 0 100%)';
         }
         const ranking = document.getElementById('fiber-top-routes');
@@ -325,9 +328,9 @@
     }
 
     let fiberEditor;
-    function fiberRow(item) { const row = document.createElement('tr'); row.appendChild(cell(item.troncal)); row.appendChild(cell(item.numero)); const state = document.createElement('td'); state.appendChild(badge(item.estado)); row.appendChild(state); [item.servicio, item.origen, item.destino, item.conector].forEach((value) => row.appendChild(cell(value))); row.appendChild(actionCell(item, root.dataset.canEditFiber === 'true' ? openFiberEditor : null)); return selectableRow(row, item); }
+    function fiberRow(item) { const row = document.createElement('tr'); row.appendChild(cell(item.troncal)); row.appendChild(cell(item.numero)); const state = document.createElement('td'); const displayedState = item.estado === 'Libre' ? 'Disponible' : item.estado === 'Desconocido' ? 'Sin información' : item.estado; state.appendChild(badge(displayedState)); row.appendChild(state); const condition = { OPERATIVA: 'Operativa', CON_FALLA: 'Con falla', SIN_VERIFICAR: 'Sin verificar' }[item.condicion_fisica] || 'Sin verificar'; const conditionCell = document.createElement('td'); conditionCell.appendChild(badge(condition)); row.appendChild(conditionCell); const quality = document.createElement('td'); const qualityBadge = badge(item.completitud); const findings = item.calidad?.hallazgos || []; if (findings.length) { qualityBadge.textContent += ` · ${findings.length} obs.`; qualityBadge.title = findings.map((finding) => finding.mensaje).join('\n'); } if (item.calidad?.nivel === 'ERROR') qualityBadge.classList.add('is-danger'); else if (item.calidad?.nivel === 'ADVERTENCIA') qualityBadge.classList.add('is-warning'); quality.appendChild(qualityBadge); row.appendChild(quality); [item.servicio, item.site_inicial, item.site_final, item.origen, item.destino, item.conector].forEach((value) => row.appendChild(cell(value))); row.appendChild(actionCell(item, root.dataset.canEditFiber === 'true' ? openFiberEditor : null)); return selectableRow(row, item); }
     function reserveRow(item) { const row = document.createElement('tr'); [item.troncal, item.nombre, item.tipo, item.reserva_m === null ? '—' : `${formatter.format(item.reserva_m)} m`, item.tramo, item.latitud, item.longitud].forEach((value) => row.appendChild(cell(value))); const state = document.createElement('td'); state.appendChild(badge(item.estado)); row.appendChild(state); row.appendChild(actionCell(item)); return selectableRow(row, item); }
-    const fibers = new InventoryTable('fibras', { api: root.dataset.fibersApi, exportUrl: root.dataset.fibersExport, columns: 8, row: fiberRow, summary: (s) => { put('fibras-stat-total', s.total); put('fibras-stat-free', s.libres); put('fibras-stat-used', s.ocupadas); put('fibras-stat-reserved', s.reservadas); put('fibras-stat-routes', s.troncales); renderFiberSummary(s); } });
+    const fibers = new InventoryTable('fibras', { api: root.dataset.fibersApi, exportUrl: root.dataset.fibersExport, columns: 12, row: fiberRow, summary: (s) => { put('fibras-stat-total', s.total); put('fibras-stat-free', s.libres); put('fibras-stat-used', s.ocupadas); put('fibras-stat-reserved', s.reservadas); put('fibras-stat-routes', s.troncales); renderFiberSummary(s); } });
     const reserves = new InventoryTable('reservas', { api: root.dataset.reservesApi, exportUrl: root.dataset.reservesExport, columns: 9, row: reserveRow, summary: (s) => { put('reservas-stat-total', s.total); put('reservas-stat-meters', s.reserva_m); put('reservas-stat-types', s.tipos); put('reservas-stat-routes', s.troncales); put('reservas-stat-pending', s.por_confirmar); renderReserveSummary(s); } });
 
     function setupDialog(id, triggerId, createUrl, onReset) {
@@ -343,8 +346,8 @@
     setupDialog('reserve-editor', 'reserve-new', root.dataset.createReserve);
     function openFiberEditor(item) {
         if (!fiberEditor) return; const form = fiberEditor.form; form.reset(); fiberEditor.message.textContent = ''; document.getElementById('fiber-editor-title').textContent = 'Editar fibra';
-        const values = { id: item.id, ruta_nombre: item.troncal, fibra_numero: item.numero, estado: item.estado, nombre_fibra: item.servicio === '—' ? '' : item.servicio, origen_odf: item.origen === '—' ? '' : item.origen, destino: item.destino === '—' ? '' : item.destino, tipo_conector: item.conector === '—' ? '' : item.conector };
-        Object.entries(values).forEach(([key, value]) => { if (form.elements[key]) form.elements[key].value = value; }); form.elements.ruta_nombre.disabled = true; fiberEditor.dialog.showModal();
+        const values = { id: item.id, ruta_nombre: item.troncal_pendiente ? '' : item.troncal, fibra_numero: item.numero, estado: item.estado, condicion_fisica: item.condicion_fisica || 'SIN_VERIFICAR', nombre_fibra: item.servicio === '—' ? '' : item.servicio, tipo_conector: item.conector === '—' ? '' : item.conector, observaciones: item.observaciones || '' };
+        Object.entries(values).forEach(([key, value]) => { if (form.elements[key]) form.elements[key].value = value; }); form.elements.ruta_nombre.disabled = !item.troncal_pendiente; fiberEditor.dialog.showModal();
     }
 
     const tables = { fibras: fibers, reservas: reserves }; const tabs = [...root.querySelectorAll('[role="tab"]')];

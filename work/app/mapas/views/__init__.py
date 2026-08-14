@@ -41,8 +41,15 @@ from .usuarios import (
 from .importacion import (
     configuracion,
     cargar_csv,
+    descargar_plantilla_terminaciones_fibra,
     eliminar_ruta_config,
 )
+from .importacion_operaciones_puertos import (
+    descargar_plantilla_operaciones_puertos,
+    descargar_resultado_operaciones_puertos,
+    importar_operaciones_puertos,
+)
+from .auditoria_puertos import api_historial_puertos
 
 # APIs ONMSI
 from .api import (
@@ -72,6 +79,7 @@ from .inventario import (
     get_odfs,
     get_detalle_puertos,
     update_detalle_puerto,
+    gestionar_conexion_puerto,
     vaciar_inventario_odf,
     create_ruta_manual,
     update_ruta_manual,

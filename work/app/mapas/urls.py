@@ -33,6 +33,11 @@ urlpatterns = [
     path('api/inventario/odfs/puertos/create/', views.create_puerto_manual, name='api_create_puerto'),
     path('api/inventario/odfs/puertos/import/', views.import_puertos_archivo, name='api_import_puertos'),
     path('api/inventario/odfs/puertos/update/', views.update_detalle_puerto, name='api_update_puerto'),
+    path('api/inventario/odfs/puertos/gestionar/', views.gestionar_conexion_puerto, name='api_gestionar_conexion_puerto'),
+    path('api/inventario/odfs/puertos/operaciones/importar/', views.importar_operaciones_puertos, name='api_importar_operaciones_puertos'),
+    path('api/inventario/odfs/puertos/operaciones/plantilla/', views.descargar_plantilla_operaciones_puertos, name='plantilla_operaciones_puertos'),
+    path('api/inventario/odfs/puertos/operaciones/resultado/<uuid:codigo>/', views.descargar_resultado_operaciones_puertos, name='resultado_operaciones_puertos'),
+    path('api/inventario/odfs/puertos/historial/', views.api_historial_puertos, name='api_historial_puertos'),
     path('api/inventario/odfs/puertos/<str:odf_nombre>/', views.get_detalle_puertos, name='api_detalle_puertos'),
     path('api/inventario/puertos-odf-mapa/', views.get_puertos_odf_api, name='api_puertos_odf_mapa'),
     path('api/inventario/rutas/create/', views.create_ruta_manual, name='api_create_ruta'),
@@ -60,6 +65,11 @@ urlpatterns = [
     path('grupos/editar/<int:pk>/', views.editar_grupo, name='editar_grupo'),
     path('grupos/eliminar/<int:pk>/', views.eliminar_grupo, name='eliminar_grupo'),
     path('cargar-csv/<str:tipo_csv>/', views.cargar_csv, name='cargar_csv'),
+    path(
+        'Configuracion/plantillas/terminaciones-fibra/',
+        views.descargar_plantilla_terminaciones_fibra,
+        name='plantilla_terminaciones_fibra',
+    ),
     path('Configuracion/eliminar-ruta/', views.eliminar_ruta_config, name='eliminar_ruta_config'),
     path('mi-perfil/cambiar-password/', views.cambiar_mi_password, name='cambiar_mi_password'),
     

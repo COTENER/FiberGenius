@@ -19,8 +19,16 @@
     data-export-xlsx="{% url 'exportar_inventario' 'puertos' 'xlsx' %}"
     data-create-url="{% url 'api_create_puerto' %}"
     data-update-url="{% url 'api_update_puerto' %}"
+    data-manage-url="{% url 'api_gestionar_conexion_puerto' %}"
+    data-bulk-import-url="{% url 'api_importar_operaciones_puertos' %}"
+    data-bulk-template-url="{% url 'plantilla_operaciones_puertos' %}"
+    data-history-url="{% url 'api_historial_puertos' %}"
+    data-fibers-url="{% url 'api_fibras_paginadas' %}"
     data-can-add="{% if perms.mapas.add_detallepuertoodf %}true{% else %}false{% endif %}"
     data-can-edit="{% if perms.mapas.change_detallepuertoodf %}true{% else %}false{% endif %}"
+    data-can-connect="{% if perms.mapas.add_terminacionfibra or perms.mapas.change_terminacionfibra %}true{% else %}false{% endif %}"
+    data-can-disconnect="{% if perms.mapas.delete_terminacionfibra %}true{% else %}false{% endif %}"
+    data-can-view-history="{% if perms.mapas.view_auditoriapuertoodf %}true{% else %}false{% endif %}"
 >
     <header class="ports-heading">
         <div>
@@ -28,12 +36,11 @@
             <h1>Puertos ODF</h1>
             <p>Gestión operativa de conexiones, disponibilidad y destino por puerto.</p>
         </div>
-        {% if perms.mapas.add_detallepuertoodf %}
-        <button id="ports-new" class="ports-primary-action" type="button">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
-            Nuevo puerto
-        </button>
-        {% endif %}
+        <div class="ports-heading__actions">
+            {% if perms.mapas.view_auditoriapuertoodf %}<button id="ports-history-open" class="ports-btn" type="button">Historial</button>{% endif %}
+            {% if perms.mapas.change_detallepuertoodf %}<button id="ports-bulk-open" class="ports-btn" type="button">Importar operaciones</button>{% endif %}
+            {% if perms.mapas.add_detallepuertoodf %}<button id="ports-new" class="ports-primary-action" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>Nuevo puerto</button>{% endif %}
+        </div>
     </header>
 
     <section class="ports-kpis" aria-label="Resumen de puertos ODF">
@@ -150,7 +157,7 @@
             <section class="port-dialog__section">
                 <div class="port-dialog__section-title"><span>2</span><div><h3>Conexión óptica</h3><p>Documenta la fibra, terminación y destino del enlace.</p></div></div>
                 <div class="port-dialog__grid">
-                    <label><span>Fibra óptica</span><input id="port-editor-fiber" maxlength="100" placeholder="Ej. F-000123"><small>Identificador de la fibra asociada.</small></label>
+                    <label><span>Fibra óptica</span><input id="port-editor-fiber" maxlength="100" placeholder="Sin fibra conectada" readonly><small>Proviene de la terminación oficial; se modifica desde Gestionar conexión.</small></label>
                     <label><span>Tipo de conector</span><input id="port-editor-connector" maxlength="100" placeholder="Ej. SC/APC"><small>Formato de terminación óptica.</small></label>
                     <label><span>Patchcord</span><input id="port-editor-patchcord" maxlength="10" placeholder="Sí / No"><small>Indica si existe conexión mediante patchcord.</small></label>
                     <label><span>Destino</span><input id="port-editor-destination" maxlength="150" placeholder="Ej. ODF-002 / Equipo"><small>Extremo o servicio conectado.</small></label>
@@ -161,10 +168,77 @@
             <footer><p>Los campos marcados con * son obligatorios.</p><div><button id="port-editor-cancel" class="ports-btn" type="button">Cancelar</button><button id="port-editor-submit" class="ports-btn ports-btn--primary" type="submit">Crear puerto</button></div></footer>
         </form>
     </dialog>
+
+    <dialog id="port-management" class="port-dialog">
+        <form id="port-management-form" method="dialog">
+            {% csrf_token %}
+            <input id="port-management-id" type="hidden">
+            <header><div><span>Gestión ODF</span><h2 id="port-management-title">Gestionar puerto</h2><p id="port-management-mode"></p></div><button id="port-management-close" type="button" aria-label="Cerrar">×</button></header>
+            <div id="port-management-current" class="port-dialog__intro"></div>
+            <section id="port-connect-section" class="port-dialog__section" hidden>
+                <div class="port-dialog__section-title"><span>1</span><div><h3>Conectar fibra o hilo</h3><p>Selecciona una fibra existente o registra el hilo aunque su troncal todavía sea desconocida.</p></div></div>
+                <div class="port-dialog__grid">
+                    <label><span>Ruta / Troncal</span><select id="port-management-route"><option value="">Seleccionar ruta</option><option value="__PENDIENTE__">Troncal pendiente</option>{% for ruta in rutas_puertos %}<option value="{{ ruta.nombre }}">{{ ruta.nombre }}</option>{% endfor %}</select><small>Puede quedar pendiente y asociarse posteriormente.</small></label>
+                    <label><span>Fibra *</span><select id="port-management-fiber" disabled><option value="">Primero seleccione una ruta</option></select></label>
+                    <label id="port-management-new-fiber-field" hidden><span>N.º de hilo *</span><input id="port-management-new-fiber" maxlength="50" placeholder="F2"><small>Se creará como hilo con troncal pendiente.</small></label>
+                    <label><span>Extremo *</span><select id="port-management-end"><option value="A">Extremo A</option><option value="B">Extremo B</option></select><small>A/B identifica cada terminación técnica y no define la orientación geográfica.</small></label>
+                </div>
+                <button id="port-management-connect" class="ports-btn ports-btn--primary" type="button">Conectar fibra</button>
+            </section>
+            <section id="port-disconnect-section" class="port-dialog__section" hidden>
+                <div class="port-dialog__section-title"><span>1</span><div><h3>Desconectar y liberar</h3><p>Se eliminará la terminación oficial y el puerto quedará Libre. Antes de aplicar el cambio podrá decidir si también informa el estado global de la fibra como Disponible.</p></div></div>
+                <button id="port-management-disconnect" class="ports-btn ports-btn--primary" type="button">Desconectar fibra</button>
+            </section>
+            <section id="port-reservation-section" class="port-dialog__section" hidden>
+                <div class="port-dialog__section-title"><span>2</span><div><h3>Reserva</h3><p id="port-reservation-help"></p></div></div>
+                <button id="port-management-reserve" class="ports-btn" type="button">Reservar puerto</button>
+                <button id="port-management-cancel-reserve" class="ports-btn" type="button">Cancelar reserva</button>
+            </section>
+            <p id="port-management-message" class="port-dialog__message" role="status"></p>
+            <footer><p>Los cambios se aplican como una sola operación.</p><div><button id="port-management-cancel" class="ports-btn" type="button">Cerrar</button></div></footer>
+        </form>
+    </dialog>
+    {% endif %}
+
+    {% if perms.mapas.view_auditoriapuertoodf %}
+    <dialog id="ports-history" class="port-dialog port-dialog--wide">
+        <div class="ports-history-dialog">
+            <header><div><span>Auditoría operativa</span><h2 id="ports-history-title">Historial de puertos ODF</h2><p id="ports-history-summary">Cambios registrados por los servicios oficiales.</p></div><button id="ports-history-close" type="button" aria-label="Cerrar">×</button></header>
+            <section class="port-dialog__section">
+                <div class="ports-bulk-preview ports-history-preview"><table><thead><tr><th>Fecha</th><th>Usuario</th><th>Origen</th><th>Acción</th><th>Fibra</th><th>Puerto anterior</th><th>Puerto nuevo</th><th>Estado</th></tr></thead><tbody id="ports-history-body"><tr><td colspan="8">Cargando historial…</td></tr></tbody></table></div>
+            </section>
+            <p id="ports-history-message" class="port-dialog__message" role="status"></p>
+            <footer><p>Los eventos son de solo lectura y no pueden modificarse desde la aplicación.</p><div><button id="ports-history-dismiss" class="ports-btn" type="button">Cerrar</button></div></footer>
+        </div>
+    </dialog>
+    {% endif %}
+
+    {% if perms.mapas.change_detallepuertoodf %}
+    <dialog id="ports-bulk-import" class="port-dialog port-dialog--wide">
+        <form id="ports-bulk-form" method="dialog">
+            {% csrf_token %}
+            <header><div><span>Actualización masiva</span><h2>Operaciones de puertos por Excel</h2><p>Valida el archivo antes de aplicar cualquier cambio.</p></div><button id="ports-bulk-close" type="button" aria-label="Cerrar">×</button></header>
+            <div class="port-dialog__intro"><div><strong>Mismas reglas que la GUI</strong><p>La validación simula Conectar, Desconectar, Reservar y Cancelar reserva. Si una fila falla, no se guarda ninguna operación.</p></div></div>
+            <section class="port-dialog__section">
+                <div class="port-dialog__section-title"><span>1</span><div><h3>Seleccionar archivo</h3><p>Use la plantilla oficial y mantenga la hoja Operaciones.</p></div></div>
+                <div class="ports-bulk-file-row">
+                    <input id="ports-bulk-file" type="file" accept=".xlsx" required>
+                    <a class="ports-btn" href="{% url 'plantilla_operaciones_puertos' %}" download>Descargar plantilla</a>
+                    <button id="ports-bulk-validate" class="ports-btn ports-btn--primary" type="button">Validar archivo</button>
+                </div>
+            </section>
+            <section class="port-dialog__section">
+                <div class="port-dialog__section-title"><span>2</span><div><h3>Resultado por fila</h3><p id="ports-bulk-summary">Seleccione y valide un archivo.</p></div></div>
+                <div class="ports-bulk-preview"><table><thead><tr><th>Fila</th><th>Resultado</th><th>Acción</th><th>Site / ODF / Puerto</th><th>Fibra</th><th>Mensaje</th></tr></thead><tbody id="ports-bulk-body"><tr><td colspan="6">Sin resultados.</td></tr></tbody></table></div>
+            </section>
+            <p id="ports-bulk-message" class="port-dialog__message" role="status"></p>
+            <footer><p>Aplicación atómica y auditada por lote.</p><div><a id="ports-bulk-report" class="ports-btn" href="#" hidden>Descargar resultado</a><button id="ports-bulk-cancel" class="ports-btn" type="button">Cerrar</button><button id="ports-bulk-apply" class="ports-btn ports-btn--primary" type="button" disabled>Aplicar archivo</button></div></footer>
+        </form>
+    </dialog>
     {% endif %}
 </div>
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/planta-interna-paginada.js' %}?v=20260727-unified-inspector-1"></script>
+<script src="{% static 'js/planta-interna-paginada.js' %}?v=20260812-audit-ports-1"></script>
 {% endblock %}

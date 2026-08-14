@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from urllib.parse import urlencode
 
 from django.conf import settings
@@ -12,12 +13,34 @@ from django.views.decorators.gzip import gzip_page
 from django.db import IntegrityError, transaction
 from django.urls import reverse
 from ..models import (
-    Ruta, CoordenadaRuta, InventarioTramo, normalizar_estado_puerto_odf,
+    Ruta, CoordenadaRuta, InventarioTramo, TerminacionFibra, normalizar_estado_puerto_odf,
     normalizar_estado_puerto_odf_con_destino,
+)
+from ..services.trazabilidad import (
+    obtener_presentacion_orientada_fibra,
+    obtener_trazabilidad_fibra,
+)
+from ..services.puertos import (
+    MovimientoRequiereConfirmacion,
+    cancelar_reserva_puerto,
+    conectar_puerto,
+    desconectar_puerto,
+    reservar_puerto,
 )
 
 logger = logging.getLogger('mapas')
 ERRORES_DATOS_ENTRADA = (json.JSONDecodeError, TypeError, ValueError, ValidationError)
+
+
+def _clave_orden_natural(valor):
+    """Ordena identificadores alfanuméricos respetando sus bloques numéricos."""
+    texto = str(valor or '').strip()
+    bloques = tuple(
+        (0, int(parte)) if parte.isdigit() else (1, parte.casefold())
+        for parte in re.split(r'(\d+)', texto)
+        if parte
+    )
+    return bloques, texto.casefold()
 
 
 def _archivo_dentro_del_limite(archivo):
@@ -751,196 +774,387 @@ def get_detalle_fibras(request, ruta_nombre):
         elif tramo.origen and tramo.origen.strip() and tramo.origen != "N/A":
             origen_ruta = tramo.origen
     
-    fibras = InventarioFibra.objects.filter(ruta__nombre=ruta_nombre).values(
-        'id', 'fibra_numero', 'estado', 'nombre_fibra', 
-        'destino', 'tipo_conector'
+    fibras = list(
+        InventarioFibra.objects.filter(ruta__nombre=ruta_nombre)
+        .select_related('ruta')
+        .prefetch_related(
+            'asignaciones_tramo__tramo',
+            'terminaciones__puerto_odf__odf_obj__rack_obj__sala__hub_site',
+            'ruta__tramos_inventario__origen_nodo__hub_site_obj',
+            'ruta__tramos_inventario__destino_nodo__hub_site_obj',
+        )
+        .order_by('fibra_numero')
     )
+    fibras.sort(key=lambda fibra: _clave_orden_natural(fibra.fibra_numero))
     
     data = []
     for f in fibras:
+        asignaciones = list(f.asignaciones_tramo.all())
+        presentacion = obtener_presentacion_orientada_fibra(f)
+        origen = presentacion['origen']
+        destino = presentacion['destino']
+        etiqueta = lambda item: (
+            f"{item['odf']} / Puerto {item['puerto']}"
+            if item else 'Pendiente de orientación'
+        )
         data.append({
-            'id': f['id'],
-            'fibra_numero': f['fibra_numero'],
-            'estado': f['estado'],
-            'nombre_fibra': f['nombre_fibra'],
-            'origen_odf': origen_ruta,
-            'destino': f['destino'],
-            'tipo_conector': f['tipo_conector']
+            'id': f.id,
+            'fibra_numero': f.fibra_numero,
+            'estado': f.estado,
+            'origen_estado': f.origen_estado,
+            'condicion_fisica': f.condicion_fisica,
+            'nombre_fibra': f.nombre_fibra,
+            'observaciones': f.observaciones,
+            'origen_odf': etiqueta(origen),
+            'destino': etiqueta(destino),
+            'site_inicial': presentacion['site_origen'],
+            'site_final': presentacion['site_destino'],
+            'terminacion_a': presentacion['terminacion_a'],
+            'terminacion_b': presentacion['terminacion_b'],
+            'orientacion': presentacion,
+            'trazabilidad': obtener_trazabilidad_fibra(f),
+            'tipo_conector': f.tipo_conector,
+            'tramo_ids': [asignacion.tramo_id for asignacion in asignaciones],
+            'codigos_tramo': [
+                asignacion.tramo.codigo_tramo
+                or f'TRAMO-{asignacion.tramo.tramo_secuencia:03d}'
+                for asignacion in asignaciones
+            ],
+            'tramos': [
+                {
+                    'id': asignacion.tramo_id,
+                    'codigo': (
+                        asignacion.tramo.codigo_tramo
+                        or f'TRAMO-{asignacion.tramo.tramo_secuencia:03d}'
+                    ),
+                    'numero_hilo': asignacion.numero_hilo,
+                    'estado': asignacion.estado,
+                }
+                for asignacion in asignaciones
+            ],
         })
         
     return JsonResponse({"status": "success", "data": data})
+
+
+def _lista_seleccion_fibra(valor, nombre):
+    if isinstance(valor, str):
+        valor = [item.strip() for item in valor.split(',') if item.strip()]
+    if not isinstance(valor, (list, tuple)):
+        raise ValidationError(f"{nombre} debe ser una lista.")
+    if not valor:
+        raise ValidationError("Selecciona al menos un tramo técnico.")
+    return list(valor)
+
+
+def _seleccionar_tramos_fibra(data, tramos):
+    usa_ids = 'tramo_ids' in data and data.get('tramo_ids') is not None
+    usa_codigos = (
+        'codigos_tramo' in data
+        and data.get('codigos_tramo') is not None
+    )
+    if usa_ids and usa_codigos:
+        raise ValidationError(
+            "Envía tramo_ids o codigos_tramo, pero no ambos."
+        )
+    if not usa_ids and not usa_codigos:
+        return tramos
+
+    if usa_ids:
+        valores = _lista_seleccion_fibra(data.get('tramo_ids'), 'tramo_ids')
+        try:
+            solicitados = {int(valor) for valor in valores}
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                "Todos los tramo_ids deben ser números enteros."
+            ) from exc
+        if any(valor < 1 for valor in solicitados):
+            raise ValidationError("Los tramo_ids deben ser mayores que cero.")
+        encontrados = {tramo.pk for tramo in tramos}
+        faltantes = solicitados - encontrados
+        if faltantes:
+            raise ValidationError(
+                "Hay tramos que no pertenecen a la troncal seleccionada: "
+                + ", ".join(str(valor) for valor in sorted(faltantes))
+            )
+        return [tramo for tramo in tramos if tramo.pk in solicitados]
+
+    valores = _lista_seleccion_fibra(
+        data.get('codigos_tramo'),
+        'codigos_tramo',
+    )
+    solicitados = {
+        str(valor or '').strip().upper()
+        for valor in valores
+        if str(valor or '').strip()
+    }
+    if not solicitados:
+        raise ValidationError("Selecciona al menos un tramo técnico.")
+    disponibles = {
+        (
+            tramo.codigo_tramo
+            or f'TRAMO-{tramo.tramo_secuencia:03d}'
+        ).strip().upper(): tramo
+        for tramo in tramos
+    }
+    faltantes = solicitados - set(disponibles)
+    if faltantes:
+        raise ValidationError(
+            "No existen estos códigos de tramo en la troncal: "
+            + ", ".join(sorted(faltantes))
+        )
+    return [
+        tramo
+        for tramo in tramos
+        if (
+            tramo.codigo_tramo
+            or f'TRAMO-{tramo.tramo_secuencia:03d}'
+        ).strip().upper() in solicitados
+    ]
+
 
 @login_required
 @permission_required('mapas.add_inventariofibra', raise_exception=True)
 @require_POST
 @transaction.atomic
 def create_detalle_fibra(request):
-    """Crea un hilo/fibra manualmente para una ruta específica."""
+    """Crea una fibra; la troncal puede quedar pendiente."""
     import json
-    if request.method == 'POST':
-        try:
-            data = json.loads(request.body)
-            from ..models import InventarioFibra, Ruta
-            
-            ruta_nombre = data.get('ruta_nombre', '').strip()
-            fibra_numero = str(data.get('fibra_numero', '')).strip()
-            
-            if not ruta_nombre or not fibra_numero:
-                return JsonResponse({"status": "error", "message": "Faltan datos obligatorios"}, status=400)
-                
-            # Bloquea la troncal durante la validación y la inserción. Así dos
-            # operadores no consumen simultáneamente el último hilo disponible.
-            ruta = Ruta.objects.select_for_update().filter(nombre=ruta_nombre).first()
-            if not ruta:
-                return JsonResponse({"status": "error", "message": "Ruta no encontrada"}, status=404)
-                
-            # Validar si ya existe
-            if InventarioFibra.objects.filter(ruta=ruta, fibra_numero=fibra_numero).exists():
-                return JsonResponse({"status": "error", "message": f"La fibra/hilo '{fibra_numero}' ya existe para esta ruta."}, status=400)
-            
-            # Validar capacidad de hilos
-            import re
-            from ..models import InventarioTramo
-            tramo = InventarioTramo.objects.filter(ruta=ruta).order_by('tramo_secuencia').first()
-            if tramo and tramo.capacidad:
-                match = re.search(r'\d+', tramo.capacidad)
-                if match:
-                    capacidad_max = int(match.group())
-                    if capacidad_max > 0:
-                        actual_hilos = InventarioFibra.objects.filter(ruta=ruta).count()
-                        if actual_hilos >= capacidad_max:
-                            return JsonResponse({"status": "error", "message": f"Límite excedido. La ruta tiene una capacidad máxima de {capacidad_max} hilos."}, status=400)
-            
-            nuevo_estado = str(data.get('estado', 'Libre')).strip()
-            
-            InventarioFibra.objects.create(
-                ruta=ruta,
-                fibra_numero=fibra_numero,
-                estado=nuevo_estado,
-                nombre_fibra=str(data.get('nombre_fibra', '')).strip(),
-                origen_odf=str(data.get('origen_odf', '')).strip(),
-                destino=str(data.get('destino', '')).strip(),
-                tipo_conector=str(data.get('tipo_conector', '')).strip()
-            )
-            return JsonResponse({"status": "success", "message": "Hilo creado correctamente"})
-        except ValidationError as exc:
-            return JsonResponse({"status": "error", "message": "; ".join(exc.messages)}, status=400)
-        except IntegrityError:
+    try:
+        data = json.loads(request.body)
+        from ..models import InventarioFibra
+        from ..services.fibras import (
+            asignar_fibra_a_tramos,
+            asignar_ruta_fibra,
+            establecer_estado_fibra_informado,
+            normalizar_condicion_fisica,
+            normalizar_estado_fibra,
+            normalizar_numero_hilo,
+        )
+
+        ruta_nombre = str(data.get('ruta_nombre', '')).strip()
+        fibra_numero, _ = normalizar_numero_hilo(data.get('fibra_numero'))
+        ruta = None
+        if ruta_nombre:
+            ruta = Ruta.objects.select_for_update().filter(
+                nombre__iexact=ruta_nombre
+            ).first()
+        if ruta_nombre and not ruta:
             return JsonResponse(
-                {"status": "error", "message": "La fibra ya existe o entra en conflicto con otro registro."},
+                {"status": "error", "message": "Ruta no encontrada"},
+                status=404,
+            )
+        if ruta and InventarioFibra.objects.filter(
+            ruta=ruta,
+            fibra_numero__iexact=fibra_numero,
+        ).exists():
+            return JsonResponse(
+                {
+                    "status": "error",
+                    "message": (
+                        f"La fibra lógica '{fibra_numero}' ya existe para "
+                        "esta ruta."
+                    ),
+                },
                 status=409,
             )
-        except Exception:
-            logger.exception("Error inesperado al crear una fibra de inventario")
-            return JsonResponse(
-                {"status": "error", "message": "No se pudo crear la fibra. Revisa los datos e intenta nuevamente."},
-                status=500,
+
+        estado = normalizar_estado_fibra(data.get('estado', 'Desconocido'))
+        condicion = normalizar_condicion_fisica(
+            data.get('condicion_fisica', 'SIN_VERIFICAR')
+        )
+        fibra = InventarioFibra.objects.create(
+            ruta=None,
+            fibra_numero=fibra_numero,
+            estado='Desconocido',
+            origen_estado='NO_INFORMADO',
+            condicion_fisica=condicion,
+            nombre_fibra=str(data.get('nombre_fibra', '')).strip(),
+            origen_odf=str(data.get('origen_odf', '')).strip(),
+            destino=str(data.get('destino', '')).strip(),
+            tipo_conector=str(data.get('tipo_conector', '')).strip(),
+            observaciones=str(data.get('observaciones', '')).strip(),
+        )
+        if estado != 'Desconocido':
+            establecer_estado_fibra_informado(
+                fibra=fibra,
+                estado=estado,
+                usuario=request.user,
+                origen='GUI',
             )
-    return JsonResponse({"status": "error", "message": "Método no permitido"}, status=405)
+        advertencia = ''
+        if ruta:
+            fibra, _, advertencia = asignar_ruta_fibra(
+                fibra=fibra,
+                ruta=ruta,
+                usuario=request.user,
+                origen='GUI',
+            )
+            seleccion_explicita = (
+                ('tramo_ids' in data and data.get('tramo_ids') is not None)
+                or (
+                    'codigos_tramo' in data
+                    and data.get('codigos_tramo') is not None
+                )
+            )
+            if seleccion_explicita:
+                tramos_ruta = list(
+                    InventarioTramo.objects.select_for_update()
+                    .filter(ruta=ruta)
+                    .order_by('tramo_secuencia', 'pk')
+                )
+                tramos_seleccionados = _seleccionar_tramos_fibra(
+                    data,
+                    tramos_ruta,
+                )
+                asignar_fibra_a_tramos(
+                    fibra=fibra,
+                    tramos=tramos_seleccionados,
+                    numero_hilo=fibra_numero,
+                    estado=estado,
+                    observaciones=(
+                        'Asignación física informada explícitamente desde la GUI.'
+                    ),
+                )
+        mensaje = (
+            f"Hilo creado en {ruta.nombre}." if ruta
+            else "Hilo creado con troncal pendiente."
+        )
+        if advertencia:
+            mensaje += f" Ruta asignada; detalle de tramo pendiente: {advertencia}"
+        return JsonResponse({
+            "status": "success",
+            "message": mensaje,
+        })
+    except ValidationError as exc:
+        transaction.set_rollback(True)
+        return JsonResponse(
+            {"status": "error", "message": "; ".join(exc.messages)},
+            status=400,
+        )
+    except IntegrityError:
+        transaction.set_rollback(True)
+        return JsonResponse(
+            {
+                "status": "error",
+                "message": (
+                    "La fibra o su posición física ya existe en uno de los "
+                    "tramos seleccionados."
+                ),
+            },
+            status=409,
+        )
+    except Exception:
+        transaction.set_rollback(True)
+        logger.exception("Error inesperado al crear una fibra de inventario")
+        return JsonResponse(
+            {
+                "status": "error",
+                "message": (
+                    "No se pudo crear la fibra. Revisa los datos e intenta "
+                    "nuevamente."
+                ),
+            },
+            status=500,
+        )
 
 @login_required
 @permission_required('mapas.add_inventariofibra', raise_exception=True)
+@permission_required('mapas.change_inventariofibra', raise_exception=True)
 @require_POST
 @transaction.atomic
 def import_fibras_csv(request):
-    """Importa hilos/fibras desde un CSV para una ruta específica, actualizando o agregando."""
-    if request.method == 'POST':
-        try:
-            import pandas as pd
-            import io
-            from ..models import InventarioFibra, Ruta
-            
-            csv_file = request.FILES.get('csv_fibras')
-            ruta_nombre = request.POST.get('ruta_nombre', '').strip()
-            
-            if not csv_file or not ruta_nombre:
-                return JsonResponse({"status": "error", "message": "Archivo o ruta faltante."}, status=400)
-            if not _archivo_dentro_del_limite(csv_file):
-                return JsonResponse(
-                    {'status': 'error', 'message': _mensaje_limite_archivo()},
-                    status=413,
-                )
-                
-            # Serializa las importaciones por troncal sin modificar las
-            # columnas ni el formato del archivo recibido.
-            ruta = Ruta.objects.select_for_update().filter(nombre=ruta_nombre).first()
-            if not ruta:
-                return JsonResponse({"status": "error", "message": "Ruta no encontrada."}, status=404)
-                
-            decoded_file = csv_file.read().decode('utf-8')
-            df = pd.read_csv(io.StringIO(decoded_file))
-            df.columns = [c.strip().lower() for c in df.columns]
-            
-            # Mapeo de nombres de columnas a la base de datos
-            # Expected columns in CSV: fibra_numero, estado, nombre_fibra, origen_odf, destino, tipo_conector
-            col_map = {
-                'fibra_numero': ['hilo/fibra', 'fibra', 'hilo', 'fibra_numero'],
-                'estado': ['estado'],
-                'nombre_fibra': ['nombre/uso', 'nombre', 'uso', 'nombre_fibra'],
-                'origen_odf': ['origen_odf', 'origen odf', 'odf'],
-                'destino': ['destino'],
-                'tipo_conector': ['tipo_conector', 'conector', 'tipo conector']
-            }
-            
-            def get_val(row, field):
-                for possible_name in col_map[field]:
-                    if possible_name in df.columns:
-                        val = row[possible_name]
-                        return str(val).strip() if pd.notna(val) else ''
-                return ''
-                
-            # Necesitamos encontrar cuál es la columna que tiene el número de fibra
-            fibra_col = next((c for c in col_map['fibra_numero'] if c in df.columns), None)
-            
-            if not fibra_col:
-                return JsonResponse({"status": "error", "message": "El CSV debe contener una columna para el Hilo/Fibra (ej: 'hilo/fibra' o 'fibra')."}, status=400)
-                
-            # Validar capacidad de hilos
-            import re
-            from ..models import InventarioTramo
-            tramo = InventarioTramo.objects.filter(ruta=ruta).order_by('tramo_secuencia').first()
-            if tramo and tramo.capacidad:
-                match = re.search(r'\d+', tramo.capacidad)
-                if match:
-                    capacidad_max = int(match.group())
-                    if capacidad_max > 0:
-                        hilos_en_csv = set(str(row[fibra_col]).strip() for index, row in df.iterrows() if str(row[fibra_col]).strip() not in ['nan', 'None', ''])
-                        hilos_existentes = set(InventarioFibra.objects.filter(ruta=ruta).values_list('fibra_numero', flat=True))
-                        nuevos_hilos = hilos_en_csv - hilos_existentes
-                        if len(hilos_existentes) + len(nuevos_hilos) > capacidad_max:
-                            return JsonResponse({"status": "error", "message": f"Límite excedido. La ruta tiene capacidad para {capacidad_max} hilos, pero estás intentando registrar {len(hilos_existentes) + len(nuevos_hilos)} hilos totales."}, status=400)
-                
-            for _, row in df.iterrows():
-                fibra_num = str(row[fibra_col]).strip()
-                if not fibra_num or fibra_num.lower() == 'nan':
-                    continue
-                    
-                InventarioFibra.objects.update_or_create(
-                    ruta=ruta,
-                    fibra_numero=fibra_num,
-                    defaults={
-                        'estado': get_val(row, 'estado') or 'Libre',
-                        'nombre_fibra': get_val(row, 'nombre_fibra'),
-                        'origen_odf': get_val(row, 'origen_odf'),
-                        'destino': get_val(row, 'destino'),
-                        'tipo_conector': get_val(row, 'tipo_conector')
-                    }
-                )
-                
-            return JsonResponse({"status": "success", "message": "Hilos importados correctamente."})
-        except ERRORES_DATOS_ENTRADA:
-            logger.info("CSV de fibras inválido", exc_info=True)
+    """Importa detalle por tramo usando el mismo validador de la carga global."""
+    try:
+        import io
+        import pandas as pd
+        from .importacion import _procesar_fibras_inventario
+
+        csv_file = request.FILES.get('csv_fibras')
+        ruta_nombre = request.POST.get('ruta_nombre', '').strip()
+        if not csv_file or not ruta_nombre:
             return JsonResponse(
-                {"status": "error", "message": "El archivo CSV contiene datos inválidos."},
+                {"status": "error", "message": "Archivo o ruta faltante."},
                 status=400,
             )
-        except Exception:
-            logger.exception("Error inesperado al importar fibras")
+        if not _archivo_dentro_del_limite(csv_file):
             return JsonResponse(
-                {"status": "error", "message": "No se pudo procesar el archivo CSV."},
-                status=500,
+                {'status': 'error', 'message': _mensaje_limite_archivo()},
+                status=413,
             )
-    return JsonResponse({"status": "error", "message": "Método no permitido"}, status=405)
+        ruta = Ruta.objects.select_for_update().filter(
+            nombre__iexact=ruta_nombre
+        ).first()
+        if not ruta:
+            return JsonResponse(
+                {"status": "error", "message": "Ruta no encontrada."},
+                status=404,
+            )
+
+        df = pd.read_csv(io.StringIO(csv_file.read().decode('utf-8-sig')))
+        columnas_normalizadas = {
+            str(columna).strip().casefold(): columna for columna in df.columns
+        }
+        columna_ruta = next(
+            (
+                columnas_normalizadas[clave]
+                for clave in ('ruta', 'troncal')
+                if clave in columnas_normalizadas
+            ),
+            None,
+        )
+        if columna_ruta:
+            rutas_archivo = {
+                str(valor).strip().casefold()
+                for valor in df[columna_ruta]
+                if pd.notna(valor) and str(valor).strip()
+            }
+            if rutas_archivo and rutas_archivo != {ruta.nombre.casefold()}:
+                return JsonResponse(
+                    {
+                        "status": "error",
+                        "message": (
+                            "El archivo contiene una troncal distinta de la "
+                            "seleccionada."
+                        ),
+                    },
+                    status=400,
+                )
+            df[columna_ruta] = ruta.nombre
+        else:
+            df.insert(0, 'Ruta', ruta.nombre)
+
+        contenido = io.BytesIO(df.to_csv(index=False).encode('utf-8-sig'))
+        resultado = _procesar_fibras_inventario(contenido)
+        advertencias = resultado.get('advertencias') or []
+        mensaje = (
+            f"Procesadas {resultado.get('total', 0)} filas; "
+            f"{resultado.get('creadas', 0)} creadas y "
+            f"{resultado.get('actualizadas', 0)} actualizadas."
+        )
+        if advertencias:
+            mensaje += " " + " ".join(advertencias)
+        return JsonResponse({
+            "status": "success",
+            "message": mensaje,
+            "result": resultado,
+        })
+    except (UnicodeDecodeError, pd.errors.ParserError, ValidationError, ValueError) as exc:
+        logger.info("CSV de fibras inválido", exc_info=True)
+        mensaje = "; ".join(exc.messages) if isinstance(exc, ValidationError) else str(exc)
+        return JsonResponse(
+            {
+                "status": "error",
+                "message": mensaje or "El archivo CSV contiene datos inválidos.",
+            },
+            status=400,
+        )
+    except Exception:
+        logger.exception("Error inesperado al importar fibras")
+        return JsonResponse(
+            {"status": "error", "message": "No se pudo procesar el archivo CSV."},
+            status=500,
+        )
 
 @login_required
 @permission_required('mapas.change_inventariofibra', raise_exception=True)
@@ -949,53 +1163,165 @@ def import_fibras_csv(request):
 def update_detalle_fibra(request):
     """Actualiza los datos de un hilo/fibra específico."""
     import json
-    if request.method == 'POST':
-        try:
-            data = json.loads(request.body)
-            from ..models import InventarioFibra
-            
-            fibra_id = data.get('id')
-            if not fibra_id:
-                return JsonResponse({"status": "error", "message": "ID de fibra no proporcionado"}, status=400)
-            
-            # Limpiar datos entrantes
-            nuevo_estado = str(data.get('estado', '')).strip()
-            
-            fibra = InventarioFibra.objects.select_for_update().filter(id=fibra_id).first()
-            if not fibra:
-                return JsonResponse({"status": "error", "message": "No se encontró la fibra o no hubo cambios"}, status=400)
+    try:
+        data = json.loads(request.body)
+        from ..models import InventarioFibra
+        from ..services.fibras import (
+            asignar_ruta_fibra,
+            establecer_estado_fibra_informado,
+            normalizar_condicion_fisica,
+            normalizar_estado_fibra,
+            normalizar_numero_hilo,
+            restablecer_estado_fibra,
+        )
 
-            fibra.fibra_numero = str(data.get('fibra_numero', '')).strip()
-            fibra.estado = nuevo_estado
-            fibra.nombre_fibra = str(data.get('nombre_fibra', '')).strip()
-            fibra.origen_odf = str(data.get('origen_odf', '')).strip()
-            fibra.destino = str(data.get('destino', '')).strip()
-            fibra.tipo_conector = str(data.get('tipo_conector', '')).strip()
-            fibra.full_clean()
-            fibra.save()
+        fibra_id = data.get('id')
+        if not fibra_id:
+            return JsonResponse(
+                {"status": "error", "message": "ID de fibra no proporcionado"},
+                status=400,
+            )
 
-            if fibra.ruta_id:
-                from ..models import InventarioTramo
-                ocupados = InventarioFibra.objects.filter(ruta_id=fibra.ruta_id, estado__in=['Ocupada', 'Ocupado', 'Active', 'Activo']).count()
-                libres = InventarioFibra.objects.filter(ruta_id=fibra.ruta_id, estado='Libre').count()
-                tramos = InventarioTramo.objects.filter(
-                    ruta_id=fibra.ruta_id
-                ).order_by('tramo_secuencia')
-                primer_tramo = tramos.first()
-                tramos.update(hilos_ocupados=0, hilos_libres=0)
-                if primer_tramo:
-                    InventarioTramo.objects.filter(pk=primer_tramo.pk).update(
-                        hilos_ocupados=ocupados,
-                        hilos_libres=libres,
+        fibra = InventarioFibra.objects.select_for_update().filter(
+            id=fibra_id
+        ).select_related('ruta').first()
+        if not fibra:
+            return JsonResponse(
+                {"status": "error", "message": "No se encontró la fibra"},
+                status=404,
+            )
+
+        if 'fibra_numero' in data:
+            numero_logico, _ = normalizar_numero_hilo(data.get('fibra_numero'))
+        else:
+            numero_logico = fibra.fibra_numero
+        ruta_objetivo = None
+        if fibra.ruta_id is None:
+            ruta_nombre = str(data.get('ruta_nombre', '')).strip()
+            if ruta_nombre:
+                ruta_objetivo = Ruta.objects.select_for_update().filter(
+                    nombre__iexact=ruta_nombre
+                ).first()
+                if not ruta_objetivo:
+                    return JsonResponse(
+                        {"status": "error", "message": "Ruta no encontrada"},
+                        status=404,
                     )
-            
-            return JsonResponse({"status": "success", "message": "Fibra actualizada correctamente"})
-        except ERRORES_DATOS_ENTRADA:
-            return JsonResponse({"status": "error", "message": "Los datos de la fibra no son válidos."}, status=400)
-        except Exception:
-            logger.exception("Error inesperado al actualizar una fibra")
-            return JsonResponse({"status": "error", "message": "No se pudo actualizar la fibra."}, status=500)
-    return JsonResponse({"status": "error", "message": "Método no permitido"}, status=405)
+        ruta_para_unicidad = fibra.ruta or ruta_objetivo
+        if (
+            ruta_para_unicidad
+            and InventarioFibra.objects.filter(
+                ruta=ruta_para_unicidad,
+                fibra_numero__iexact=numero_logico,
+            ).exclude(pk=fibra.pk).exists()
+        ):
+            return JsonResponse(
+                {
+                    "status": "error",
+                    "message": (
+                        f"La fibra lógica {numero_logico} ya existe en "
+                        "esta troncal."
+                    ),
+                },
+                status=409,
+            )
+        campos_actualizados = []
+        if fibra.fibra_numero != numero_logico:
+            fibra.fibra_numero = numero_logico
+            campos_actualizados.append('fibra_numero')
+        campos_texto = {
+            'nombre_fibra': ('nombre_fibra', 'servicio'),
+            'origen_odf': ('origen_odf',),
+            'destino': ('destino',),
+            'tipo_conector': ('tipo_conector',),
+            'observaciones': ('observaciones',),
+        }
+        for campo_modelo, claves_payload in campos_texto.items():
+            clave_payload = next(
+                (clave for clave in claves_payload if clave in data),
+                None,
+            )
+            if clave_payload is None:
+                continue
+            valor = str(data.get(clave_payload) or '').strip()
+            if getattr(fibra, campo_modelo) != valor:
+                setattr(fibra, campo_modelo, valor)
+                campos_actualizados.append(campo_modelo)
+        if 'condicion_fisica' in data:
+            condicion_raw = str(data.get('condicion_fisica') or '').strip()
+            condicion = (
+                normalizar_condicion_fisica(condicion_raw)
+                if condicion_raw
+                else 'SIN_VERIFICAR'
+            )
+            if fibra.condicion_fisica != condicion:
+                fibra.condicion_fisica = condicion
+                campos_actualizados.append('condicion_fisica')
+        if campos_actualizados:
+            fibra.save(update_fields=campos_actualizados)
+
+        if 'estado' in data:
+            nuevo_estado = normalizar_estado_fibra(data.get('estado'))
+            if nuevo_estado == 'Desconocido':
+                restablecer_estado_fibra(
+                    fibra=fibra,
+                    usuario=request.user,
+                    origen='GUI',
+                )
+            else:
+                establecer_estado_fibra_informado(
+                    fibra=fibra,
+                    estado=nuevo_estado,
+                    usuario=request.user,
+                    origen='GUI',
+                )
+
+        advertencia = ''
+        ruta_asignada = False
+        if ruta_objetivo:
+            fibra, ruta_asignada, advertencia = asignar_ruta_fibra(
+                fibra=fibra,
+                ruta=ruta_objetivo,
+                usuario=request.user,
+                origen='GUI',
+            )
+
+        mensaje = (
+            "Fibra asociada a la troncal; sus terminaciones ODF se conservaron."
+            if ruta_asignada
+            else "Datos globales de la fibra actualizados."
+        )
+        if advertencia:
+            mensaje += f" Detalle de tramo pendiente: {advertencia}"
+        return JsonResponse({
+            "status": "success",
+            "message": mensaje,
+        })
+    except ValidationError as exc:
+        transaction.set_rollback(True)
+        return JsonResponse(
+            {"status": "error", "message": "; ".join(exc.messages)},
+            status=400,
+        )
+    except (TypeError, ValueError, json.JSONDecodeError):
+        transaction.set_rollback(True)
+        return JsonResponse(
+            {"status": "error", "message": "Los datos de la fibra no son válidos."},
+            status=400,
+        )
+    except IntegrityError:
+        transaction.set_rollback(True)
+        return JsonResponse(
+            {"status": "error", "message": "La fibra entra en conflicto con otro registro."},
+            status=409,
+        )
+    except Exception:
+        transaction.set_rollback(True)
+        logger.exception("Error inesperado al actualizar una fibra")
+        return JsonResponse(
+            {"status": "error", "message": "No se pudo actualizar la fibra."},
+            status=500,
+        )
 
 @login_required
 @permission_required('mapas.view_inventarioodf', raise_exception=True)
@@ -1013,10 +1339,19 @@ def get_odfs(request):
 @permission_required('mapas.view_detallepuertoodf', raise_exception=True)
 def get_detalle_puertos(request, odf_nombre):
     """Retorna el detalle de puertos para un ODF específico."""
-    from ..models import DetallePuertoODF
+    from django.db.models import Prefetch
+    from ..models import DetallePuertoODF, TerminacionFibra
     
     hub_site = request.GET.get('hub_site', '').strip()
-    query = DetallePuertoODF.objects.filter(odf_obj__odf__iexact=odf_nombre)
+    query = (
+        DetallePuertoODF.objects.select_related('odf_obj')
+        .prefetch_related(Prefetch(
+            'terminaciones_fibra',
+            queryset=TerminacionFibra.objects.select_related('fibra__ruta'),
+            to_attr='terminaciones_oficiales',
+        ))
+        .filter(odf_obj__odf__iexact=odf_nombre)
+    )
     if hub_site:
         query = query.filter(odf_obj__hub_site=hub_site)
         
@@ -1033,12 +1368,13 @@ def get_detalle_puertos(request, odf_nombre):
     
     data = []
     for p in puertos:
+        terminacion = next(iter(p.terminaciones_oficiales), None)
         data.append({
             'id': p.id,
-            'odf': p.odf,
+            'odf': p.odf_obj.odf,
             'bandeja': p.bandeja,
             'puerto_odf': p.puerto_odf,
-            'fibra': p.fibra,
+            'fibra': terminacion.fibra.fibra_numero if terminacion else '',
             'estado_puerto': p.estado_puerto,
             'tipo_conector': p.tipo_conector,
             'patchcord': p.patchcord,
@@ -1064,35 +1400,60 @@ def update_detalle_puerto(request):
             if not puerto_id:
                 return JsonResponse({"status": "error", "message": "ID de puerto no proporcionado"}, status=400)
             
-            # Limpiar datos entrantes
-            nuevo_estado = normalizar_estado_puerto_odf(
-                data.get('estado_puerto'), default=None
-            )
-            if not nuevo_estado:
-                return JsonResponse(
-                    {"status": "error", "message": "Estado de puerto no válido"},
-                    status=400,
-                )
-            nuevo_puerto = str(data.get('puerto_odf', '')).strip()
-            
             puerto_actualizado = DetallePuertoODF.objects.select_for_update().filter(id=puerto_id).first()
             if not puerto_actualizado:
                 return JsonResponse({"status": "error", "message": "No se encontró el puerto o no hubo cambios"}, status=400)
 
-            puerto_actualizado.bandeja = str(data.get('bandeja', '')).strip()
-            puerto_actualizado.puerto_odf = nuevo_puerto
-            puerto_actualizado.fibra = str(data.get('fibra', '')).strip()
-            puerto_actualizado.estado_puerto = nuevo_estado
-            puerto_actualizado.tipo_conector = str(data.get('tipo_conector', '')).strip()
-            puerto_actualizado.patchcord = str(data.get('patchcord', '')).strip()
-            puerto_actualizado.destino = str(data.get('destino', '')).strip()
-            puerto_actualizado.observaciones = str(data.get('observaciones', '')).strip()
-            puerto_actualizado.save()
-            puerto_actualizado.odf_obj.actualizar_contadores()
+            if 'estado_puerto' in data:
+                nuevo_estado = normalizar_estado_puerto_odf(
+                    data.get('estado_puerto'), default=None
+                )
+                if not nuevo_estado:
+                    return JsonResponse(
+                        {"status": "error", "message": "Estado de puerto no válido"},
+                        status=400,
+                    )
+                if nuevo_estado != puerto_actualizado.estado_puerto:
+                    return JsonResponse(
+                        {
+                            "status": "error",
+                            "message": (
+                                "El estado se cambia desde Gestionar conexión: "
+                                "conectar, desconectar, reservar o cancelar reserva."
+                            ),
+                        },
+                        status=409,
+                    )
+
+            campos_actualizados = []
+            campos_texto = {
+                'bandeja': ('bandeja',),
+                'puerto_odf': ('puerto_odf',),
+                'tipo_conector': ('tipo_conector', 'conector'),
+                'patchcord': ('patchcord',),
+                'destino': ('destino', 'destino_externo'),
+                'observaciones': ('observaciones',),
+            }
+            for campo_modelo, claves_payload in campos_texto.items():
+                clave = next(
+                    (item for item in claves_payload if item in data),
+                    None,
+                )
+                if clave is None:
+                    continue
+                valor = str(data.get(clave) or '').strip()
+                if getattr(puerto_actualizado, campo_modelo) != valor:
+                    setattr(puerto_actualizado, campo_modelo, valor)
+                    campos_actualizados.append(campo_modelo)
+            if campos_actualizados:
+                puerto_actualizado.save(update_fields=campos_actualizados)
             
             return JsonResponse({
                 "status": "success", 
-                "message": "Puerto actualizado correctamente"
+                "message": (
+                    "Puerto actualizado correctamente"
+                    if campos_actualizados else "No se solicitaron cambios en el puerto"
+                )
             })
         except ERRORES_DATOS_ENTRADA:
             return JsonResponse({"status": "error", "message": "Los datos del puerto no son válidos."}, status=400)
@@ -1100,6 +1461,136 @@ def update_detalle_puerto(request):
             logger.exception("Error inesperado al actualizar un puerto ODF")
             return JsonResponse({"status": "error", "message": "No se pudo actualizar el puerto."}, status=500)
     return JsonResponse({"status": "error", "message": "Método no permitido"}, status=405)
+
+@login_required
+@permission_required('mapas.change_detallepuertoodf', raise_exception=True)
+@require_POST
+def gestionar_conexion_puerto(request):
+    """Ejecuta las transiciones válidas del estado de un puerto ODF."""
+    try:
+        data = json.loads(request.body)
+        accion = str(data.get('accion', '')).strip().lower()
+        puerto_id = data.get('puerto_id')
+        if not puerto_id:
+            raise ValidationError('Seleccione un puerto ODF.')
+
+        if accion == 'conectar':
+            sincronizar_fibra = data.get('sincronizar_fibra') is True
+            fibra_id = data.get('fibra_id')
+            creando_provisional = not bool(fibra_id)
+            terminacion_existente = bool(
+                fibra_id
+                and TerminacionFibra.objects.filter(
+                    fibra_id=fibra_id,
+                    extremo=str(data.get('extremo', '')).strip().upper(),
+                ).exists()
+            )
+            permiso = (
+                'mapas.change_terminacionfibra'
+                if terminacion_existente
+                else 'mapas.add_terminacionfibra'
+            )
+            if not request.user.is_superuser and not request.user.has_perm(permiso):
+                raise PermissionDenied
+            if (
+                creando_provisional
+                and not request.user.is_superuser
+                and not request.user.has_perm('mapas.add_inventariofibra')
+            ):
+                raise PermissionDenied
+            if (
+                sincronizar_fibra
+                and not request.user.is_superuser
+                and not request.user.has_perm('mapas.change_inventariofibra')
+            ):
+                raise PermissionDenied
+            terminacion, creada = conectar_puerto(
+                puerto_id=puerto_id,
+                fibra_id=fibra_id,
+                fibra_numero=data.get('fibra_numero'),
+                extremo=data.get('extremo'),
+                permitir_mover=bool(data.get('permitir_mover')),
+                ocupar_fibra=sincronizar_fibra,
+                usuario=request.user,
+                origen='GUI',
+            )
+            verbo = 'conectado' if creada else 'movido'
+            return JsonResponse({
+                'status': 'success',
+                'fibra_sincronizada': sincronizar_fibra,
+                'message': (
+                    f'Extremo {terminacion.extremo} de '
+                    f'{terminacion.fibra.nombre_troncal} / '
+                    f'{terminacion.fibra.fibra_numero} {verbo} correctamente.'
+                ),
+                'fibra_provisional': terminacion.fibra.es_provisional,
+            })
+        if accion == 'desconectar':
+            sincronizar_fibra = (
+                data.get('sincronizar_fibra') is True
+                or data.get('liberar_fibra') is True
+            )
+            if (
+                not request.user.is_superuser
+                and not request.user.has_perm('mapas.delete_terminacionfibra')
+            ):
+                raise PermissionDenied
+            if (
+                sincronizar_fibra
+                and not request.user.is_superuser
+                and not request.user.has_perm('mapas.change_inventariofibra')
+            ):
+                raise PermissionDenied
+            fibra = desconectar_puerto(
+                puerto_id=puerto_id,
+                liberar_fibra=sincronizar_fibra,
+                usuario=request.user,
+                origen='GUI',
+            )
+            return JsonResponse({
+                'status': 'success',
+                'fibra_sincronizada': sincronizar_fibra,
+                'message': (
+                    f'{fibra.nombre_troncal} / {fibra.fibra_numero} '
+                    'fue desconectada.'
+                ),
+            })
+        if accion == 'reservar':
+            reservar_puerto(puerto_id=puerto_id, usuario=request.user, origen='GUI')
+            return JsonResponse({'status': 'success', 'message': 'Puerto reservado correctamente.'})
+        if accion == 'cancelar_reserva':
+            cancelar_reserva_puerto(
+                puerto_id=puerto_id,
+                usuario=request.user,
+                origen='GUI',
+            )
+            return JsonResponse({'status': 'success', 'message': 'Reserva cancelada; el puerto quedó libre.'})
+        raise ValidationError('La acción solicitada no es válida.')
+    except MovimientoRequiereConfirmacion as exc:
+        terminacion = exc.terminacion
+        return JsonResponse({
+            'status': 'confirmation_required',
+            'code': 'MOVER_TERMINACION',
+            'message': exc.message,
+            'current': {
+                'odf': terminacion.puerto_odf.odf_obj.odf,
+                'puerto': terminacion.puerto_odf.puerto_odf,
+            },
+        }, status=409)
+    except (json.JSONDecodeError, TypeError, ValueError, ValidationError) as exc:
+        mensaje = '; '.join(exc.messages) if isinstance(exc, ValidationError) else str(exc)
+        return JsonResponse({'status': 'error', 'message': mensaje}, status=400)
+    except IntegrityError:
+        return JsonResponse(
+            {'status': 'error', 'message': 'El puerto o el extremo fue utilizado por otra operación.'},
+            status=409,
+        )
+    except PermissionDenied:
+        raise
+    except Exception:
+        logger.exception('Error inesperado al gestionar la conexión del puerto ODF')
+        return JsonResponse({'status': 'error', 'message': 'No se pudo gestionar la conexión.'}, status=500)
+
 
 @login_required
 @permission_required('mapas.add_ruta', raise_exception=True)
@@ -1148,14 +1639,53 @@ def create_ruta_manual(request):
         capacidad_raw = data.get('capacidad', '').strip()
         if capacidad_raw.isdigit():
             capacidad_raw = f"{capacidad_raw} Hilos"
+        import re
+        capacidad_match = re.search(r'\d+(?:[.,]\d+)?', capacidad_raw)
+        capacidad_hilos = None
+        if capacidad_match:
+            capacidad_numero = float(
+                capacidad_match.group().replace(',', '.')
+            )
+            if capacidad_numero > 0 and capacidad_numero.is_integer():
+                capacidad_hilos = int(capacidad_numero)
+
+        from ..services.topologia import (
+            codigo_tramo_automatico,
+            inferir_tipo_nodo,
+            resolver_nodo,
+        )
+        origen_texto = str(data.get('hub_origen', '')).strip()
+        destino_texto = str(data.get('destino', '')).strip()
+        origen_nodo = (
+            resolver_nodo(
+                tipo=inferir_tipo_nodo(origen_texto),
+                codigo=origen_texto,
+                nombre=origen_texto,
+            )
+            if origen_texto
+            else None
+        )
+        destino_nodo = (
+            resolver_nodo(
+                tipo=inferir_tipo_nodo(destino_texto),
+                codigo=destino_texto,
+                nombre=destino_texto,
+            )
+            if destino_texto
+            else None
+        )
             
         # Crear Tramo Técnico inicial (para que aparezca en el dashboard)
         tramo_inicial = InventarioTramo.objects.create(
             ruta=nueva_ruta,
             tramo_secuencia=1,
+            codigo_tramo=codigo_tramo_automatico(1),
+            origen_nodo=origen_nodo,
+            destino_nodo=destino_nodo,
             tipo_trazado=data.get('tipo_trazado', ''),
             estado=data.get('estado', ''),
             capacidad=capacidad_raw,
+            capacidad_hilos=capacidad_hilos,
             hub_site=data.get('hub_origen', ''),
             destino=data.get('destino', ''),
             marca_modelo=data.get('marca_modelo', ''),
@@ -1165,6 +1695,7 @@ def create_ruta_manual(request):
             splitters=int(data.get('splitters', 0) or 0),
             odf_nombre=data.get('odf_nombre', ''),
             hilos_ocupados=int(data.get('hilos_ocupados', 0) or 0),
+            hilos_reservados=int(data.get('hilos_reservados', 0) or 0),
             hilos_libres=int(data.get('hilos_libres', 0) or 0),
             distancia_m=float(data.get('distancia_km', 0) or 0) * 1000,
             reservas_m=float(data.get('reserva_km', 0) or 0) * 1000
@@ -1181,44 +1712,19 @@ def create_ruta_manual(request):
             df.columns = [c.strip().lower() for c in df.columns]
             
             if 'latitude' in df.columns and 'longitude' in df.columns:
-                CoordenadaRuta.objects.filter(ruta=nueva_ruta).delete()
-                
-                coords_a_crear = []
-                distancia_calculada = 0.0
-                prev_lat = None
-                prev_lon = None
-                from .importacion import calcular_distancia_haversine
-                
-                for i, row in df.iterrows():
-                    lat = float(row['latitude'])
-                    lon = float(row['longitude'])
-                    
-                    if prev_lat is not None and prev_lon is not None:
-                        distancia_calculada += calcular_distancia_haversine(prev_lat, prev_lon, lat, lon)
-                    prev_lat = lat
-                    prev_lon = lon
-                    
-                    coords_a_crear.append(
-                        CoordenadaRuta(
-                            ruta=nueva_ruta,
-                            tramo=tramo_inicial,
-                            latitud=lat,
-                            longitud=lon,
-                            orden=i + 1,
-                            tramo_secuencia=1
-                        )
+                from .importacion import _reemplazar_geografia_ruta
+
+                if 'tipo_trazado' not in df.columns:
+                    df['tipo_trazado'] = data.get(
+                        'tipo_trazado',
+                        'DESCONOCIDO',
                     )
-                if coords_a_crear:
-                    CoordenadaRuta.objects.bulk_create(coords_a_crear)
-                    
+                _reemplazar_geografia_ruta(nueva_ruta, df)
+
                 distancia_ingresada = float(data.get('distancia_km', 0) or 0) * 1000
-                if distancia_ingresada == 0 and distancia_calculada > 0:
-                    nueva_ruta.distancia_m = distancia_calculada
+                if distancia_ingresada > 0:
+                    nueva_ruta.distancia_m = distancia_ingresada
                     nueva_ruta.save(update_fields=['distancia_m'])
-                    tramo = InventarioTramo.objects.filter(ruta=nueva_ruta).first()
-                    if tramo:
-                        tramo.distancia_m = distancia_calculada
-                        tramo.save(update_fields=['distancia_m'])
 
         return JsonResponse({'status': 'success', 'message': 'Ruta creada correctamente'})
     except ERRORES_DATOS_ENTRADA:
@@ -1230,6 +1736,7 @@ def create_ruta_manual(request):
 @login_required
 @permission_required('mapas.add_inventarioodf', raise_exception=True)
 @require_POST
+@transaction.atomic
 def create_odf_manual(request):
     """Crea un nuevo ODF con validación de ubicación única."""
     import json
@@ -1238,7 +1745,7 @@ def create_odf_manual(request):
     
     try:
         from ..models import InventarioODF
-        from ..services.inventario import resolver_rack
+        from ..services.inventario import ajustar_puertos_a_capacidad, resolver_rack
         data = json.loads(request.body)
         
         hub = data.get('hub_site', '').strip()
@@ -1258,20 +1765,25 @@ def create_odf_manual(request):
                 'message': f'El ODF "{odf_nombre}" ya existe en esta ubicación (Hub: {hub}, Sala: {sala}, Rack: {rack}).'
             })
 
-        # Crear ODF
-        InventarioODF.objects.create(
+        capacidad = int(data.get('capacidad_puertos', 0) or 0)
+        # Crear el ODF y materializar todas sus posiciones físicas.
+        odf = InventarioODF.objects.create(
             rack_obj=rack_obj,
             hub_site=hub,
             sala=sala,
             rack=rack,
             odf=odf_nombre,
-            capacidad_puertos=int(data.get('capacidad_puertos', 0) or 0),
-            puertos_libres=int(data.get('capacidad_puertos', 0) or 0),
+            capacidad_puertos=capacidad,
+            puertos_libres=0,
             tipo_conector=data.get('tipo_conector', ''),
             estado=data.get('estado', 'Activo')
         )
+        ajustar_puertos_a_capacidad(odf, capacidad)
         
-        return JsonResponse({'status': 'success', 'message': 'ODF creado correctamente'})
+        return JsonResponse({
+            'status': 'success',
+            'message': f'ODF creado correctamente con {capacidad} puertos libres.',
+        })
     except ERRORES_DATOS_ENTRADA:
         return JsonResponse({'status': 'error', 'message': 'Los datos del ODF no son válidos.'}, status=400)
     except Exception:
@@ -1328,6 +1840,14 @@ def create_puerto_manual(request):
         estado_puerto = normalizar_estado_puerto_odf(
             data.get('estado_puerto', 'Libre')
         )
+        if estado_puerto == 'Ocupado':
+            return JsonResponse(
+                {
+                    'status': 'error',
+                    'message': 'Cree el puerto como Libre o Reservado y luego conecte una fibra.',
+                },
+                status=409,
+            )
 
         # Crear Puerto
         DetallePuertoODF.objects.create(
@@ -1335,7 +1855,6 @@ def create_puerto_manual(request):
             odf=odf_nombre,
             puerto_odf=puerto_num,
             bandeja=data.get('bandeja', ''),
-            fibra=data.get('fibra', ''),
             estado_puerto=estado_puerto,
             tipo_conector=data.get('tipo_conector', ''),
             patchcord=data.get('patchcord', ''),
@@ -1402,12 +1921,25 @@ def update_ruta_manual(request):
         if not nombre_original or not nuevo_nombre:
             return JsonResponse({'status': 'error', 'message': 'El nombre de la ruta es obligatorio'})
             
-        ruta = Ruta.objects.filter(nombre=nombre_original).first()
+        ruta = (
+            Ruta.objects.select_for_update()
+            .filter(nombre=nombre_original)
+            .first()
+        )
         if not ruta:
             return JsonResponse({'status': 'error', 'message': 'Ruta no encontrada'})
+        tramos_ruta = list(
+            InventarioTramo.objects.select_for_update()
+            .select_related('origen_nodo', 'destino_nodo')
+            .filter(ruta=ruta)
+            .order_by('tramo_secuencia', 'pk')
+        )
             
         # Si cambia el nombre, verificar que el nuevo no exista
-        if nombre_original != nuevo_nombre and Ruta.objects.filter(nombre=nuevo_nombre).exists():
+        if (
+            nombre_original.casefold() != nuevo_nombre.casefold()
+            and Ruta.objects.filter(nombre__iexact=nuevo_nombre).exists()
+        ):
             return JsonResponse({'status': 'error', 'message': f'La ruta "{nuevo_nombre}" ya existe.'})
             
         # Actualizar Ruta
@@ -1419,30 +1951,83 @@ def update_ruta_manual(request):
         capacidad_raw = data.get('capacidad', '').strip()
         if capacidad_raw.isdigit():
             capacidad_raw = f"{capacidad_raw} Hilos"
+        import re
+        capacidad_match = re.search(r'\d+(?:[.,]\d+)?', capacidad_raw)
+        capacidad_hilos = None
+        if capacidad_match:
+            capacidad_numero = float(
+                capacidad_match.group().replace(',', '.')
+            )
+            if capacidad_numero > 0 and capacidad_numero.is_integer():
+                capacidad_hilos = int(capacidad_numero)
 
-        # Actualizar el primer tramo técnico
-        tramo = InventarioTramo.objects.filter(ruta=ruta).order_by('tramo_secuencia').first()
+        # El editor histórico representa una troncal consolidada. En rutas
+        # multitramos solo actualiza los datos generales para no convertir
+        # accidentalmente el primer tramo en el resumen de toda la ruta.
+        tramo = tramos_ruta[0] if len(tramos_ruta) == 1 else None
         if tramo:
-            # Solo permitimos sobreescribir el tipo_trazado si no hay coordenadas.
-            # Si hay coordenadas, los tramos ya tienen su trazado específico (AEREO/SOTERRADO)
+            from ..services.topologia import (
+                codigo_tramo_automatico,
+                inferir_tipo_nodo,
+                resolver_nodo,
+            )
+            # Una ruta ya segmentada no se reclasifica en bloque desde este
+            # formulario: su tipo visual pertenece ahora a cada coordenada.
             if not ruta.coordenadas.exists():
                 tramo.tipo_trazado = data.get('tipo_trazado', '')
                 
             tramo.estado = data.get('estado', '')
             tramo.capacidad = capacidad_raw
+            tramo.capacidad_hilos = capacidad_hilos
+            tramo.codigo_tramo = (
+                tramo.codigo_tramo
+                or codigo_tramo_automatico(tramo.tramo_secuencia)
+            )
             tramo.hub_site = data.get('hub_origen', '')
             tramo.destino = data.get('destino', '')
+            origen_texto = str(data.get('hub_origen', '')).strip()
+            destino_texto = str(data.get('destino', '')).strip()
+            tramo.origen_nodo = (
+                resolver_nodo(
+                    tipo=inferir_tipo_nodo(origen_texto),
+                    codigo=origen_texto,
+                    nombre=origen_texto,
+                )
+                if origen_texto
+                else None
+            )
+            tramo.destino_nodo = (
+                resolver_nodo(
+                    tipo=inferir_tipo_nodo(destino_texto),
+                    codigo=destino_texto,
+                    nombre=destino_texto,
+                )
+                if destino_texto
+                else None
+            )
             tramo.marca_modelo = data.get('marca_modelo', '')
             tramo.tipo_fibra = data.get('tipo_fibra', '')
             tramo.serial = data.get('serial', '')
             tramo.mufas = int(data.get('mufas', 0) or 0)
             tramo.splitters = int(data.get('splitters', 0) or 0)
             tramo.odf_nombre = data.get('odf_nombre', '')
-            tramo.hilos_ocupados = int(data.get('hilos_ocupados', 0) or 0)
-            tramo.hilos_libres = int(data.get('hilos_libres', 0) or 0)
+            tiene_detalle_fisico = tramo.fibras_tramo.exists()
+            if not tiene_detalle_fisico:
+                tramo.hilos_ocupados = int(
+                    data.get('hilos_ocupados', 0) or 0
+                )
+                tramo.hilos_reservados = int(
+                    data.get('hilos_reservados', 0) or 0
+                )
+                tramo.hilos_libres = int(
+                    data.get('hilos_libres', 0) or 0
+                )
             tramo.distancia_m = float(data.get('distancia_km', 0) or 0) * 1000
             tramo.reservas_m = float(data.get('reserva_km', 0) or 0) * 1000
             tramo.save()
+            if tiene_detalle_fisico:
+                from ..services.fibras import recalcular_cache_tramo
+                recalcular_cache_tramo(tramo)
             
         # Procesar archivo CSV si se adjuntó
         csv_file = request.FILES.get('csv_coordenadas')
@@ -1456,46 +2041,27 @@ def update_ruta_manual(request):
             df.columns = [c.strip().lower() for c in df.columns]
             
             if 'latitude' in df.columns and 'longitude' in df.columns:
-                CoordenadaRuta.objects.filter(ruta=ruta).delete()
-                
-                coords_a_crear = []
-                distancia_calculada = 0.0
-                prev_lat = None
-                prev_lon = None
-                from .importacion import calcular_distancia_haversine
-                
-                for i, row in df.iterrows():
-                    lat = float(row['latitude'])
-                    lon = float(row['longitude'])
-                    
-                    if prev_lat is not None and prev_lon is not None:
-                        distancia_calculada += calcular_distancia_haversine(prev_lat, prev_lon, lat, lon)
-                    prev_lat = lat
-                    prev_lon = lon
-                    
-                    coords_a_crear.append(
-                        CoordenadaRuta(
-                            ruta=ruta,
-                            tramo=tramo,
-                            latitud=lat,
-                            longitud=lon,
-                            orden=i + 1,
-                            tramo_secuencia=1
-                        )
-                    )
-                if coords_a_crear:
-                    CoordenadaRuta.objects.bulk_create(coords_a_crear)
-                    
-                distancia_ingresada = float(data.get('distancia_km', 0) or 0) * 1000
-                if distancia_ingresada == 0 and distancia_calculada > 0:
-                    ruta.distancia_m = distancia_calculada
-                    ruta.save(update_fields=['distancia_m'])
-                    tramo = InventarioTramo.objects.filter(ruta=ruta).first()
-                    if tramo:
-                        tramo.distancia_m = distancia_calculada
-                        tramo.save(update_fields=['distancia_m'])
+                from .importacion import _reemplazar_geografia_ruta
 
-        return JsonResponse({'status': 'success', 'message': 'Ruta actualizada correctamente'})
+                if 'tipo_trazado' not in df.columns:
+                    df['tipo_trazado'] = data.get(
+                        'tipo_trazado',
+                        'DESCONOCIDO',
+                    )
+                _reemplazar_geografia_ruta(ruta, df)
+
+                distancia_ingresada = float(data.get('distancia_km', 0) or 0) * 1000
+                if distancia_ingresada > 0:
+                    ruta.distancia_m = distancia_ingresada
+                    ruta.save(update_fields=['distancia_m'])
+
+        mensaje = 'Ruta actualizada correctamente'
+        if len(tramos_ruta) > 1:
+            mensaje += (
+                '. Los tramos técnicos se conservaron sin cambios y se '
+                'administran mediante Inventario Técnico de Tramos.'
+            )
+        return JsonResponse({'status': 'success', 'message': mensaje})
     except ERRORES_DATOS_ENTRADA:
         return JsonResponse({'status': 'error', 'message': 'Los datos de la ruta no son válidos.'}, status=400)
     except Exception:
@@ -1559,14 +2125,14 @@ def update_odf_manual(request):
     
     try:
         from ..models import InventarioODF
-        from ..services.inventario import resolver_rack
+        from ..services.inventario import ajustar_puertos_a_capacidad, resolver_rack
         data = json.loads(request.body)
         id_odf = data.get('id')
         
         if not id_odf:
             return JsonResponse({'status': 'error', 'message': 'ID de ODF requerido'})
             
-        odf = InventarioODF.objects.filter(id=id_odf).first()
+        odf = InventarioODF.objects.select_for_update().filter(id=id_odf).first()
         if not odf:
             return JsonResponse({'status': 'error', 'message': 'ODF no encontrado'})
             
@@ -1590,17 +2156,19 @@ def update_odf_manual(request):
         odf.odf = odf_nombre
         # Solo actualizamos capacidad si no hay lógicas complejas de puertos ocupados, o se ajusta puertos libres
         nueva_capacidad = int(data.get('capacidad_puertos', 0) or 0)
-        odf.capacidad_puertos = nueva_capacidad
-        odf.puertos_libres = max(
-            0,
-            nueva_capacidad - (odf.puertos_ocupados or 0) - (odf.puertos_reservados or 0),
-        )
         
         odf.tipo_conector = data.get('tipo_conector', '')
         odf.estado = data.get('estado', 'Activo')
         odf.save()
+        odf = ajustar_puertos_a_capacidad(odf, nueva_capacidad)
         
-        return JsonResponse({'status': 'success', 'message': 'ODF actualizado correctamente'})
+        return JsonResponse({
+            'status': 'success',
+            'message': (
+                f'ODF actualizado correctamente con {odf.capacidad_puertos} '
+                'puertos físicos.'
+            ),
+        })
     except ERRORES_DATOS_ENTRADA:
         return JsonResponse({'status': 'error', 'message': 'Los datos del ODF no son válidos.'}, status=400)
     except Exception:
@@ -1897,125 +2465,21 @@ def import_reservas_archivo(request):
 
 @login_required
 @permission_required('mapas.add_detallepuertoodf', raise_exception=True)
+@permission_required('mapas.change_detallepuertoodf', raise_exception=True)
 @require_POST
 @transaction.atomic
 def import_puertos_archivo(request):
-    try:
-        import pandas as pd
-        from ..models import InventarioODF, DetallePuertoODF
-        
-        archivo = request.FILES.get('archivo')
-        odf_nombre = request.POST.get('odf_nombre')
-        
-        if not archivo or not odf_nombre:
-            return JsonResponse({'status': 'error', 'message': 'Archivo u ODF no proporcionados.'})
-        if not _archivo_dentro_del_limite(archivo):
-            return JsonResponse(
-                {'status': 'error', 'message': _mensaje_limite_archivo()},
-                status=413,
-            )
-            
-        # Mantiene la validación de capacidad y toda la importación bajo un
-        # único bloqueo por ODF. El contrato del archivo permanece intacto.
-        odf_obj = InventarioODF.objects.select_for_update().filter(odf__iexact=odf_nombre).first()
-        if not odf_obj:
-            return JsonResponse({'status': 'error', 'message': 'ODF no encontrado.'})
+    return JsonResponse(
+        {
+            'status': 'error',
+            'message': (
+                'Este importador fue retirado. Utilice la carga oficial '
+                '“Detalle de Puertos ODF” desde Importación.'
+            ),
+        },
+        status=410,
+    )
 
-        if archivo.name.endswith('.csv'):
-            df = pd.read_csv(archivo)
-        elif archivo.name.endswith('.xlsx') or archivo.name.endswith('.xls'):
-            df = pd.read_excel(archivo)
-        else:
-            return JsonResponse({'status': 'error', 'message': 'Formato no soportado. Use .csv o .xlsx'})
-
-        creados = 0
-        actualizados = 0
-
-        # Mapeo flexible de columnas para soportar diferentes variantes
-        def get_col(df, *nombres, default=''):
-            for n in nombres:
-                for c in df.columns:
-                    if str(c).strip().lower() == str(n).strip().lower():
-                        return df[c]
-            return pd.Series([default] * len(df))
-
-        df_puerto = get_col(df, 'Puerto ODF', 'Puerto')
-        df_bandeja = get_col(df, 'Bandeja')
-        df_fibra = get_col(df, 'Fibra', 'Hilo', 'Fibra/Hilo')
-        df_estado = get_col(df, 'Estado', 'Estado Puerto')
-        df_conector = get_col(df, 'Conector', 'Tipo Conector')
-        df_patch = get_col(df, 'Patchcord')
-        df_destino = get_col(df, 'Destino', 'Destino / Cliente')
-
-        # Validar capacidad
-        capacidad_max = odf_obj.capacidad_puertos or 0
-        if capacidad_max > 0:
-            puertos_en_csv = set(str(p).strip() for p in df_puerto if str(p).strip() not in ['nan', 'None', ''])
-            puertos_existentes = set(DetallePuertoODF.objects.filter(odf_obj=odf_obj).values_list('puerto_odf', flat=True))
-            nuevos_puertos = puertos_en_csv - puertos_existentes
-            if len(puertos_existentes) + len(nuevos_puertos) > capacidad_max:
-                return JsonResponse({'status': 'error', 'message': f'Límite excedido. El ODF "{odf_nombre}" tiene capacidad para {capacidad_max} puertos, pero estás intentando registrar un total de {len(puertos_existentes) + len(nuevos_puertos)} puertos.'})
-
-        for i in range(len(df)):
-            puerto_val = str(df_puerto.iloc[i]).strip()
-            if not puerto_val or puerto_val == 'nan' or puerto_val == 'None':
-                continue
-
-            destino_val = (
-                str(df_destino.iloc[i]).strip()
-                if str(df_destino.iloc[i]).strip() != 'nan'
-                else ''
-            )
-            estado_val = normalizar_estado_puerto_odf_con_destino(
-                df_estado.iloc[i],
-                destino_val,
-            )
-
-            datos = {
-                'bandeja': str(df_bandeja.iloc[i]).strip() if str(df_bandeja.iloc[i]).strip() != 'nan' else '',
-                'fibra': str(df_fibra.iloc[i]).strip() if str(df_fibra.iloc[i]).strip() != 'nan' else '',
-                'estado_puerto': estado_val,
-                'tipo_conector': str(df_conector.iloc[i]).strip() if str(df_conector.iloc[i]).strip() != 'nan' else '',
-                'patchcord': str(df_patch.iloc[i]).strip() if str(df_patch.iloc[i]).strip() != 'nan' else '',
-                'destino': destino_val,
-            }
-
-            obj, created = DetallePuertoODF.objects.update_or_create(
-                odf_obj=odf_obj,
-                puerto_odf=puerto_val,
-                defaults=datos
-            )
-            
-            if created:
-                obj.odf = odf_nombre
-                obj.save()
-                creados += 1
-            else:
-                actualizados += 1
-
-        # Actualizar contadores del ODF (pero no la capacidad máxima)
-        odf_obj.actualizar_contadores()
-
-        return JsonResponse({
-            'status': 'success', 
-            'creados': creados,
-            'actualizados': actualizados
-        })
-
-    except ERRORES_DATOS_ENTRADA:
-        transaction.set_rollback(True)
-        logger.info("Archivo de puertos ODF inválido", exc_info=True)
-        return JsonResponse(
-            {'status': 'error', 'message': 'El archivo de puertos contiene datos inválidos.'},
-            status=400,
-        )
-    except Exception:
-        transaction.set_rollback(True)
-        logger.exception("Error inesperado al importar puertos ODF")
-        return JsonResponse(
-            {'status': 'error', 'message': 'No se pudo procesar el archivo de puertos.'},
-            status=500,
-        )
 
 @login_required
 @permission_required('mapas.view_detallepuertoodf', raise_exception=True)
@@ -2031,6 +2495,7 @@ def planta_interna_view(request):
         'sites_puertos': sorted({odf['hub_site'] for odf in odfs if odf['hub_site']}),
         'salas_puertos': sorted({odf['sala'] for odf in odfs if odf['sala']}),
         'racks_puertos': sorted({odf['rack'] for odf in odfs if odf['rack']}),
+        'rutas_puertos': list(Ruta.objects.order_by('nombre').values('id', 'nombre')),
     }
     return render(request, 'mapa_inventario/planta_interna.html', context)
 
