@@ -1,9 +1,19 @@
 """Configuración aislada para validar las mejoras sin tocar RC1 ni PostgreSQL."""
 
 import os
+import tempfile
 from pathlib import Path
 
+import sys
+
 from .settings import *  # noqa: F401,F403
+
+# En Windows el directorio temporal global puede estar protegido o conservar
+# bloqueos de procesos externos. Las pruebas deben trabajar en una ubicación
+# aislada y controlada por el proyecto.
+TEST_TEMP_ROOT = Path(BASE_DIR) / ".tmp_pruebas"
+TEST_TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+tempfile.tempdir = str(TEST_TEMP_ROOT)
 
 SECRET_KEY = "fibergenius-rc2-pruebas-no-produccion"
 DEBUG = True
@@ -41,9 +51,13 @@ VEEX_API_PASS = ""
 VEEX_TLS_VERIFY = True
 VEEX_CA_BUNDLE = ""
 
-LOGGING = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "handlers": {"console": {"class": "logging.StreamHandler"}},
-    "root": {"handlers": ["console"], "level": "WARNING"},
-}
+# Las pruebas no abren archivos (evita bloqueos temporales en Windows). Cuando
+# este perfil se usa para levantar el servidor local, conserva el LOGGING base
+# y escribe normalmente en la carpeta ``logs``.
+if "test" in sys.argv:
+    LOGGING = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "handlers": {"console": {"class": "logging.StreamHandler"}},
+        "root": {"handlers": ["console"], "level": "WARNING"},
+    }
