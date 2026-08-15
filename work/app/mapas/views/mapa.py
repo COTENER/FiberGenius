@@ -11,10 +11,11 @@ from django.http import JsonResponse, HttpResponse
 from django.contrib.auth.decorators import login_required, permission_required
 from django.contrib.staticfiles import finders
 from django.db import connection
+from django.db.models import Prefetch
 from django.templatetags.static import static
 import csv
 
-from ..models import OTU, Ruta, Reserva, CoordenadaRuta
+from ..models import OTU, Ruta, Reserva, CoordenadaRuta, InventarioTramo
 from .utils import clasificar_tipo_evento, get_geo_bounds, get_color_evento
 
 logger = logging.getLogger('mapas')
@@ -75,7 +76,17 @@ def mapa_alarmas(request):
     """
     Renderiza la nueva interfaz del Mapa en Vivo para Monitoreo de Alarmas en tiempo real.
     """
-    rutas_queryset = Ruta.objects.select_related('otu').prefetch_related('coordenadas', 'reservas', 'tramos_inventario').all()
+    rutas_queryset = Ruta.objects.select_related('otu').prefetch_related(
+        'coordenadas',
+        'reservas',
+        Prefetch(
+            'tramos_inventario',
+            queryset=InventarioTramo.objects.select_related(
+                'origen_nodo',
+                'destino_nodo',
+            ).order_by('tramo_secuencia', 'pk'),
+        ),
+    ).all()
     rutas_data = []
     
     for r in rutas_queryset:
@@ -93,7 +104,23 @@ def mapa_alarmas(request):
                 continue
         
         tramos = r.tramos_inventario.all()
-        tipo_trazado = tramos[0].tipo_trazado if tramos else 'Sin Clasificar'
+        coordenadas = list(r.coordenadas.all())
+        tipos_geograficos = {
+            (coordenada.tipo_trazado or '').strip().upper()
+            for coordenada in coordenadas
+            if (coordenada.tipo_trazado or '').strip()
+        }
+        if (
+            'HIBRIDO' in tipos_geograficos
+            or {'AEREO', 'SOTERRADO'}.issubset(tipos_geograficos)
+        ):
+            tipo_trazado = 'HIBRIDO'
+        elif 'AEREO' in tipos_geograficos:
+            tipo_trazado = 'AEREO'
+        elif 'SOTERRADO' in tipos_geograficos:
+            tipo_trazado = 'SOTERRADO'
+        else:
+            tipo_trazado = 'Sin Clasificar'
         
         # Calcular el hub_origen (site) de forma automática con paridad al dashboard de inventario
         hub_origen = 'No disponible'
@@ -103,10 +130,21 @@ def mapa_alarmas(request):
             if t.hub_site and t.hub_site != 'N/A':
                 hub_origen = t.hub_site
                 break
+            sitio_nodo = None
+            for nodo in (t.origen_nodo, t.destino_nodo):
+                if nodo and nodo.tipo == 'SITE':
+                    sitio_nodo = nodo.nombre or nodo.codigo
+                    break
+            if sitio_nodo:
+                hub_origen = sitio_nodo
+                break
         
         rutas_data.append({
             'nombre': r.nombre,
-            'coordenadas': [[float(c.latitud), float(c.longitud)] for c in r.coordenadas.all()],
+            'coordenadas': [
+                [float(c.latitud), float(c.longitud)]
+                for c in coordenadas
+            ],
             'otu': hub_origen,
             'distancia': round(r.distancia_m / 1000, 3) if r.distancia_m else 'No disponible',
             'olt': r.olt or 'No disponible',

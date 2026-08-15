@@ -396,10 +396,13 @@
         const estados = uniqueValues('estado');
         const origen = principal.hub_site || principal.origen || ruta.otu || 'Origen no especificado';
         const destino = principal.destino || ruta.olt || 'Destino no especificado';
-        const distanciaM = tramos.reduce((total, tramo) => {
-            const value = Number(tramo.distancia_m);
-            return total + (Number.isFinite(value) ? value : 0);
-        }, 0);
+        const distanciaRuta = Number(ruta.distancia_m);
+        const distanciaM = Number.isFinite(distanciaRuta) && distanciaRuta > 0
+            ? distanciaRuta
+            : tramos.reduce((total, tramo) => {
+                const value = Number(tramo.distancia_m);
+                return total + (Number.isFinite(value) ? value : 0);
+            }, 0);
         const searchText = normalizeSearchText([
             nombre,
             codigo,
@@ -1650,6 +1653,7 @@
         networkElement('network-site-meta').textContent = metaParts.join(' · ');
         networkElement('network-site-odfs').textContent = networkNumber.format(summary.total);
         networkElement('network-site-capacity').textContent = networkNumber.format(summary.capacidad);
+        networkElement('network-site-used').textContent = networkNumber.format(summary.ocupados);
         networkElement('network-site-free').textContent = networkNumber.format(summary.libres);
         networkElement('network-site-reserved').textContent = networkNumber.format(summary.reservados);
         networkElement('network-site-odf-count').textContent = networkNumber.format(summary.total);

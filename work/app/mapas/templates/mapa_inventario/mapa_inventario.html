@@ -559,7 +559,7 @@
         filter: brightness(0.9) contrast(1.1);
     }
 </style>
-<link rel="stylesheet" href="{% static 'css/mapa-red-v2.css' %}?v=20260723-route-endpoints-4">
+<link rel="stylesheet" href="{% static 'css/mapa-red-v2.css' %}?v=20260805-site-occupied-1">
 {% endblock %}
 
 {% block content_class %}main-content--full{% endblock %}
@@ -756,6 +756,7 @@
                     <div class="network-nav__metrics">
                         <article><span>ODF</span><strong id="network-site-odfs">0</strong></article>
                         <article><span>Capacidad</span><strong id="network-site-capacity">0</strong></article>
+                        <article class="is-used"><span>Ocupados</span><strong id="network-site-used">0</strong></article>
                         <article class="is-free"><span>Libres</span><strong id="network-site-free">0</strong></article>
                         <article class="is-reserved"><span>Reservados</span><strong id="network-site-reserved">0</strong></article>
                     </div>
@@ -807,5 +808,5 @@
 {% block extra_js %}
 <script src="{% static 'vendor/jquery/jquery-3.6.0.min.js' %}"></script>
 <script src="{% static 'vendor/leaflet/leaflet-1.9.4.js' %}" crossorigin=""></script>
-<script src="{% static 'js/mapa_inventario.js' %}?v=20260727-map-performance-1"></script>
+<script src="{% static 'js/mapa_inventario.js' %}?v=20260805-site-occupied-1"></script>
 {% endblock %}

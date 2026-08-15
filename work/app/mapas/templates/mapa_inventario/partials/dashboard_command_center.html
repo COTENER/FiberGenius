@@ -44,7 +44,7 @@
             </span>
         </label>
         {% if site_seleccionado or trazado_seleccionado %}
-        <a class="inv-filterbar__clear" href="{% url 'dashboard_inventario' %}">Limpiar filtros</a>
+        <a class="inv-filterbar__clear" data-clear-site-context="true" href="{% url 'dashboard_inventario' %}">Limpiar filtros</a>
         {% endif %}
         <details class="inv-export">
             <summary><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>Exportar inventario</summary>
@@ -215,7 +215,7 @@
             <header class="inv-panel__header"><div><h2>Uso de fibras</h2><p>Distribución por estado.</p></div><a href="{% url 'planta_externa' %}?tab=fibras">Ver fibras</a></header>
             {% if total_fibras %}
             <div class="inv-chart inv-chart--compact inv-chart--donut">
-                <canvas id="fiberStatusChartV3" data-free="{{ fibras_libres }}" data-used="{{ fibras_ocupadas }}" data-reserved="{{ fibras_reservadas }}" data-total="{{ total_fibras }}"></canvas>
+                <canvas id="fiberStatusChartV3" data-free="{{ fibras_libres }}" data-used="{{ fibras_ocupadas }}" data-reserved="{{ fibras_reservadas }}" data-unknown="{{ fibras_sin_estado }}" data-total="{{ total_fibras }}"></canvas>
             </div>
             {% else %}{% include "mapa_inventario/partials/dashboard_empty.html" with empty_title="Sin fibras registradas" empty_text="Los estados aparecerán al cargar fibras." %}{% endif %}
         </article>

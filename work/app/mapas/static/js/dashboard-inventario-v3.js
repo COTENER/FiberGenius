@@ -71,17 +71,26 @@
         const free = Number(canvas.dataset.free || 0);
         const used = Number(canvas.dataset.used || 0);
         const reserved = Number(canvas.dataset.reserved || 0);
-        const total = free + used + reserved;
+        const unknown = Number(canvas.dataset.unknown || 0);
+        const total = free + used + reserved + unknown;
         if (!total) return;
 
         const colors = chartColors();
+        const labels = ['Disponibles', 'Ocupados', 'Reservados'];
+        const values = [free, used, reserved];
+        const backgroundColors = ['#20b276', '#2275e6', '#f19a27'];
+        if (unknown > 0) {
+            labels.push('Sin cobertura / estado');
+            values.push(unknown);
+            backgroundColors.push('#94a3b8');
+        }
         const chart = new Chart(canvas, {
             type: 'doughnut',
             data: {
-                labels: ['Disponibles', 'Ocupados', 'Reservados'],
+                labels,
                 datasets: [{
-                    data: [free, used, reserved],
-                    backgroundColor: ['#20b276', '#2275e6', '#f19a27'],
+                    data: values,
+                    backgroundColor: backgroundColors,
                     borderColor: colors.border,
                     borderWidth: 3,
                     hoverOffset: 4,

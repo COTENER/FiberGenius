@@ -1351,6 +1351,22 @@ def api_mapa_site_navigation(request, pk):
         Q(tramos_inventario__hub_site__iexact=site.nombre)
         | Q(tramos_inventario__origen__iexact=site.nombre)
         | Q(tramos_inventario__destino__iexact=site.nombre)
+        | Q(
+            tramos_inventario__origen_nodo__tipo="SITE",
+            tramos_inventario__origen_nodo__codigo__iexact=site.nombre,
+        )
+        | Q(
+            tramos_inventario__origen_nodo__tipo="SITE",
+            tramos_inventario__origen_nodo__nombre__iexact=site.nombre,
+        )
+        | Q(
+            tramos_inventario__destino_nodo__tipo="SITE",
+            tramos_inventario__destino_nodo__codigo__iexact=site.nombre,
+        )
+        | Q(
+            tramos_inventario__destino_nodo__tipo="SITE",
+            tramos_inventario__destino_nodo__nombre__iexact=site.nombre,
+        )
     ).order_by("nombre").distinct()
 
     return JsonResponse({
@@ -1429,7 +1445,6 @@ def api_panel_troncal(request):
             status=400,
         )
     ruta = get_object_or_404(Ruta, pk=ruta_id)
-    fibras = InventarioFibra.objects.filter(ruta=ruta)
     tramos = InventarioTramo.objects.filter(ruta=ruta).order_by("tramo_secuencia")
     reservas = Reserva.objects.filter(ruta=ruta).order_by(
         "orden_en_ruta", "nombre", "id"
@@ -1446,15 +1461,22 @@ def api_panel_troncal(request):
             for indice in range(500)
         ]
 
-    resumen_fibras = _resumen_fibras(fibras)
+    resumen_operativo = resumen_ruta(ruta)
     extremos = list(
         tramos.values(
             "tramo_secuencia", "origen", "destino", "hub_site",
             "odf_nombre", "tipo_trazado",
+            "origen_nodo__codigo", "origen_nodo__nombre",
+            "destino_nodo__codigo", "destino_nodo__nombre",
         )
     )
-    distancia_m = tramos.aggregate(total=Sum("distancia_m"))["total"] or 0
-    reservas_m = reservas.aggregate(total=Sum("reserva_m"))["total"] or 0
+    distancia_m = resumen_operativo["distancia_m"] or 0
+    reservas_m = resumen_operativo["reservas_m"] or 0
+    total_hilos = (
+        resumen_operativo["capacidad_efectiva"]
+        if resumen_operativo["capacidad_efectiva"] is not None
+        else resumen_operativo["fibras_total"]
+    )
 
     return JsonResponse({
         "status": "success",
@@ -1471,23 +1493,33 @@ def api_panel_troncal(request):
             "origen": _texto(
                 extremos[0]["odf_nombre"]
                 or extremos[0]["hub_site"]
+                or extremos[0]["origen_nodo__nombre"]
+                or extremos[0]["origen_nodo__codigo"]
                 or extremos[0]["origen"]
             ) if extremos else "—",
-            "destino": _texto(extremos[-1]["destino"]) if extremos else "—",
+            "destino": _texto(
+                extremos[-1]["destino_nodo__nombre"]
+                or extremos[-1]["destino_nodo__codigo"]
+                or extremos[-1]["destino"]
+            ) if extremos else "—",
             "mapa_url": f'{reverse("mapa_inventario")}?{urlencode({"ruta": ruta.nombre})}',
         },
         "fibras": {
-            "total": resumen_fibras["total"],
-            "libres": resumen_fibras["libres"],
-            "ocupadas": resumen_fibras["ocupadas"],
-            "reservadas": resumen_fibras["reservadas"],
+            "total": total_hilos,
+            "libres": resumen_operativo["hilos_libres"],
+            "ocupadas": resumen_operativo["hilos_ocupados"],
+            "reservadas": resumen_operativo["hilos_reservados"],
+            "sin_verificar": resumen_operativo["hilos_sin_estado"],
             "utilizacion": round(
                 (
-                    (resumen_fibras["ocupadas"] + resumen_fibras["reservadas"])
-                    / resumen_fibras["total"]
+                    (
+                        resumen_operativo["hilos_ocupados"]
+                        + resumen_operativo["hilos_reservados"]
+                    )
+                    / total_hilos
                 ) * 100,
                 1,
-            ) if resumen_fibras["total"] else 0,
+            ) if total_hilos else 0,
         },
         "reservas": {
             "elementos": reservas.count(),

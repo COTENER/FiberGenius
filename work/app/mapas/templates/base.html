@@ -9,7 +9,7 @@
 
     <link rel="stylesheet" href="{% static 'css/tokens.css' %}">
     <link rel="stylesheet" href="{% static 'css/components.css' %}">
-    <link rel="stylesheet" href="{% static 'css/layout.css' %}?v=20260723-scroll-1">
+    <link rel="stylesheet" href="{% static 'css/layout.css' %}?v=20260805-site-context-1">
     <link rel="stylesheet" href="{% static 'css/operational-ui.css' %}?v=20260723-1">
     {% block extra_css %}{% endblock %}
 
@@ -20,7 +20,7 @@
         })();
     </script>
 </head>
-<body>
+<body data-authenticated="{% if user.is_authenticated %}true{% else %}false{% endif %}">
     <a class="skip-link" href="#contenido-principal">Saltar al contenido principal</a>
     <div class="app">
         {% include "partials/_sidebar.html" %}
@@ -78,6 +78,14 @@
             </header>
             {% endblock %}
 
+            {% if user.is_authenticated %}
+            <div id="global-site-context" class="global-site-context" hidden role="status">
+                <span>Contexto activo</span>
+                <strong id="global-site-context-name"></strong>
+                <button id="global-site-context-clear" type="button">Quitar filtro</button>
+            </div>
+            {% endif %}
+
             <main id="contenido-principal" class="main-content {% block content_class %}{% endblock %}" tabindex="-1">
                 {% include "partials/_messages.html" %}
                 {% block content %}{% endblock %}
@@ -105,6 +113,7 @@
     <script src="{% static 'js/app.js' %}"></script>
     <script src="{% static 'js/safe-dom.js' %}"></script>
     <script src="{% static 'js/operational-ui.js' %}"></script>
+    <script src="{% static 'js/global-site-context.js' %}?v=20260805-1"></script>
     <script src="{% static 'js/global-search.js' %}?v=20260723-1"></script>
     {% block extra_js %}{% endblock %}
 </body>

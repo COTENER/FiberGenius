@@ -537,10 +537,11 @@
 .network-nav__identity p { margin: 4px 0 0; overflow: hidden; color: #64748b; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .network-nav__identity--odf { align-items: flex-start; }
 .network-nav__status { align-self: center; padding: 4px 7px; border-radius: 999px; color: #087c4c; background: #e9f8f1; font-size: 8px; font-weight: 750; white-space: nowrap; }
-.network-nav__metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; margin-bottom: 18px; }
+.network-nav__metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 7px; margin-bottom: 18px; }
 .network-nav__metrics article, .network-port-stats article { min-width: 0; padding: 9px 7px; border: 1px solid #e2e8f0; border-radius: 9px; background: #f8fafc; text-align: center; }
 .network-nav__metrics span, .network-port-stats span { display: block; overflow: hidden; color: #64748b; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .network-nav__metrics strong, .network-port-stats strong { display: block; margin-top: 3px; color: #1d4ed8; font-size: 15px; }
+.network-nav__metrics .is-used strong { color: #2563eb; }
 .network-nav__metrics .is-free strong, .network-port-stats .is-free strong { color: #079455; }
 .network-nav__metrics .is-reserved strong, .network-port-stats .is-reserved strong { color: #d97706; }
 .network-nav__section-heading, .network-port-grid-heading { display: flex; align-items: end; justify-content: space-between; gap: 10px; margin-bottom: 9px; }

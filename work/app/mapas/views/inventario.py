@@ -94,8 +94,9 @@ def dashboard_inventario(request):
     from django.db.models import Count, Q
     from ..models import (
         Ruta, InventarioTramo, Reserva, InventarioODF, DetallePuertoODF,
-        InventarioFibra, HubSite,
+        HubSite, NodoRed,
     )
+    from ..services.capacidad import resumen_rutas
 
     site_seleccionado = request.GET.get('site', '').strip()
     trazado_seleccionado = request.GET.get('trazado', '').strip().upper()
@@ -103,19 +104,81 @@ def dashboard_inventario(request):
         trazado_seleccionado = ''
     
     rutas_db = Ruta.objects.prefetch_related(
-        'tramos_inventario', 'reservas', 'coordenadas', 'fibras_inventario'
-    ).filter(tramos_inventario__isnull=False).distinct()
+        'tramos_inventario__fibras_tramo',
+        'tramos_inventario__origen_nodo',
+        'tramos_inventario__destino_nodo',
+        'reservas',
+        'coordenadas',
+        'fibras_inventario',
+    ).filter(
+        Q(coordenadas__isnull=False)
+        | Q(tramos_inventario__isnull=False)
+    ).distinct()
     if site_seleccionado:
         rutas_db = rutas_db.filter(
             Q(tramos_inventario__hub_site=site_seleccionado)
             | Q(tramos_inventario__destino=site_seleccionado)
+            | Q(
+                tramos_inventario__origen_nodo__tipo='SITE',
+                tramos_inventario__origen_nodo__codigo__iexact=site_seleccionado,
+            )
+            | Q(
+                tramos_inventario__origen_nodo__tipo='SITE',
+                tramos_inventario__origen_nodo__nombre__iexact=site_seleccionado,
+            )
+            | Q(
+                tramos_inventario__destino_nodo__tipo='SITE',
+                tramos_inventario__destino_nodo__codigo__iexact=site_seleccionado,
+            )
+            | Q(
+                tramos_inventario__destino_nodo__tipo='SITE',
+                tramos_inventario__destino_nodo__nombre__iexact=site_seleccionado,
+            )
         ).distinct()
     if trazado_seleccionado:
-        rutas_db = rutas_db.filter(
-            tramos_inventario__tipo_trazado=trazado_seleccionado
-        ).distinct()
+        if trazado_seleccionado == 'HIBRIDO':
+            rutas_mixtas_geograficas = (
+                Ruta.objects.filter(
+                    coordenadas__tipo_trazado__iexact='AEREO'
+                )
+                .filter(coordenadas__tipo_trazado__iexact='SOTERRADO')
+                .values('pk')
+            )
+            rutas_mixtas_tecnicas = (
+                Ruta.objects.filter(
+                    tramos_inventario__tipo_trazado__iexact='AEREO'
+                )
+                .filter(
+                    tramos_inventario__tipo_trazado__iexact='SOTERRADO'
+                )
+                .values('pk')
+            )
+            rutas_db = rutas_db.filter(
+                Q(coordenadas__tipo_trazado__iexact='HIBRIDO')
+                | Q(pk__in=rutas_mixtas_geograficas)
+                | Q(
+                    coordenadas__isnull=True,
+                    tramos_inventario__tipo_trazado__iexact='HIBRIDO',
+                )
+                | Q(
+                    coordenadas__isnull=True,
+                    pk__in=rutas_mixtas_tecnicas,
+                )
+            ).distinct()
+        else:
+            rutas_db = rutas_db.filter(
+                Q(
+                    coordenadas__tipo_trazado__iexact=trazado_seleccionado
+                )
+                | Q(
+                    coordenadas__isnull=True,
+                    tramos_inventario__tipo_trazado__iexact=trazado_seleccionado,
+                )
+            ).distinct()
     
-    total_rutas = rutas_db.count()
+    rutas_db = list(rutas_db)
+    total_rutas = len(rutas_db)
+    capacidad_por_ruta = resumen_rutas(rutas_db)
     
     resumen_rutas = []
     stats_trazado = {'AEREO': 0, 'SOTERRADO': 0, 'HIBRIDO': 0}
@@ -125,21 +188,26 @@ def dashboard_inventario(request):
     total_km = 0.0
     
     for r in rutas_db:
+        resumen_capacidad = capacidad_por_ruta[r.pk]
         tramos = r.tramos_inventario.all()
-        tipos_en_ruta = set(t.tipo_trazado for t in tramos)
+        tipos_en_ruta = {
+            (coordenada.tipo_trazado or '').strip().upper()
+            for coordenada in r.coordenadas.all()
+            if (coordenada.tipo_trazado or '').strip()
+        }
+        if not tipos_en_ruta:
+            tipos_en_ruta = {
+                (tramo.tipo_trazado or '').strip().upper()
+                for tramo in tramos
+                if (tramo.tipo_trazado or '').strip()
+            }
         
-        # Ruta.distancia_m contiene el total; cada InventarioTramo conserva solo su segmento.
-        distancia_ruta_m = r.distancia_m or sum((t.distancia_m or 0 for t in tramos), 0)
-        if not distancia_ruta_m:
-            coords = sorted(r.coordenadas.all(), key=lambda coordenada: coordenada.orden)
-            if len(coords) >= 2:
-                distancia_ruta_m = calculate_coordinate_distance(coords)
-                
+        distancia_ruta_m = resumen_capacidad['distancia_m'] or 0
         distancia_ruta_km = round(distancia_ruta_m / 1000, 2)
-        
-        res_tramos_m = sum((t.reservas_m or 0 for t in tramos), 0)
-        res_nodos_m = sum(res.reserva_m or 0 for res in r.reservas.all())
-        total_res_ruta_m = round(res_tramos_m + res_nodos_m, 2)
+        total_res_ruta_m = round(
+            resumen_capacidad['reservas_m'] or 0,
+            2,
+        )
 
         # Determinar tipo de la ruta
         if 'HIBRIDO' in tipos_en_ruta or ('AEREO' in tipos_en_ruta and 'SOTERRADO' in tipos_en_ruta):
@@ -169,14 +237,26 @@ def dashboard_inventario(request):
         hilos_libres_total = 0
         
         for t in tramos:
-            if t.hub_site and t.hub_site != "N/A" and hub_origen == "N/A":
+            if (
+                t.origen_nodo
+                and t.origen_nodo.tipo == 'SITE'
+                and hub_origen == "N/A"
+            ):
+                hub_origen = t.origen_nodo.nombre or t.origen_nodo.codigo
+            elif t.hub_site and t.hub_site != "N/A" and hub_origen == "N/A":
                 hub_origen = t.hub_site
-            if t.destino and t.destino != "N/A" and destino == "N/A":
+            if (
+                t.destino_nodo
+                and destino == "N/A"
+            ):
+                destino = t.destino_nodo.nombre or t.destino_nodo.codigo
+            elif t.destino and t.destino != "N/A" and destino == "N/A":
                 destino = t.destino
             if t.marca_modelo and t.marca_modelo != "N/A" and marca_modelo == "N/A":
                 marca_modelo = t.marca_modelo
-            if t.capacidad and t.capacidad != "N/A" and cap == "N/A":
-                cap = t.capacidad
+            # La capacidad de un tramo aislado no representa capacidad de
+            # extremo a extremo. El valor visible se completa únicamente con
+            # el resumen operativo después de evaluar todos los tramos.
             if t.tipo_fibra and not tipo_fibra:
                 tipo_fibra = t.tipo_fibra
             if t.serial and not serial:
@@ -190,21 +270,13 @@ def dashboard_inventario(request):
             hilos_ocupados_total += (t.hilos_ocupados or 0)
             hilos_libres_total += (t.hilos_libres or 0)
             
-        fibras = list(r.fibras_inventario.all())
-        if fibras:
-            hilos_ocupados_total = 0
-            hilos_reservados_total = 0
-            hilos_libres_total = 0
-            for f in fibras:
-                est = (f.estado or '').lower()
-                if est in ['ocupado', 'ocupada']:
-                    hilos_ocupados_total += 1
-                elif est in ['reservado', 'reservada']:
-                    hilos_reservados_total += 1
-                elif est == 'libre':
-                    hilos_libres_total += 1
-        else:
-            hilos_reservados_total = 0
+        # Una fibra lógica se cuenta una sola vez aunque atraviese varios
+        # tramos. FibraTramo determina cobertura física, no multiplica cards.
+        hilos_ocupados_total = resumen_capacidad['hilos_ocupados']
+        hilos_reservados_total = resumen_capacidad['hilos_reservados']
+        hilos_libres_total = resumen_capacidad['hilos_libres']
+        if resumen_capacidad['capacidad_efectiva'] is not None:
+            cap = resumen_capacidad['capacidad']
         
         stats_capacidad[cap] = stats_capacidad.get(cap, 0) + 1
 
@@ -214,9 +286,24 @@ def dashboard_inventario(request):
             tipo_res = res.tipo if res.tipo else "Otro"
             conteo_reservas_nodos[tipo_res] = conteo_reservas_nodos.get(tipo_res, 0) + 1
         
-        total_hilos_ruta = hilos_ocupados_total + hilos_reservados_total + hilos_libres_total
+        hilos_contabilizados = (
+            hilos_ocupados_total
+            + hilos_reservados_total
+            + hilos_libres_total
+        )
+        total_hilos_ruta = (
+            resumen_capacidad['capacidad_efectiva']
+            if resumen_capacidad['capacidad_efectiva'] is not None
+            else hilos_contabilizados
+        )
         utilizacion_hilos = round(
-            ((hilos_ocupados_total + hilos_reservados_total) / total_hilos_ruta) * 100,
+            (
+                min(
+                    hilos_ocupados_total + hilos_reservados_total,
+                    total_hilos_ruta,
+                )
+                / total_hilos_ruta
+            ) * 100,
             1,
         ) if total_hilos_ruta else 0
 
@@ -241,7 +328,36 @@ def dashboard_inventario(request):
             'hilos_reservados': hilos_reservados_total,
             'hilos_libres': hilos_libres_total,
             'total_hilos': total_hilos_ruta,
+            'hilos_contabilizados': hilos_contabilizados,
+            'sin_inventariar': resumen_capacidad['sin_inventariar'],
+            'hilos_sin_estado': resumen_capacidad['hilos_sin_estado'],
+            'fibras_sin_cobertura': resumen_capacidad[
+                'fibras_sin_cobertura'
+            ],
+            'conteos_consistentes': resumen_capacidad[
+                'conteos_consistentes'
+            ],
+            'exceso_conteos': resumen_capacidad['exceso'],
             'utilizacion_hilos': utilizacion_hilos,
+            'capacidad_efectiva': resumen_capacidad['capacidad_efectiva'],
+            'capacidad_min': resumen_capacidad['capacidad_min'],
+            'capacidad_max': resumen_capacidad['capacidad_max'],
+            'capacidades_completas': resumen_capacidad[
+                'capacidades_completas'
+            ],
+            'detalle_fibras_completo': resumen_capacidad[
+                'detalle_fibras_completo'
+            ],
+            'fuente_capacidad': resumen_capacidad['fuente'],
+            'fuente_capacidad_operativa': resumen_capacidad[
+                'fuente_capacidad'
+            ],
+            'fuente_estados': resumen_capacidad['fuente_estados'],
+            'fuente_distancia': resumen_capacidad['fuente_distancia'],
+            'fuente_reservas': resumen_capacidad['fuente_reservas'],
+            'estado_conciliacion_capacidad': resumen_capacidad[
+                'estado_conciliacion_capacidad'
+            ],
             'nivel_capacidad': (
                 'critico' if utilizacion_hilos >= 85
                 else 'atencion' if utilizacion_hilos >= 70
@@ -255,7 +371,6 @@ def dashboard_inventario(request):
 
     rutas_ids = [ruta['id'] for ruta in resumen_rutas]
     tramos_filtrados = InventarioTramo.objects.filter(ruta_id__in=rutas_ids)
-    fibras_filtradas = InventarioFibra.objects.filter(ruta_id__in=rutas_ids)
     reservas_filtradas = Reserva.objects.filter(ruta_id__in=rutas_ids)
     coordenadas_filtradas = CoordenadaRuta.objects.filter(ruta_id__in=rutas_ids)
     odfs_filtrados = InventarioODF.objects.all()
@@ -267,18 +382,42 @@ def dashboard_inventario(request):
     for fila in puertos_filtrados.values('estado_puerto').annotate(total=Count('id')):
         conteo_puertos[(fila['estado_puerto'] or '').strip().lower()] += fila['total']
 
-    conteo_fibras = defaultdict(int)
-    for fila in fibras_filtradas.values('estado').annotate(total=Count('id')):
-        conteo_fibras[(fila['estado'] or '').strip().lower()] += fila['total']
-
     puertos_libres = conteo_puertos['libre']
     puertos_ocupados = conteo_puertos['ocupado'] + conteo_puertos['ocupada']
     puertos_reservados = conteo_puertos['reservado'] + conteo_puertos['reservada']
     total_puertos = puertos_libres + puertos_ocupados + puertos_reservados
-    fibras_libres = conteo_fibras['libre']
-    fibras_ocupadas = conteo_fibras['ocupado'] + conteo_fibras['ocupada']
-    fibras_reservadas = conteo_fibras['reservado'] + conteo_fibras['reservada']
-    total_fibras = fibras_libres + fibras_ocupadas + fibras_reservadas
+    resumenes_fibras_logicas = [
+        capacidad_por_ruta[ruta_id]
+        for ruta_id in rutas_ids
+        if (
+            capacidad_por_ruta[ruta_id]['capacidad_efectiva'] is not None
+            or capacidad_por_ruta[ruta_id]['fibras_total']
+        )
+    ]
+    fibras_libres = sum(
+        resumen['hilos_libres'] for resumen in resumenes_fibras_logicas
+    )
+    fibras_ocupadas = sum(
+        resumen['hilos_ocupados'] for resumen in resumenes_fibras_logicas
+    )
+    fibras_reservadas = sum(
+        resumen['hilos_reservados'] for resumen in resumenes_fibras_logicas
+    )
+    fibras_sin_estado = sum(
+        resumen['hilos_sin_estado'] for resumen in resumenes_fibras_logicas
+    )
+    fibras_sin_cobertura = sum(
+        resumen['fibras_sin_cobertura']
+        for resumen in resumenes_fibras_logicas
+    )
+    total_fibras = sum(
+        (
+            resumen['capacidad_efectiva']
+            if resumen['capacidad_efectiva'] is not None
+            else resumen['fibras_total']
+        )
+        for resumen in resumenes_fibras_logicas
+    )
 
     odfs_data = list(odfs_filtrados.values(
         'id', 'odf', 'hub_site', 'sala', 'rack', 'capacidad_puertos',
@@ -384,6 +523,34 @@ def dashboard_inventario(request):
     sites_disponibles = list(
         HubSite.objects.values('id', 'nombre', 'latitud', 'longitud').order_by('nombre')
     )
+    nombres_sites = {
+        site['nombre'].strip().casefold()
+        for site in sites_disponibles
+        if site['nombre'] and site['nombre'].strip()
+    }
+    for nodo in NodoRed.objects.filter(tipo='SITE').values(
+        'id',
+        'codigo',
+        'nombre',
+    ).order_by('codigo'):
+        codigo = str(nodo['codigo'] or '').strip()
+        nombre = str(nodo['nombre'] or '').strip()
+        if (
+            codigo.casefold() in nombres_sites
+            or nombre.casefold() in nombres_sites
+        ):
+            continue
+        etiqueta = nombre or codigo
+        if not etiqueta:
+            continue
+        sites_disponibles.append({
+            'id': f"nodo-{nodo['id']}",
+            'nombre': etiqueta,
+            'latitud': None,
+            'longitud': None,
+        })
+        nombres_sites.add(etiqueta.casefold())
+    sites_disponibles.sort(key=lambda site: site['nombre'].casefold())
     sites = [
         site for site in sites_disponibles
         if not site_seleccionado or site['nombre'] == site_seleccionado
@@ -478,6 +645,8 @@ def dashboard_inventario(request):
         'fibras_libres': fibras_libres,
         'fibras_ocupadas': fibras_ocupadas,
         'fibras_reservadas': fibras_reservadas,
+        'fibras_sin_estado': fibras_sin_estado,
+        'fibras_sin_cobertura': fibras_sin_cobertura,
         'fibras_utilizadas': fibras_utilizadas,
         'total_fibras': total_fibras,
         'ocupacion_fibras_pct': ocupacion_fibras_pct,
@@ -552,7 +721,8 @@ def dashboard_inventario(request):
 @permission_required('mapas.view_ruta', raise_exception=True)
 def inventario_externo(request):
     """Inventario paginado de troncales y tramos."""
-    from ..models import InventarioTramo, Ruta
+    from collections import defaultdict
+    from ..models import CoordenadaRuta, InventarioTramo, Ruta
 
     tramos = InventarioTramo.objects.all()
 
@@ -565,14 +735,42 @@ def inventario_externo(request):
             .distinct()
         )
 
+    sites_troncal = set(opciones('hub_site'))
+    for prefijo in ('origen_nodo', 'destino_nodo'):
+        for codigo, nombre in (
+            tramos.filter(**{f'{prefijo}__tipo': 'SITE'})
+            .values_list(f'{prefijo}__codigo', f'{prefijo}__nombre')
+            .distinct()
+        ):
+            if codigo:
+                sites_troncal.add(codigo)
+            if nombre:
+                sites_troncal.add(nombre)
+
+    tipos_trazado = set(opciones('tipo_trazado'))
+    tipos_geograficos_por_ruta = defaultdict(set)
+    for ruta_id, tipo in (
+        CoordenadaRuta.objects.exclude(tipo_trazado__isnull=True)
+        .exclude(tipo_trazado='')
+        .values_list('ruta_id', 'tipo_trazado')
+        .distinct()
+    ):
+        tipos_geograficos_por_ruta[ruta_id].add(tipo.strip().upper())
+    if any(
+        'HIBRIDO' in tipos
+        or {'AEREO', 'SOTERRADO'}.issubset(tipos)
+        for tipos in tipos_geograficos_por_ruta.values()
+    ):
+        tipos_trazado.add('HIBRIDO')
+
     context = {
         'rutas_inventario': list(
             Ruta.objects.filter(tramos_inventario__isnull=False)
             .order_by('nombre').values('id', 'nombre').distinct()
         ),
-        'tipos_trazado': opciones('tipo_trazado'),
+        'tipos_trazado': sorted(tipos_trazado, key=str.casefold),
         'estados_tramo': opciones('estado'),
-        'sites_troncal': opciones('hub_site'),
+        'sites_troncal': sorted(sites_troncal, key=str.casefold),
     }
     return render(request, 'mapa_inventario/inventario_externo.html', context)
 
@@ -580,7 +778,7 @@ def inventario_externo(request):
 @permission_required('mapas.view_inventarioodf', raise_exception=True)
 def inventario_interno(request):
     """Inventario de ODF; los registros se solicitan por página."""
-    from ..models import InventarioODF
+    from ..models import InventarioODF, Ruta
 
     queryset = InventarioODF.objects.all()
     def opciones(campo):
@@ -608,14 +806,15 @@ def get_datos_inventario(request):
     """
     from collections import defaultdict
     from ..models import HubSite, Reserva
+    from ..services.capacidad import capacidad_hilos
 
     # El mapa necesita miles de coordenadas, pero no las instancias completas de
     # Django. Consultar solo las columnas utilizadas evita construir más de
     # 10 000 modelos en memoria y mantiene exactamente el mismo contrato JSON.
     rutas = list(
-        Ruta.objects.filter(tramos_inventario__isnull=False)
+        Ruta.objects.filter(coordenadas__isnull=False)
         .order_by('nombre')
-        .values('id', 'nombre', 'otu__nombre', 'olt', 'pon')
+        .values('id', 'nombre', 'otu__nombre', 'olt', 'pon', 'distancia_m')
         .distinct()
     )
     rutas_ids = [ruta['id'] for ruta in rutas]
@@ -624,7 +823,10 @@ def get_datos_inventario(request):
     for coordenada in (
         CoordenadaRuta.objects.filter(ruta_id__in=rutas_ids)
         .order_by('ruta_id', 'orden')
-        .values('ruta_id', 'tramo_secuencia', 'latitud', 'longitud')
+        .values(
+            'ruta_id', 'tramo_secuencia', 'tipo_trazado',
+            'inicio_segmento', 'latitud', 'longitud',
+        )
     ):
         coordenadas_por_ruta[coordenada['ruta_id']].append(coordenada)
 
@@ -632,6 +834,9 @@ def get_datos_inventario(request):
         'ruta_id', 'tramo_secuencia', 'tipo_trazado', 'estado', 'distancia_m',
         'mufas', 'splitters', 'reservas_m', 'capacidad', 'tipo_fibra',
         'origen', 'destino', 'hub_site', 'marca_modelo', 'serial', 'odf_nombre',
+        'capacidad_hilos',
+        'origen_nodo__tipo', 'origen_nodo__codigo', 'origen_nodo__nombre',
+        'destino_nodo__tipo', 'destino_nodo__codigo', 'destino_nodo__nombre',
     )
     tramos_por_ruta = defaultdict(list)
     for tramo in (
@@ -661,30 +866,126 @@ def get_datos_inventario(request):
     resultado = []
 
     for ruta in rutas:
-        # Agrupar coordenadas por tramo_secuencia
-        tramos_coords = {}
+        # `tramos` se conserva como alias JSON para no cambiar la GUI. Desde
+        # esta fase representa segmentos visuales derivados de coordenadas, no
+        # filas de InventarioTramo.
+        segmentos_geograficos = []
+        segmento_actual = None
+        tipo_anterior = None
+        secuencia_legacy_anterior = None
         for coordenada in coordenadas_por_ruta[ruta['id']]:
-            sec = coordenada['tramo_secuencia'] or 1
-            if sec not in tramos_coords:
-                tramos_coords[sec] = []
-            tramos_coords[sec].append([
+            tipo_geografico_raw = (
+                str(coordenada['tipo_trazado']).strip().upper()
+                if coordenada['tipo_trazado']
+                else ''
+            )
+            tipo_geografico = (
+                'SIN CLASIFICAR'
+                if tipo_geografico_raw in {'', 'DESCONOCIDO'}
+                else tipo_geografico_raw
+            )
+            secuencia_legacy = coordenada['tramo_secuencia'] or 1
+            nuevo_segmento = (
+                segmento_actual is None
+                or coordenada['inicio_segmento']
+                or tipo_geografico != tipo_anterior
+                # Compatibilidad con coordenadas creadas por código anterior a
+                # la migración o fixtures que solo completan la secuencia.
+                or secuencia_legacy != secuencia_legacy_anterior
+            )
+            if nuevo_segmento:
+                ancla_continuidad = (
+                    segmento_actual['coordenadas'][-1]
+                    if segmento_actual
+                    and segmento_actual['coordenadas']
+                    else None
+                )
+                segmento_actual = {
+                    'secuencia': len(segmentos_geograficos) + 1,
+                    'tipo_trazado': tipo_geografico,
+                    # El punto anterior es el origen de la arista que llega al
+                    # nuevo corte. Duplicarlo evita huecos entre polilíneas.
+                    'coordenadas': (
+                        [ancla_continuidad]
+                        if ancla_continuidad
+                        else []
+                    ),
+                }
+                segmentos_geograficos.append(segmento_actual)
+
+            segmento_actual['coordenadas'].append([
                 float(coordenada['latitud']),
                 float(coordenada['longitud']),
             ])
-            
-        if not tramos_coords:
-            continue # Si no tiene coordenadas, la saltamos
-            
-        # Generar metadata mapping
-        tramos_metadata = {
-            tramo['tramo_secuencia']: tramo
-            for tramo in tramos_por_ruta[ruta['id']]
-        }
-        tramo_principal = tramos_metadata.get(1)
+            tipo_anterior = tipo_geografico
+            secuencia_legacy_anterior = secuencia_legacy
+
+        if not segmentos_geograficos:
+            continue
+
+        # La metadata técnica se mantiene como fallback de compatibilidad para
+        # el popup actual, pero nunca determina cortes ni colores del mapa.
+        tramos_tecnicos = tramos_por_ruta[ruta['id']]
+        tramo_principal = dict(tramos_tecnicos[0]) if tramos_tecnicos else None
+        if tramo_principal:
+            capacidades = [
+                capacidad_hilos(tramo)
+                for tramo in tramos_tecnicos
+                if capacidad_hilos(tramo) is not None
+            ]
+            if capacidades and len(capacidades) == len(tramos_tecnicos):
+                minima = min(capacidades)
+                maxima = max(capacidades)
+                tramo_principal['capacidad'] = (
+                    f'{minima} Hilos'
+                    if minima == maxima
+                    else f'{minima} Hilos efectivos ({minima}–{maxima})'
+                )
+            elif tramos_tecnicos:
+                tramo_principal['capacidad'] = None
+            tramo_principal['distancia_m'] = sum(
+                tramo['distancia_m'] or 0 for tramo in tramos_tecnicos
+            ) or tramo_principal.get('distancia_m')
+            tramo_principal['mufas'] = sum(
+                tramo['mufas'] or 0 for tramo in tramos_tecnicos
+            )
+            tramo_principal['splitters'] = sum(
+                tramo['splitters'] or 0 for tramo in tramos_tecnicos
+            )
+            tramo_principal['reservas_m'] = sum(
+                tramo['reservas_m'] or 0 for tramo in tramos_tecnicos
+            )
+            ultimo_tramo = tramos_tecnicos[-1]
+            tramo_principal['destino'] = (
+                ultimo_tramo.get('destino')
+                or tramo_principal.get('destino')
+            )
+
+        # El contrato JSON histórico expone un único `hub_site`. Para tramos
+        # creados con la topología F2, donde ese texto legacy puede estar vacío,
+        # se deriva del primer NodoRed tipo SITE sin cambiar las claves que
+        # consume la GUI del mapa.
+        candidatos_site_nodo = []
+        for tramo_tecnico in tramos_tecnicos:
+            for extremo in ('origen_nodo', 'destino_nodo'):
+                if tramo_tecnico.get(f'{extremo}__tipo') != 'SITE':
+                    continue
+                for campo in ('nombre', 'codigo'):
+                    candidato = str(
+                        tramo_tecnico.get(f'{extremo}__{campo}') or ''
+                    ).strip()
+                    if candidato and candidato not in candidatos_site_nodo:
+                        candidatos_site_nodo.append(candidato)
         
         tramos_list = []
-        for sec, coords in tramos_coords.items():
-            meta = tramos_metadata.get(sec)
+        for segmento in segmentos_geograficos:
+            sec = segmento['secuencia']
+            coords = segmento['coordenadas']
+            # No existe una correspondencia ordinal garantizada entre el
+            # segmento visual N y el tramo técnico N. Mientras el frontend
+            # mantenga su contrato legado, se muestra el resumen principal de
+            # la ruta en todos los segmentos.
+            meta = tramo_principal
             
             def get_val(field):
                 val = meta.get(field) if meta else None
@@ -693,6 +994,15 @@ def get_datos_inventario(request):
                 return val
             
             hub_site_name = get_val('hub_site')
+            if not hub_site_name and candidatos_site_nodo:
+                hub_site_name = next(
+                    (
+                        candidato
+                        for candidato in candidatos_site_nodo
+                        if candidato.casefold() in sites_por_nombre
+                    ),
+                    candidatos_site_nodo[0],
+                )
             hub_site_lat = None
             hub_site_lon = None
             hub_site_id = None
@@ -705,9 +1015,7 @@ def get_datos_inventario(request):
 
             tramo_obj = {
                 "tramo_secuencia": sec,
-                "tipo_trazado": (
-                    meta.get('tipo_trazado') if meta else "SIN CLASIFICAR"
-                ) or "SIN CLASIFICAR",
+                "tipo_trazado": segmento['tipo_trazado'],
                 "estado": get_val('estado') or "Desconocido",
                 "distancia_m": get_val('distancia_m'),
                 "mufas": get_val('mufas') or 0,
@@ -743,6 +1051,15 @@ def get_datos_inventario(request):
             "otu": ruta['otu__nombre'] if ruta['otu__nombre'] else "N/A",
             "olt": ruta['olt'] if ruta['olt'] else "N/A",
             "pon": ruta['pon'] if ruta['pon'] else "N/A",
+            "distancia_m": (
+                ruta['distancia_m']
+                if ruta['distancia_m'] is not None
+                else (
+                    tramo_principal.get('distancia_m')
+                    if tramo_principal
+                    else None
+                )
+            ),
             "tramos": tramos_list,
             "reservas_nodos": reservas_list
         })
@@ -2208,7 +2525,10 @@ def get_puertos_odf_api(request):
     Retorna la lista de puertos para un ODF específico.
     Se usa en el mapa de inventario para el panel lateral flotante.
     """
-    from ..models import InventarioODF, DetallePuertoODF
+    from django.db.models import Prefetch, Q
+    from ..models import (
+        InventarioODF, DetallePuertoODF, Ruta, TerminacionFibra,
+    )
     
     hub_site = request.GET.get('hub_site', '').strip()
     odf_nombre = request.GET.get('odf_nombre', '').strip()
@@ -2228,7 +2548,18 @@ def get_puertos_odf_api(request):
     if not odf:
         return JsonResponse({'status': 'error', 'message': f'No se encontró el ODF {odf_nombre}'})
         
-    puertos = list(DetallePuertoODF.objects.filter(odf_obj=odf))
+    puertos = list(
+        DetallePuertoODF.objects.filter(odf_obj=odf).prefetch_related(
+            Prefetch(
+                'terminaciones_fibra',
+                queryset=(
+                    TerminacionFibra.objects.select_related('fibra__ruta')
+                    .order_by('pk')
+                ),
+                to_attr='terminaciones_normalizadas',
+            )
+        )
+    )
     
     # Ordenar puertos de forma numérica ascendente
     def sort_key(p):
@@ -2239,31 +2570,55 @@ def get_puertos_odf_api(request):
             
     puertos.sort(key=sort_key)
     
-    from django.db.models import Q
-    from ..models import Ruta
-
     # Buscar la ruta troncal asociada a este ODF basándose en los tramos de las rutas
     ruta_asociada = Ruta.objects.filter(
-        Q(odf_origen=odf)
-        | Q(odf_destino=odf)
+        Q(
+            fibras_inventario__terminaciones__puerto_odf__odf_obj=odf,
+        )
         | Q(tramos_inventario__odf_nombre__iexact=odf.odf)
+        | Q(
+            tramos_inventario__origen_nodo__tipo='ODF',
+            tramos_inventario__origen_nodo__codigo__iexact=odf.odf,
+        )
+        | Q(
+            tramos_inventario__origen_nodo__tipo='ODF',
+            tramos_inventario__origen_nodo__nombre__iexact=odf.odf,
+        )
+        | Q(
+            tramos_inventario__destino_nodo__tipo='ODF',
+            tramos_inventario__destino_nodo__codigo__iexact=odf.odf,
+        )
+        | Q(
+            tramos_inventario__destino_nodo__tipo='ODF',
+            tramos_inventario__destino_nodo__nombre__iexact=odf.odf,
+        )
     ).distinct().first()
     nombre_ruta_global = ruta_asociada.nombre if ruta_asociada else 'N/A'
 
     data = []
     for p in puertos:
-        ruta_nombre = 'N/A'
-        if p.estado_puerto.lower() == 'ocupado':
+        terminacion = next(
+            (
+                item for item in p.terminaciones_normalizadas
+                if item.fibra_id
+            ),
+            None,
+        )
+        if terminacion is not None:
+            ruta_nombre = terminacion.fibra.nombre_troncal
+        elif str(p.estado_puerto or '').casefold() == 'ocupado':
             ruta_nombre = nombre_ruta_global
-            # Fallback en caso de que Destino contenga el nombre de la ruta explícitamente
+            # Fallback cuando Destino contiene una referencia de ruta.
             if ruta_nombre == 'N/A' and p.destino and "Puerto" in p.destino:
                 ruta_nombre = p.destino
+        else:
+            ruta_nombre = 'N/A'
                 
         data.append({
             'puerto': p.puerto_odf,
             'estado': p.estado_puerto,
             'bandeja': p.bandeja,
-            'fibra': p.fibra,
+            'fibra': terminacion.fibra.fibra_numero if terminacion else '',
             'destino': p.destino,
             'tipo_conector': p.tipo_conector,
             'ruta_troncal': ruta_nombre
