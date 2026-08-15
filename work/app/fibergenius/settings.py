@@ -19,6 +19,21 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Definimos la ruta a nuestra carpeta de datos
 DATA_DIR = os.path.join(BASE_DIR, 'data')
+DATA_ROOT = Path(DATA_DIR)
+
+# Carpeta estándar para los logs de cada instalación. En producción la ruta
+# puede reemplazarse con LOG_ROOT y se crea desde settings_production.py.
+LOG_ROOT = Path(config('LOG_ROOT', default=str(BASE_DIR / 'logs')))
+BACKUP_ROOT = Path(config('BACKUP_ROOT', default=str(BASE_DIR / 'backups')))
+if not os.environ.get(
+    'DJANGO_SETTINGS_MODULE', ''
+).endswith('settings_production'):
+    LOG_ROOT.mkdir(parents=True, exist_ok=True)
+    BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
+
+BACKUP_RETENTION_DAYS = config('BACKUP_RETENTION_DAYS', default=30, cast=int)
+BACKUP_PG_DUMP_PATH = config('BACKUP_PG_DUMP_PATH', default='pg_dump')
+BACKUP_PG_RESTORE_PATH = config('BACKUP_PG_RESTORE_PATH', default='pg_restore')
 
 
 # Quick-start development settings - unsuitable for production
@@ -71,6 +86,21 @@ FIBERGENIUS_MAX_ZIP_UNCOMPRESSED_BYTES = config(
 FIBERGENIUS_ACTIVITY_UPDATE_SECONDS = config(
     'FIBERGENIUS_ACTIVITY_UPDATE_SECONDS', default=180, cast=int
 )
+FIBERGENIUS_LOGIN_MAX_ATTEMPTS = config(
+    'FIBERGENIUS_LOGIN_MAX_ATTEMPTS', default=5, cast=int
+)
+FIBERGENIUS_LOGIN_ATTEMPT_WINDOW_SECONDS = config(
+    'FIBERGENIUS_LOGIN_ATTEMPT_WINDOW_SECONDS', default=900, cast=int
+)
+FIBERGENIUS_LOGIN_LOCKOUT_SECONDS = config(
+    'FIBERGENIUS_LOGIN_LOCKOUT_SECONDS', default=900, cast=int
+)
+FIBERGENIUS_IDLE_TIMEOUT_SECONDS = config(
+    'FIBERGENIUS_IDLE_TIMEOUT_SECONDS', default=1800, cast=int
+)
+FIBERGENIUS_IDLE_TOUCH_SECONDS = config(
+    'FIBERGENIUS_IDLE_TOUCH_SECONDS', default=60, cast=int
+)
 DATA_UPLOAD_MAX_MEMORY_SIZE = FIBERGENIUS_MAX_UPLOAD_BYTES + (1024 * 1024)
 FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024
 
@@ -94,6 +124,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'mapas.middleware.AuditSecurityMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'mapas.middleware.ActiveUserMiddleware',
@@ -233,8 +264,51 @@ LOGGING = {
             'formatter': 'verbose',
         },
         'file': {
-            'class': 'logging.FileHandler',
-            'filename': os.path.join(BASE_DIR, 'django.log'),
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(LOG_ROOT / 'django.log'),
+            'maxBytes': 10 * 1024 * 1024,
+            'backupCount': 10,
+            'encoding': 'utf-8',
+            'formatter': 'verbose',
+        },
+        'security_file': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(LOG_ROOT / 'security.log'),
+            'maxBytes': 10 * 1024 * 1024,
+            'backupCount': 10,
+            'encoding': 'utf-8',
+            'formatter': 'verbose',
+        },
+        'audit_file': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(LOG_ROOT / 'audit.log'),
+            'maxBytes': 10 * 1024 * 1024,
+            'backupCount': 10,
+            'encoding': 'utf-8',
+            'formatter': 'verbose',
+        },
+        'integration_file': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(LOG_ROOT / 'integration.log'),
+            'maxBytes': 10 * 1024 * 1024,
+            'backupCount': 10,
+            'encoding': 'utf-8',
+            'formatter': 'verbose',
+        },
+        'import_file': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(LOG_ROOT / 'import.log'),
+            'maxBytes': 10 * 1024 * 1024,
+            'backupCount': 10,
+            'encoding': 'utf-8',
+            'formatter': 'verbose',
+        },
+        'backup_file': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': str(LOG_ROOT / 'backup.log'),
+            'maxBytes': 10 * 1024 * 1024,
+            'backupCount': 10,
+            'encoding': 'utf-8',
             'formatter': 'verbose',
         },
     },
@@ -245,9 +319,34 @@ LOGGING = {
             'propagate': True,
         },
         'django': {
-            'handlers': ['console'],
+            'handlers': ['console', 'file'],
             'level': 'WARNING',
-            'propagate': True,
+            'propagate': False,
+        },
+        'fibergenius.security': {
+            'handlers': ['console', 'security_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'fibergenius.audit': {
+            'handlers': ['console', 'audit_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'fibergenius.integration': {
+            'handlers': ['console', 'integration_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'fibergenius.import': {
+            'handlers': ['console', 'import_file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'fibergenius.backup': {
+            'handlers': ['console', 'backup_file'],
+            'level': 'INFO',
+            'propagate': False,
         },
     },
 }

@@ -2,8 +2,10 @@
 Vistas de gestión de usuarios, grupos, roles y permisos.
 """
 import logging
+import math
 from collections import defaultdict
 
+from django.conf import settings
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required, permission_required
 from django.contrib.auth.models import User, Group, Permission
@@ -15,6 +17,12 @@ from django.views.decorators.http import require_POST
 from django.utils.http import url_has_allowed_host_and_scheme
 
 from ..forms import CustomUserCreationForm, CustomUserChangeForm, GrupoForm
+from ..services.security import (
+    clear_failures,
+    client_ip,
+    lock_status,
+    register_failure,
+)
 
 logger = logging.getLogger('mapas')
 
@@ -22,18 +30,57 @@ logger = logging.getLogger('mapas')
 def custom_login_view(request):
     if request.user.is_authenticated:
         return redirect('mapa_inventario')
-    form = AuthenticationForm(request, data=request.POST or None)
-    if request.method == 'POST' and form.is_valid():
-        login(request, form.get_user())
-        siguiente = request.GET.get('next', '')
-        if siguiente and url_has_allowed_host_and_scheme(
-            siguiente,
-            allowed_hosts={request.get_host()},
-            require_https=request.is_secure(),
-        ):
-            return redirect(siguiente)
-        return redirect('mapa_inventario')
-    return render(request, 'login.html', {'form': form})
+    context = {}
+    if request.GET.get('reason') == 'inactive':
+        context['error_type'] = 'session_expired'
+
+    if request.method == 'POST':
+        username = request.POST.get('username', '').strip()
+        ip_address = client_ip(request)
+        locked, remaining_seconds = lock_status(username, ip_address)
+        if locked:
+            context.update({
+                'form': AuthenticationForm(request),
+                'error_type': 'temporarily_locked',
+                'lock_minutes': max(1, math.ceil(remaining_seconds / 60)),
+            })
+            return render(request, 'login.html', context, status=429)
+
+        form = AuthenticationForm(request, data=request.POST)
+        if form.is_valid():
+            clear_failures(username, ip_address)
+            login(request, form.get_user())
+            request.session['_fg_last_activity'] = int(now().timestamp())
+            siguiente = request.GET.get('next', '')
+            if siguiente and url_has_allowed_host_and_scheme(
+                siguiente,
+                allowed_hosts={request.get_host()},
+                require_https=request.is_secure(),
+            ):
+                return redirect(siguiente)
+            return redirect('mapa_inventario')
+
+        newly_locked, _remaining_attempts = register_failure(
+            username, ip_address
+        )
+        context['error_type'] = (
+            'temporarily_locked' if newly_locked else 'invalid_credentials'
+        )
+        if newly_locked:
+            context['lock_minutes'] = max(
+                1,
+                math.ceil(settings.FIBERGENIUS_LOGIN_LOCKOUT_SECONDS / 60),
+            )
+        context['form'] = form
+        return render(
+            request,
+            'login.html',
+            context,
+            status=429 if newly_locked else 200,
+        )
+
+    context['form'] = AuthenticationForm(request)
+    return render(request, 'login.html', context)
 
 
 from datetime import timedelta
@@ -205,7 +252,7 @@ def obtener_permisos_agrupados():
             agrupados["Inventario"]["Planta Externa"].append(p)
         elif modelo_key in [
             'inventarioodf', 'detallepuertoodf', 'salatecnica', 'rackfisico',
-            'terminacionfibra',
+            'terminacionfibra', 'auditoriapuertoodf',
         ]:
             agrupados["Inventario"]["Inventario Interno"].append(p)
             agrupados["Inventario"]["Planta Interna"].append(p)

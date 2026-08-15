@@ -286,6 +286,20 @@
                         <span>Su cuenta ha sido desactivada por el administrador del sistema. Contacte al equipo de soporte para más información.</span>
                     </div>
                 </div>
+                {% elif error_type == 'temporarily_locked' %}
+                <div class="login-alert-suspended">
+                    <div>
+                        <strong>Acceso bloqueado temporalmente</strong>
+                        <span>Se alcanzó el límite de intentos. Intente nuevamente en aproximadamente {{ lock_minutes }} minuto{{ lock_minutes|pluralize }}.</span>
+                    </div>
+                </div>
+                {% elif error_type == 'session_expired' %}
+                <div class="login-alert-suspended">
+                    <div>
+                        <strong>Sesión cerrada por inactividad</strong>
+                        <span>Por seguridad, vuelva a ingresar sus credenciales.</span>
+                    </div>
+                </div>
                 {% endif %}
 
                 {% if messages %}

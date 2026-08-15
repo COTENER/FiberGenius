@@ -16,6 +16,19 @@ SECRET_KEY = fg("SECRET_KEY")
 DEBUG = False
 ALLOWED_HOSTS = fg("ALLOWED_HOSTS", cast=Csv())
 CSRF_TRUSTED_ORIGINS = fg("CSRF_TRUSTED_ORIGINS", cast=Csv())
+FIBERGENIUS_LOGIN_MAX_ATTEMPTS = fg("FIBERGENIUS_LOGIN_MAX_ATTEMPTS", default=5, cast=int)
+FIBERGENIUS_LOGIN_ATTEMPT_WINDOW_SECONDS = fg(
+    "FIBERGENIUS_LOGIN_ATTEMPT_WINDOW_SECONDS", default=900, cast=int
+)
+FIBERGENIUS_LOGIN_LOCKOUT_SECONDS = fg(
+    "FIBERGENIUS_LOGIN_LOCKOUT_SECONDS", default=900, cast=int
+)
+FIBERGENIUS_IDLE_TIMEOUT_SECONDS = fg(
+    "FIBERGENIUS_IDLE_TIMEOUT_SECONDS", default=1800, cast=int
+)
+FIBERGENIUS_IDLE_TOUCH_SECONDS = fg(
+    "FIBERGENIUS_IDLE_TOUCH_SECONDS", default=60, cast=int
+)
 
 DATABASES = {
     "default": {
@@ -32,13 +45,19 @@ DATABASES = {
 
 DATA_ROOT = Path(fg("DATA_ROOT", default=r"C:\ProgramData\COTENER\FiberGenius\data"))
 LOG_ROOT = Path(fg("LOG_ROOT", default=r"C:\ProgramData\COTENER\FiberGenius\logs"))
+BACKUP_ROOT = Path(fg("BACKUP_ROOT", default=r"C:\ProgramData\COTENER\FiberGenius\backups"))
 STATIC_ROOT = Path(fg("STATIC_ROOT", default=r"C:\ProgramData\COTENER\FiberGenius\static"))
 MEDIA_ROOT = Path(fg("MEDIA_ROOT", default=r"C:\ProgramData\COTENER\FiberGenius\media"))
 STATIC_URL = "/static/"
 MEDIA_URL = "/media/"
 
-for directory in (DATA_ROOT, LOG_ROOT, STATIC_ROOT, MEDIA_ROOT):
+for directory in (DATA_ROOT, LOG_ROOT, BACKUP_ROOT, STATIC_ROOT, MEDIA_ROOT):
     directory.mkdir(parents=True, exist_ok=True)
+
+BACKUP_RETENTION_DAYS = fg("BACKUP_RETENTION_DAYS", default=30, cast=int)
+BACKUP_PG_DUMP_PATH = fg("BACKUP_PG_DUMP_PATH", default="pg_dump")
+BACKUP_PG_RESTORE_PATH = fg("BACKUP_PG_RESTORE_PATH", default="pg_restore")
+FIBERGENIUS_ENV_FILE = ENV_FILE
 
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
@@ -93,11 +112,56 @@ LOGGING = {
             "formatter": "standard",
             "encoding": "utf-8",
         },
+        "security": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": str(LOG_ROOT / "security.log"),
+            "maxBytes": 10 * 1024 * 1024,
+            "backupCount": 10,
+            "formatter": "standard",
+            "encoding": "utf-8",
+        },
+        "audit": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": str(LOG_ROOT / "audit.log"),
+            "maxBytes": 10 * 1024 * 1024,
+            "backupCount": 10,
+            "formatter": "standard",
+            "encoding": "utf-8",
+        },
+        "integration": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": str(LOG_ROOT / "integration.log"),
+            "maxBytes": 10 * 1024 * 1024,
+            "backupCount": 10,
+            "formatter": "standard",
+            "encoding": "utf-8",
+        },
+        "import": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": str(LOG_ROOT / "import.log"),
+            "maxBytes": 10 * 1024 * 1024,
+            "backupCount": 10,
+            "formatter": "standard",
+            "encoding": "utf-8",
+        },
+        "backup": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "filename": str(LOG_ROOT / "backup.log"),
+            "maxBytes": 10 * 1024 * 1024,
+            "backupCount": 10,
+            "formatter": "standard",
+            "encoding": "utf-8",
+        },
     },
     "root": {"handlers": ["console", "application"], "level": "INFO"},
     "loggers": {
         "django": {"handlers": ["console", "application"], "level": "WARNING", "propagate": False},
         "mapas": {"handlers": ["console", "application"], "level": "INFO", "propagate": False},
+        "fibergenius.security": {"handlers": ["console", "security"], "level": "INFO", "propagate": False},
+        "fibergenius.audit": {"handlers": ["console", "audit"], "level": "INFO", "propagate": False},
+        "fibergenius.integration": {"handlers": ["console", "integration"], "level": "INFO", "propagate": False},
+        "fibergenius.import": {"handlers": ["console", "import"], "level": "INFO", "propagate": False},
+        "fibergenius.backup": {"handlers": ["console", "backup"], "level": "INFO", "propagate": False},
     },
 }
 
