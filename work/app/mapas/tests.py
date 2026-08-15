@@ -3,10 +3,13 @@ import hmac
 import gzip
 import io
 import json
+import shutil
 import tempfile
 import time
+import uuid
 import zipfile
 from pathlib import Path
+from urllib.parse import urlencode
 
 from django.contrib.auth.models import Group, Permission, User
 from django.core.exceptions import ValidationError
@@ -15,6 +18,7 @@ from django.core.management import call_command
 from django.db import IntegrityError, transaction
 from django.db import connection
 from django.db.models.deletion import ProtectedError
+from django.template.loader import render_to_string
 from django.test import RequestFactory, TestCase, TransactionTestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -31,8 +35,10 @@ from .models import (
     InventarioFibra,
     InventarioODF,
     InventarioTramo,
+    LoginThrottle,
     LoteImportacion,
     Medicion,
+    NodoRed,
     OTU,
     PruebaOTDR,
     PuertoOTU,
@@ -51,7 +57,9 @@ from .management.commands.actualizar_mediciones import (
 )
 from .forms import CustomUserCreationForm
 from .views.importacion import (
+    _procesar_coordenadas_csv,
     _procesar_coordenadas_inventario_zip,
+    _procesar_coordenadas_zip,
     _procesar_puertos_odf_inventario,
     _procesar_reservas,
     _procesar_ruta_otu,
@@ -285,36 +293,36 @@ class InventarioFisicoTests(TransactionTestCase):
                 fibra_salida=fibra_b,
             ).full_clean()
 
-    def test_terminacion_exige_odf_del_extremo_y_sincroniza_puerto(self):
+    def test_terminacion_define_odf_por_fibra_y_ocupa_puerto(self):
         _, _, _, odf_a = crear_jerarquia_odf(nombre='ODF-EXT-A')
         _, _, _, odf_b = crear_jerarquia_odf(nombre='ODF-EXT-B')
-        puerto_a = DetallePuertoODF.objects.create(odf_obj=odf_a, puerto_odf='1')
-        puerto_b = DetallePuertoODF.objects.create(odf_obj=odf_b, puerto_odf='1')
-        ruta = Ruta.objects.create(
-            nombre='TRONCAL-TERMINACION',
-            odf_origen=odf_a,
-            odf_destino=odf_b,
+        puerto_a = DetallePuertoODF.objects.create(
+            odf_obj=odf_a,
+            puerto_odf='1',
+            estado_puerto='Reservado',
         )
+        puerto_b = DetallePuertoODF.objects.create(
+            odf_obj=odf_b,
+            puerto_odf='1',
+            estado_puerto='Libre',
+        )
+        ruta = Ruta.objects.create(nombre='TRONCAL-TERMINACION')
         fibra = InventarioFibra.objects.create(ruta=ruta, fibra_numero='F1')
 
-        with self.assertRaises(ValidationError):
-            TerminacionFibra(
-                fibra=fibra,
-                extremo='A',
-                puerto_odf=puerto_b,
-            ).full_clean()
-
-        terminacion = TerminacionFibra.objects.create(
+        TerminacionFibra.objects.create(
             fibra=fibra,
             extremo='A',
             puerto_odf=puerto_a,
         )
+        TerminacionFibra.objects.create(
+            fibra=fibra,
+            extremo='B',
+            puerto_odf=puerto_b,
+        )
         puerto_a.refresh_from_db()
+        puerto_b.refresh_from_db()
         self.assertEqual(puerto_a.estado_puerto, 'Ocupado')
-        self.assertEqual(puerto_a.fibra, 'F1')
-        terminacion.delete()
-        puerto_a.refresh_from_db()
-        self.assertEqual(puerto_a.estado_puerto, 'Libre')
+        self.assertEqual(puerto_b.estado_puerto, 'Ocupado')
 
 
 class ImportacionV5Tests(TestCase):
@@ -339,8 +347,19 @@ class ImportacionV5Tests(TestCase):
         self.assertEqual(Reserva.objects.filter(ruta__nombre='RUTA-P57').count(), 2)
         self.assertEqual(resultado['creadas'], 2)
 
-    def test_zip_segmentado_vincula_coordenadas_y_conserva_distancias(self):
+    def test_zip_segmentado_reemplaza_geografia_sin_tocar_tramos_tecnicos(self):
         ruta = Ruta.objects.create(nombre='RUTA-ZIP')
+        InventarioTramo.objects.create(
+            ruta=ruta,
+            tramo_secuencia=1,
+            estado='OPERATIVO',
+            capacidad='144 Hilos',
+            hub_site='SITE-A',
+            distancia_m=987.5,
+        )
+        inventario_antes = list(
+            ruta.tramos_inventario.order_by('pk').values()
+        )
         contenido = (
             'Latitude,Longitude,tipo_trazado,new_seg\n'
             '-23.0000000,-69.0000000,AEREO,false\n'
@@ -353,10 +372,165 @@ class ImportacionV5Tests(TestCase):
         archivo.seek(0)
 
         _procesar_coordenadas_inventario_zip(archivo)
-        self.assertEqual(ruta.tramos_inventario.count(), 2)
-        self.assertFalse(ruta.coordenadas.filter(tramo__isnull=True).exists())
+        self.assertEqual(
+            list(ruta.tramos_inventario.order_by('pk').values()),
+            inventario_antes,
+        )
+        coordenadas = list(ruta.coordenadas.order_by('orden'))
+        self.assertEqual(
+            [coordenada.tipo_trazado for coordenada in coordenadas],
+            ['AEREO', 'AEREO', 'SOTERRADO'],
+        )
+        self.assertEqual(
+            [coordenada.inicio_segmento for coordenada in coordenadas],
+            [True, False, True],
+        )
+        self.assertEqual(
+            [coordenada.tramo_secuencia for coordenada in coordenadas],
+            [1, 1, 2],
+        )
+        self.assertTrue(all(
+            coordenada.tramo_id is None for coordenada in coordenadas
+        ))
 
-    def test_metadata_total_no_sobrescribe_distancias_de_segmento(self):
+    def test_csv_geografico_crea_ruta_sin_inventario_tramo(self):
+        archivo = io.BytesIO(
+            (
+                'ruta,latitude,longitude,tipo_trazado,new_seg\n'
+                'RUTA-NUEVA,-23.0000000,-69.0000000,AEREO,false\n'
+                'RUTA-NUEVA,-23.0010000,-69.0010000,SOTERRADO,true\n'
+            ).encode()
+        )
+
+        _procesar_coordenadas_csv(archivo)
+
+        ruta = Ruta.objects.get(nombre='RUTA-NUEVA')
+        self.assertEqual(ruta.coordenadas.count(), 2)
+        self.assertFalse(ruta.tramos_inventario.exists())
+
+    def test_recargar_csv_geografico_preserva_inventario_tecnico(self):
+        ruta = Ruta.objects.create(nombre='RUTA-CSV-EXISTENTE')
+        InventarioTramo.objects.create(
+            ruta=ruta,
+            tramo_secuencia=1,
+            estado='OPERATIVO',
+            capacidad='64 Hilos',
+            hub_site='SITE-ORIGEN',
+            distancia_m=700,
+        )
+        InventarioTramo.objects.create(
+            ruta=ruta,
+            tramo_secuencia=2,
+            estado='MANTENIMIENTO',
+            capacidad='48 Hilos',
+            destino='SITE-DESTINO',
+            distancia_m=300,
+        )
+        inventario_antes = list(
+            ruta.tramos_inventario.order_by('pk').values()
+        )
+        contenido = (
+            'ruta,latitude,longitude,tipo_trazado,new_seg\n'
+            'RUTA-CSV-EXISTENTE,-23.0000000,-69.0000000,AEREO,false\n'
+            'RUTA-CSV-EXISTENTE,-23.0010000,-69.0010000,AEREO,false\n'
+            'RUTA-CSV-EXISTENTE,-23.0020000,-69.0020000,SOTERRADO,true\n'
+            'RUTA-CSV-EXISTENTE,-23.0030000,-69.0030000,AEREO,true\n'
+        ).encode()
+
+        for _ in range(2):
+            _procesar_coordenadas_csv(io.BytesIO(contenido))
+            self.assertEqual(
+                list(ruta.tramos_inventario.order_by('pk').values()),
+                inventario_antes,
+            )
+
+        coordenadas = list(ruta.coordenadas.order_by('orden'))
+        self.assertEqual(len(coordenadas), 4)
+        self.assertEqual(
+            [coordenada.inicio_segmento for coordenada in coordenadas],
+            [True, False, True, True],
+        )
+        self.assertTrue(all(
+            coordenada.tramo_id is None for coordenada in coordenadas
+        ))
+
+    def test_csv_geografico_invalido_conserva_geografia_e_inventario(self):
+        ruta = Ruta.objects.create(nombre='RUTA-ROLLBACK')
+        InventarioTramo.objects.create(
+            ruta=ruta,
+            tramo_secuencia=1,
+            capacidad='48 Hilos',
+        )
+        CoordenadaRuta.objects.create(
+            ruta=ruta,
+            orden=1,
+            latitud='-23.0000000',
+            longitud='-69.0000000',
+            tipo_trazado='AEREO',
+            inicio_segmento=True,
+        )
+        coordenadas_antes = list(
+            ruta.coordenadas.order_by('pk').values()
+        )
+        inventario_antes = list(
+            ruta.tramos_inventario.order_by('pk').values()
+        )
+        archivo = io.BytesIO(
+            (
+                'ruta,latitude,longitude,tipo_trazado,new_seg\n'
+                'RUTA-ROLLBACK,-23.1000000,-69.1000000,AEREO,false\n'
+                'RUTA-ROLLBACK,999,-69.2000000,AEREO,false\n'
+            ).encode()
+        )
+
+        with self.assertRaises(ValueError):
+            _procesar_coordenadas_csv(archivo)
+
+        self.assertEqual(
+            list(ruta.coordenadas.order_by('pk').values()),
+            coordenadas_antes,
+        )
+        self.assertEqual(
+            list(ruta.tramos_inventario.order_by('pk').values()),
+            inventario_antes,
+        )
+
+    def test_zip_simple_no_modifica_inventario_tecnico(self):
+        ruta = Ruta.objects.create(nombre='RUTA-ZIP-SIMPLE')
+        InventarioTramo.objects.create(
+            ruta=ruta,
+            tramo_secuencia=1,
+            estado='OPERATIVO',
+        )
+        inventario_antes = list(
+            ruta.tramos_inventario.order_by('pk').values()
+        )
+        archivo = io.BytesIO()
+        with zipfile.ZipFile(archivo, 'w') as paquete:
+            paquete.writestr(
+                'RUTA-ZIP-SIMPLE.csv',
+                (
+                    'Latitude,Longitude\n'
+                    '-23.0000000,-69.0000000\n'
+                    '-23.0010000,-69.0010000\n'
+                ),
+            )
+        archivo.seek(0)
+
+        _procesar_coordenadas_zip(archivo)
+
+        self.assertEqual(
+            list(ruta.tramos_inventario.order_by('pk').values()),
+            inventario_antes,
+        )
+        self.assertEqual(
+            list(ruta.coordenadas.values_list(
+                'tipo_trazado', 'inicio_segmento', 'tramo_id'
+            )),
+            [('DESCONOCIDO', True, None), ('DESCONOCIDO', False, None)],
+        )
+
+    def test_formato_legacy_no_se_aplica_ambiguamente_a_varios_tramos(self):
         ruta = Ruta.objects.create(nombre='RUTA-METRICAS')
         InventarioTramo.objects.create(ruta=ruta, tramo_secuencia=1, distancia_m=100)
         InventarioTramo.objects.create(ruta=ruta, tramo_secuencia=2, distancia_m=200)
@@ -364,12 +538,88 @@ class ImportacionV5Tests(TestCase):
             b'ruta,distancia,mufas,splitters,reservas_m,hilos_ocupados,hilos_libres\n'
             b'RUTA-METRICAS,300,2,1,50,3,9\n'
         )
-        _procesar_tramos_inventario(archivo)
+        resultado = _procesar_tramos_inventario(archivo)
         ruta.refresh_from_db()
         tramos = list(ruta.tramos_inventario.order_by('tramo_secuencia'))
-        self.assertEqual(ruta.distancia_m, 300)
+        self.assertIsNone(ruta.distancia_m)
         self.assertEqual([tramo.distancia_m for tramo in tramos], [100, 200])
-        self.assertEqual([tramo.mufas for tramo in tramos], [2, 0])
+        self.assertEqual([tramo.mufas for tramo in tramos], [0, 0])
+        self.assertEqual(resultado['rechazadas'], 1)
+        self.assertTrue(
+            any(
+                'no identifica' in advertencia
+                for advertencia in resultado['advertencias']
+            )
+        )
+
+    def test_carga_tecnica_crea_registro_inicial_si_la_ruta_no_tiene_tramos(self):
+        ruta = Ruta.objects.create(nombre='RUTA-TECNICA-NUEVA')
+        archivo = io.BytesIO(
+            (
+                'ruta,estado,capacidad,tipo_fibra,hilos_ocupados,hilos_libres\n'
+                'RUTA-TECNICA-NUEVA,OPERATIVO,48,G.652D,12,36\n'
+            ).encode()
+        )
+
+        resultado = _procesar_tramos_inventario(archivo)
+
+        tramo = ruta.tramos_inventario.get(tramo_secuencia=1)
+        self.assertEqual(resultado['actualizadas'], 1)
+        self.assertEqual(tramo.estado, 'OPERATIVO')
+        self.assertEqual(tramo.capacidad, '48 Hilos')
+        self.assertEqual(tramo.hilos_ocupados, 12)
+        self.assertEqual(tramo.hilos_libres, 36)
+
+    def test_carga_tecnica_no_sobrescribe_distancia_geografica(self):
+        ruta = Ruta.objects.create(
+            nombre='RUTA-DISTANCIA-GEO',
+            distancia_m=1250,
+        )
+        CoordenadaRuta.objects.bulk_create([
+            CoordenadaRuta(
+                ruta=ruta,
+                orden=1,
+                latitud='-23.0000000',
+                longitud='-69.0000000',
+                tipo_trazado='AEREO',
+                inicio_segmento=True,
+            ),
+            CoordenadaRuta(
+                ruta=ruta,
+                orden=2,
+                latitud='-23.0010000',
+                longitud='-69.0010000',
+                tipo_trazado='AEREO',
+            ),
+        ])
+        archivo = io.BytesIO(
+            (
+                'ruta,distancia,capacidad\n'
+                'RUTA-DISTANCIA-GEO,9999,48\n'
+            ).encode()
+        )
+
+        _procesar_tramos_inventario(archivo)
+
+        ruta.refresh_from_db()
+        tramo = ruta.tramos_inventario.get(tramo_secuencia=1)
+        self.assertEqual(ruta.distancia_m, 1250)
+        self.assertEqual(tramo.distancia_m, 9999)
+
+    def test_trazado_exige_al_menos_dos_coordenadas(self):
+        archivo = io.BytesIO(
+            (
+                'ruta,latitude,longitude,tipo_trazado\n'
+                'RUTA-UN-PUNTO,-23.0000000,-69.0000000,AEREO\n'
+            ).encode()
+        )
+
+        with self.assertRaisesRegex(ValueError, 'al menos dos'):
+            _procesar_coordenadas_csv(archivo)
+
+        self.assertFalse(Ruta.objects.filter(
+            nombre='RUTA-UN-PUNTO'
+        ).exists())
 
     def test_carga_web_registra_lote_con_contadores_y_origen(self):
         usuario = User.objects.create_user('importador', password='clave')
@@ -484,18 +734,17 @@ class AutorizacionTests(TestCase):
         puerto.refresh_from_db()
         self.assertEqual(puerto.puerto_odf, '2')
 
-    def test_actualizacion_de_puerto_acepta_estado_reservado(self):
+    def test_gestion_de_puerto_acepta_reserva(self):
         permiso = Permission.objects.get(codename='change_detallepuertoodf')
         self.usuario.user_permissions.add(permiso)
         _, _, _, odf = crear_jerarquia_odf(capacidad=2)
         puerto = DetallePuertoODF.objects.create(odf_obj=odf, puerto_odf='1')
 
         response = self.client.post(
-            reverse('api_update_puerto'),
+            reverse('api_gestionar_conexion_puerto'),
             data=json.dumps({
-                'id': puerto.pk,
-                'puerto_odf': '1',
-                'estado_puerto': 'Reservado',
+                'accion': 'reservar',
+                'puerto_id': puerto.pk,
             }),
             content_type='application/json',
         )
@@ -536,6 +785,63 @@ class AutorizacionTests(TestCase):
             {'username': 'operador', 'password': 'clave-segura'},
         )
         self.assertRedirects(response, reverse('mapa_inventario'), fetch_redirect_response=False)
+
+
+@override_settings(
+    FIBERGENIUS_LOGIN_MAX_ATTEMPTS=2,
+    FIBERGENIUS_LOGIN_ATTEMPT_WINDOW_SECONDS=300,
+    FIBERGENIUS_LOGIN_LOCKOUT_SECONDS=120,
+    FIBERGENIUS_IDLE_TIMEOUT_SECONDS=60,
+    FIBERGENIUS_IDLE_TOUCH_SECONDS=1,
+)
+class ControlesAccesoTests(TestCase):
+    def setUp(self):
+        self.usuario = User.objects.create_user(
+            'usuario-seguro',
+            password='Clave-segura-2026',
+        )
+
+    def test_bloquea_temporalmente_despues_del_limite_de_intentos(self):
+        login_url = reverse('login')
+        credenciales = {
+            'username': self.usuario.username,
+            'password': 'incorrecta',
+        }
+
+        primero = self.client.post(login_url, credenciales)
+        segundo = self.client.post(login_url, credenciales)
+        aun_bloqueado = self.client.post(login_url, {
+            'username': self.usuario.username,
+            'password': 'Clave-segura-2026',
+        })
+
+        self.assertEqual(primero.status_code, 200)
+        self.assertEqual(segundo.status_code, 429)
+        self.assertEqual(aun_bloqueado.status_code, 429)
+        self.assertEqual(
+            LoginThrottle.objects.filter(locked_until__isnull=False).count(),
+            2,
+        )
+        self.assertContains(
+            segundo,
+            'Acceso bloqueado temporalmente',
+            status_code=429,
+        )
+
+    def test_cierra_sesion_expirada_por_inactividad(self):
+        self.client.force_login(self.usuario)
+        session = self.client.session
+        session['_fg_last_activity'] = int(time.time()) - 61
+        session.save()
+
+        response = self.client.get(reverse('mapa_inventario'))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.url,
+            f"{reverse('login')}?reason=inactive",
+        )
+        self.assertNotIn('_auth_user_id', self.client.session)
 
 
 class WebhookTests(TestCase):
@@ -666,16 +972,17 @@ class GuiOperativaTests(TestCase):
             DetallePuertoODF.objects.create(
                 odf_obj=self.odf,
                 puerto_odf=str(numero),
-                estado_puerto=(
-                    'Ocupado' if numero == 1 else ('Reservado' if numero == 3 else 'Libre')
-                ),
-                fibra=f'F{numero}',
+                estado_puerto='Reservado' if numero == 3 else 'Libre',
                 destino=f'DESTINO-{numero}',
             )
             for numero in range(1, 4)
         ]
+        DetallePuertoODF.objects.filter(pk=self.puertos[0].pk).update(
+            estado_puerto='Ocupado'
+        )
+        self.puertos[0].refresh_from_db()
         self.odf.actualizar_contadores()
-        self.troncal = Ruta.objects.create(nombre='TRONCAL-GUI', odf_origen=self.odf)
+        self.troncal = Ruta.objects.create(nombre='TRONCAL-GUI')
         self.tramo = InventarioTramo.objects.create(
             ruta=self.troncal,
             tramo_secuencia=1,
@@ -690,11 +997,14 @@ class GuiOperativaTests(TestCase):
             orden=1,
             latitud='-12.0463740',
             longitud='-77.0427930',
+            tipo_trazado='AEREO',
+            inicio_segmento=True,
         )
         self.fibra = InventarioFibra.objects.create(
             ruta=self.troncal,
             fibra_numero='F1',
             estado='Ocupado',
+            origen_estado='INFORMADO',
             destino='DESTINO-GUI',
         )
         self.elemento = Reserva.objects.create(
@@ -704,6 +1014,18 @@ class GuiOperativaTests(TestCase):
             latitud=-23,
             longitud=-69,
         )
+
+    def test_selector_de_extremos_no_impone_orientacion_geografica(self):
+        self.usuario.user_permissions.add(
+            Permission.objects.get(codename='change_detallepuertoodf')
+        )
+        response = self.client.get(reverse('planta_interna'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '>Extremo A<')
+        self.assertContains(response, '>Extremo B<')
+        self.assertContains(response, 'no define la orientación geográfica')
+        self.assertNotContains(response, 'Extremo A (inicio)')
 
     def test_puertos_se_entregan_paginados_y_filtrados_desde_el_servidor(self):
         response = self.client.get(reverse('api_puertos_paginados'), {
@@ -769,6 +1091,125 @@ class GuiOperativaTests(TestCase):
         self.assertEqual({item['odf'] for item in payload['data']}, {'ODF-GUI'})
         self.assertEqual(payload['summary']['reservados'], 1)
 
+    def test_odf_seleccionado_tiene_prioridad_sobre_contexto_global_de_otro_site(self):
+        response = self.client.get(reverse('api_puertos_paginados'), {
+            'odf_id': self.odf.pk,
+            'site': 'SITE-DISTINTO',
+            'page_size': 48,
+        })
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload['pagination']['total'], 3)
+        self.assertEqual({item['odf'] for item in payload['data']}, {'ODF-GUI'})
+        self.assertEqual(payload['summary']['ocupados'], 1)
+
+    def test_puertos_del_mapa_se_ordenan_por_numero_y_no_como_texto(self):
+        for numero in ('10', '11', '12'):
+            DetallePuertoODF.objects.create(
+                odf_obj=self.odf,
+                puerto_odf=numero,
+                estado_puerto='Libre',
+            )
+
+        response = self.client.get(reverse('api_puertos_paginados'), {
+            'odf_id': self.odf.pk,
+            'page_size': 48,
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [item['puerto'] for item in response.json()['data']],
+            ['1', '2', '3', '10', '11', '12'],
+        )
+
+    def test_puertos_odf_del_mapa_usan_la_ruta_de_cada_terminacion(self):
+        TerminacionFibra.objects.create(
+            fibra=self.fibra,
+            extremo='A',
+            puerto_odf=self.puertos[0],
+        )
+        otra_ruta = Ruta.objects.create(nombre='TRONCAL-PUERTO-2')
+        otra_fibra = InventarioFibra.objects.create(
+            ruta=otra_ruta,
+            fibra_numero='F2',
+            estado='Ocupado',
+            origen_estado='INFORMADO',
+        )
+        TerminacionFibra.objects.create(
+            fibra=otra_fibra,
+            extremo='A',
+            puerto_odf=self.puertos[1],
+        )
+
+        response = self.client.get(reverse('api_puertos_odf_mapa'), {
+            'hub_site': self.odf.hub_site,
+            'odf_nombre': self.odf.odf,
+        })
+
+        self.assertEqual(response.status_code, 200)
+        puertos = {
+            item['puerto']: item for item in response.json()['puertos']
+        }
+        self.assertEqual(
+            puertos['1']['ruta_troncal'],
+            self.troncal.nombre,
+        )
+        self.assertEqual(
+            puertos['2']['ruta_troncal'],
+            otra_ruta.nombre,
+        )
+        self.assertEqual(
+            set(puertos['1']),
+            {
+                'puerto', 'estado', 'bandeja', 'fibra', 'destino',
+                'tipo_conector', 'ruta_troncal',
+            },
+        )
+
+    def test_puerto_odf_sin_terminacion_conserva_fallback_legacy(self):
+        response = self.client.get(reverse('api_puertos_odf_mapa'), {
+            'hub_site': self.odf.hub_site,
+            'odf_nombre': self.odf.odf,
+        })
+
+        self.assertEqual(response.status_code, 200)
+        puerto_ocupado = next(
+            item for item in response.json()['puertos']
+            if item['puerto'] == '1'
+        )
+        self.assertEqual(
+            puerto_ocupado['ruta_troncal'],
+            self.troncal.nombre,
+        )
+
+    def test_detalle_fibras_ordena_numeros_de_forma_natural(self):
+        InventarioFibra.objects.create(
+            ruta=self.troncal,
+            fibra_numero='F10',
+            estado='Libre',
+            origen_estado='INFORMADO',
+        )
+        InventarioFibra.objects.create(
+            ruta=self.troncal,
+            fibra_numero='F2',
+            estado='Libre',
+            origen_estado='INFORMADO',
+        )
+
+        response = self.client.get(
+            reverse('api_detalle_fibras', args=[self.troncal.nombre])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [
+                item['fibra_numero']
+                for item in response.json()['data']
+            ],
+            ['F1', 'F2', 'F10'],
+        )
+
     def test_odfs_se_entregan_paginados_con_indicadores(self):
         response = self.client.get(reverse('api_odfs_paginados'), {
             'q': 'ODF-GUI',
@@ -814,6 +1255,35 @@ class GuiOperativaTests(TestCase):
             'ODF-SIN-DISPONIBILIDAD',
         )
 
+    def test_ficha_odf_reconoce_troncal_desde_nodo_topologico(self):
+        ruta = Ruta.objects.create(nombre='TRONCAL-NODO-ODF')
+        nodo_odf = NodoRed.objects.create(
+            tipo='ODF',
+            codigo=self.odf.odf,
+        )
+        nodo_destino = NodoRed.objects.create(
+            tipo='PUNTO',
+            codigo='PUNTO-ODF-GUI',
+        )
+        InventarioTramo.objects.create(
+            ruta=ruta,
+            tramo_secuencia=1,
+            origen_nodo=nodo_odf,
+            destino_nodo=nodo_destino,
+        )
+
+        response = self.client.get(
+            reverse('asset_360', args=['odf', self.odf.pk])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        relacionados = next(
+            item['value']
+            for item in response.json()['data']['summary']
+            if item['label'] == 'Troncales relacionadas'
+        )
+        self.assertEqual(relacionados, '2')
+
     def test_mapa_entrega_navegacion_site_odf_con_datos_reales(self):
         response = self.client.get(
             reverse('api_mapa_site_navigation', args=[self.site.pk]),
@@ -841,6 +1311,173 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(payload['data'][0]['reservas_nodos'][0]['tipo'], 'MUFA')
         self.assertEqual(payload['data'][0]['reservas_nodos'][0]['nombre'], 'MUFA-GUI')
 
+    def test_json_del_mapa_deriva_site_desde_nodo_red(self):
+        ruta = Ruta.objects.create(nombre='RUTA-NODO-SITE')
+        nodo_site = NodoRed.objects.create(
+            tipo='SITE',
+            codigo=self.site.nombre,
+        )
+        nodo_destino = NodoRed.objects.create(
+            tipo='PUNTO',
+            codigo='PUNTO-NODO-SITE',
+        )
+        InventarioTramo.objects.create(
+            ruta=ruta,
+            tramo_secuencia=1,
+            origen_nodo=nodo_site,
+            destino_nodo=nodo_destino,
+            hub_site='',
+        )
+        CoordenadaRuta.objects.create(
+            ruta=ruta,
+            orden=1,
+            latitud='-12.1000000',
+            longitud='-77.1000000',
+            tipo_trazado='AEREO',
+            inicio_segmento=True,
+        )
+
+        response = self.client.get(reverse('api_datos_inventario'))
+
+        self.assertEqual(response.status_code, 200)
+        rutas = {
+            item['nombre']: item for item in response.json()['data']
+        }
+        tramo = rutas[ruta.nombre]['tramos'][0]
+        self.assertEqual(tramo['hub_site'], self.site.nombre)
+        self.assertEqual(tramo['hub_site_id'], self.site.pk)
+
+        ficha = self.client.get(
+            reverse('asset_360', args=['site', self.site.pk])
+        )
+        self.assertEqual(ficha.status_code, 200)
+        relacionados = next(
+            item['value']
+            for item in ficha.json()['data']['summary']
+            if item['label'] == 'Troncales relacionadas'
+        )
+        self.assertEqual(relacionados, '2')
+
+    def test_json_incluye_ruta_geografica_sin_tramo_tecnico(self):
+        ruta = Ruta.objects.create(nombre='RUTA-SOLO-GEOGRAFIA')
+        CoordenadaRuta.objects.bulk_create([
+            CoordenadaRuta(
+                ruta=ruta,
+                orden=1,
+                latitud='-12.1000000',
+                longitud='-77.1000000',
+                tipo_trazado='SOTERRADO',
+                inicio_segmento=True,
+            ),
+            CoordenadaRuta(
+                ruta=ruta,
+                orden=2,
+                latitud='-12.2000000',
+                longitud='-77.2000000',
+                tipo_trazado='SOTERRADO',
+            ),
+        ])
+
+        response = self.client.get(reverse('api_datos_inventario'))
+
+        self.assertEqual(response.status_code, 200)
+        rutas = {
+            item['nombre']: item for item in response.json()['data']
+        }
+        self.assertIn(ruta.nombre, rutas)
+        self.assertEqual(
+            rutas[ruta.nombre]['tramos'][0]['tipo_trazado'],
+            'SOTERRADO',
+        )
+
+    def test_json_segmenta_por_geografia_y_no_por_inventario(self):
+        ruta = Ruta.objects.create(nombre='RUTA-SEGMENTOS-GEO')
+        InventarioTramo.objects.create(
+            ruta=ruta,
+            tramo_secuencia=1,
+            tipo_trazado='AEREO',
+            capacidad='96 Hilos',
+            distancia_m=100,
+        )
+        InventarioTramo.objects.create(
+            ruta=ruta,
+            tramo_secuencia=2,
+            tipo_trazado='SOTERRADO',
+            capacidad='24 Hilos',
+            distancia_m=200,
+        )
+        CoordenadaRuta.objects.bulk_create([
+            CoordenadaRuta(
+                ruta=ruta,
+                orden=1,
+                latitud='-12.1000000',
+                longitud='-77.1000000',
+                tipo_trazado='SOTERRADO',
+                inicio_segmento=True,
+                tramo_secuencia=1,
+            ),
+            CoordenadaRuta(
+                ruta=ruta,
+                orden=2,
+                latitud='-12.2000000',
+                longitud='-77.2000000',
+                tipo_trazado='SOTERRADO',
+                inicio_segmento=False,
+                tramo_secuencia=1,
+            ),
+            CoordenadaRuta(
+                ruta=ruta,
+                orden=3,
+                latitud='-12.3000000',
+                longitud='-77.3000000',
+                tipo_trazado='AEREO',
+                inicio_segmento=True,
+                tramo_secuencia=2,
+            ),
+        ])
+
+        response = self.client.get(reverse('api_datos_inventario'))
+
+        ruta_json = next(
+            item for item in response.json()['data']
+            if item['nombre'] == ruta.nombre
+        )
+        self.assertEqual(len(ruta_json['tramos']), 2)
+        self.assertEqual(
+            [segmento['tipo_trazado'] for segmento in ruta_json['tramos']],
+            ['SOTERRADO', 'AEREO'],
+        )
+        self.assertEqual(
+            ruta_json['tramos'][1]['coordenadas'],
+            [[-12.2, -77.2], [-12.3, -77.3]],
+        )
+        self.assertEqual(
+            [segmento['capacidad'] for segmento in ruta_json['tramos']],
+            [
+                '24 Hilos efectivos (24\u201396)',
+                '24 Hilos efectivos (24\u201396)',
+            ],
+        )
+        self.assertEqual(ruta_json['distancia_m'], 300)
+        self.assertEqual(ruta.tramos_inventario.count(), 2)
+
+    def test_dashboard_incluye_troncal_tecnica_sin_geometria(self):
+        ruta = Ruta.objects.create(nombre='RUTA-TECNICA-SIN-GEO')
+        InventarioTramo.objects.create(
+            ruta=ruta,
+            tramo_secuencia=1,
+            tipo_trazado='AEREO',
+            capacidad='48 Hilos',
+        )
+
+        response = self.client.get(reverse('dashboard_inventario'))
+
+        self.assertEqual(response.status_code, 200)
+        nombres = {
+            item['nombre'] for item in response.context['resumen_rutas']
+        }
+        self.assertIn(ruta.nombre, nombres)
+
     def test_json_del_mapa_admite_compresion_sin_cambiar_el_contrato(self):
         response = self.client.get(
             reverse('api_datos_inventario'),
@@ -866,11 +1503,14 @@ class GuiOperativaTests(TestCase):
         payload = troncales.json()
         self.assertEqual(payload['pagination']['total'], 1)
         self.assertEqual(payload['data'][0]['nombre'], 'TRONCAL-GUI')
+        self.assertEqual(payload['data'][0]['sin_inventariar'], 11)
+        self.assertEqual(payload['data'][0]['hilos_sin_estado'], 11)
+        self.assertEqual(payload['data'][0]['fibras_sin_cobertura'], 0)
         self.assertEqual(payload['summary']['total'], 1)
         self.assertEqual(payload['summary']['tramos'], 1)
         self.assertEqual(payload['summary']['fibras'], 1)
         self.assertEqual(payload['summary']['top_ocupacion'][0]['nombre'], 'TRONCAL-GUI')
-        self.assertEqual(payload['summary']['top_ocupacion'][0]['utilizacion'], 100)
+        self.assertEqual(payload['summary']['top_ocupacion'][0]['utilizacion'], 8.3)
 
         tramos = self.client.get(reverse('api_tramos_paginados'), {
             'ruta': 'TRONCAL-GUI',
@@ -929,6 +1569,22 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(payload_fibras['summary']['troncales'], 1)
         self.assertEqual(payload_fibras['data'][0]['ruta_id'], self.troncal.pk)
         self.assertEqual(
+            payload_fibras['data'][0]['site_inicial'],
+            self.odf.hub_site,
+        )
+        self.assertEqual(
+            payload_fibras['data'][0]['site_final'],
+            'DESTINO-GUI',
+        )
+        self.assertEqual(
+            payload_fibras['data'][0]['origen'],
+            'Pendiente de orientación',
+        )
+        self.assertEqual(
+            payload_fibras['data'][0]['destino'],
+            'Pendiente de orientación',
+        )
+        self.assertEqual(
             payload_fibras['summary']['top_troncales'][0]['nombre'],
             'TRONCAL-GUI',
         )
@@ -947,6 +1603,31 @@ class GuiOperativaTests(TestCase):
             'MUFA',
         )
 
+    def test_contexto_global_de_site_filtra_recursos_operativos(self):
+        params = {'site': self.odf.hub_site, 'page_size': 25}
+        endpoints = (
+            'api_troncales_paginadas',
+            'api_tramos_paginados',
+            'api_fibras_paginadas',
+            'api_elementos_paginados',
+            'api_odfs_paginados',
+            'api_puertos_paginados',
+        )
+
+        for endpoint in endpoints:
+            with self.subTest(endpoint=endpoint):
+                response = self.client.get(reverse(endpoint), params)
+                self.assertEqual(response.status_code, 200)
+                self.assertGreater(response.json()['pagination']['total'], 0)
+
+    def test_base_incluye_contexto_global_de_site_removible(self):
+        response = self.client.get(reverse('planta_externa'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'global-site-context')
+        self.assertContains(response, 'global-site-context-clear')
+        self.assertContains(response, 'global-site-context.js')
+
     def test_panel_contextual_de_troncal_entrega_capacidad_y_geometria(self):
         response = self.client.get(
             reverse('api_panel_troncal'),
@@ -956,7 +1637,7 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload['ruta']['nombre'], 'TRONCAL-GUI')
-        self.assertEqual(payload['fibras']['total'], 1)
+        self.assertEqual(payload['fibras']['total'], 12)
         self.assertEqual(payload['fibras']['ocupadas'], 1)
         self.assertEqual(payload['reservas']['elementos'], 1)
         self.assertEqual(len(payload['coordenadas']), 1)
@@ -1034,6 +1715,23 @@ class GuiOperativaTests(TestCase):
             distancia_m=1250,
         ).exists())
 
+    def test_nuevo_tramo_rechaza_salto_en_la_secuencia(self):
+        response = self.client.post(
+            reverse('api_create_tramo'),
+            data=json.dumps({
+                'ruta_id': self.troncal.pk,
+                'tramo_secuencia': 3,
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('sin saltos', response.json()['message'])
+        self.assertFalse(InventarioTramo.objects.filter(
+            ruta=self.troncal,
+            tramo_secuencia=3,
+        ).exists())
+
     def test_pagina_odf_usa_consulta_paginada_y_exportacion_servidor(self):
         response = self.client.get(reverse('inventario_interno'))
         self.assertEqual(response.status_code, 200)
@@ -1062,6 +1760,13 @@ class GuiOperativaTests(TestCase):
         self.assertContains(interna, reverse('api_puertos_paginados'))
         self.assertContains(externa, reverse('api_fibras_paginadas'))
 
+    def test_mapa_muestra_ocupados_en_resumen_del_site(self):
+        response = self.client.get(reverse('mapa_inventario'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'network-site-used')
+        self.assertContains(response, '<span>Ocupados</span>', html=True)
+
     def test_busqueda_global_conecta_activo_con_ficha_360(self):
         search = self.client.get(reverse('busqueda_global'), {'q': 'TRONCAL-GUI'})
         self.assertEqual(search.status_code, 200)
@@ -1071,7 +1776,10 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(detail.status_code, 200)
         ficha = detail.json()['data']
         self.assertEqual(ficha['title'], 'TRONCAL-GUI')
-        self.assertTrue(any(item['label'] == 'ODF extremo A' for item in ficha['chain']))
+        self.assertTrue(any(
+            item['label'] == 'ODF de fibras (A)'
+            for item in ficha['chain']
+        ))
 
     def test_ficha_360_separa_etiquetas_y_normaliza_valores_sin_dato(self):
         puerto = self.puertos[0]
@@ -1116,11 +1824,16 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(response.context['total_odfs'], 1)
         self.assertEqual(response.context['total_salas'], 1)
         self.assertEqual(response.context['total_racks'], 1)
-        self.assertEqual(response.context['total_fibras'], 1)
-        self.assertEqual(response.context['ocupacion_fibras_pct'], 100)
-        self.assertEqual(response.context['utilizacion_fibras_pct'], 100)
+        self.assertEqual(response.context['total_fibras'], 12)
+        self.assertEqual(response.context['fibras_sin_estado'], 11)
+        self.assertEqual(response.context['ocupacion_fibras_pct'], 8.3)
+        self.assertEqual(response.context['utilizacion_fibras_pct'], 8.3)
         self.assertTrue(response.context['alertas_inventario'])
         self.assertEqual(response.context['top_rutas_capacidad'][0]['nombre'], 'TRONCAL-GUI')
+        self.assertEqual(
+            response.context['top_rutas_capacidad'][0]['utilizacion_hilos'],
+            8.3,
+        )
         self.assertEqual(response.context['top_odfs_capacidad'][0]['odf'], 'ODF-GUI')
         self.assertContains(response, 'Dashboard de Inventario')
         self.assertContains(response, 'Uso de puertos ODF')
@@ -1166,6 +1879,11 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(response.context['total_sites'], 1)
         self.assertEqual(response.context['total_odfs'], 1)
         self.assertEqual(response.context['total_rutas'], 1)
+        for enlace in response.context['capacity_links'].values():
+            self.assertIn(
+                urlencode({'site': self.odf.hub_site}),
+                enlace,
+            )
 
     def test_filtros_de_inventario_comparten_patron_visual(self):
         casos = (
@@ -1214,6 +1932,69 @@ class SeguridadYRendimientoTests(TestCase):
         self.assertContains(response, f'href="{reverse("gestion_sites")}"')
         self.assertNotContains(response, f'href="{reverse("importar_sites_csv")}"')
 
+    def test_configuracion_conserva_rotulos_historicos_de_importacion(self):
+        response = self.client.get(reverse('configuracion'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "Cargar Coordenadas y Tipo de Trazado (.csv)",
+        )
+        self.assertContains(
+            response,
+            "Cargar Inventario Técnico de Tramos (.csv)",
+        )
+        self.assertContains(
+            response,
+            "Cargar Fibras por Tramo (.csv)",
+        )
+        self.assertContains(response, "Archivo A")
+        self.assertContains(response, "Archivo B")
+        self.assertContains(
+            response,
+            "Opciones avanzadas para rutas con varios tramos",
+        )
+        self.assertContains(
+            response,
+            "Opciones avanzadas para fibras en varios tramos",
+        )
+        self.assertNotContains(response, "Fase 2: Inventario técnico por tramo")
+        self.assertNotContains(response, "Fase 3: Fibras por tramo")
+
+    def test_formulario_alterno_mantiene_ayuda_avanzada_secundaria(self):
+        html_tramos = render_to_string(
+            'configuracion/formulario_csv.html',
+            {
+                'tipo_csv': 'tramos_inventario',
+                'nombre_amigable': 'Cargar Inventario Técnico de Tramos',
+            },
+        )
+        html_fibras = render_to_string(
+            'configuracion/formulario_csv.html',
+            {
+                'tipo_csv': 'fibras_inventario',
+                'nombre_amigable': 'Cargar Fibras por Tramo',
+            },
+        )
+
+        self.assertIn('Requisitos del CSV: Inventario Técnico', html_tramos)
+        self.assertIn(
+            'Opciones avanzadas para rutas con varios tramos',
+            html_tramos,
+        )
+        self.assertIn(
+            'Descargar plantilla opcional para varios tramos',
+            html_tramos,
+        )
+        self.assertIn(
+            'Requisitos del CSV: inventario de fibras ópticas (Archivo B)',
+            html_fibras,
+        )
+        self.assertIn(
+            'Opciones avanzadas para fibras en varios tramos',
+            html_fibras,
+        )
+
     def test_capacidad_odf_no_se_sobreasigna_desde_la_gui(self):
         _, _, _, odf = crear_jerarquia_odf(nombre='ODF-CAPACIDAD', capacidad=1)
         DetallePuertoODF.objects.create(
@@ -1238,7 +2019,12 @@ class SeguridadYRendimientoTests(TestCase):
             tramo_secuencia=1,
             capacidad='1 Hilo',
         )
-        InventarioFibra.objects.create(ruta=ruta, fibra_numero='1', estado='Libre')
+        InventarioFibra.objects.create(
+            ruta=ruta,
+            fibra_numero='1',
+            estado='Libre',
+            origen_estado='INFORMADO',
+        )
 
         response = self.client.post(
             reverse('api_create_fibra'),
@@ -1369,11 +2155,14 @@ class SeguridadYRendimientoTests(TestCase):
                 orden=1,
                 latitud='-12.0000000',
                 longitud='-77.0000000',
+                tipo_trazado='AEREO',
+                inicio_segmento=True,
             )
             InventarioFibra.objects.create(
                 ruta=ruta,
                 fibra_numero='F01',
                 estado='Libre',
+                origen_estado='INFORMADO',
             )
 
     def test_consultas_inventario_externo_no_crecen_por_ruta(self):
@@ -1448,7 +2237,9 @@ class SeguridadYRendimientoTests(TestCase):
 
     def test_comando_registra_baseline_como_reconstruido(self):
         Ruta.objects.create(nombre='RUTA-BASELINE')
-        with tempfile.TemporaryDirectory() as directorio:
+        directorio = Path(tempfile.gettempdir()) / f'fibergenius-{uuid.uuid4().hex}'
+        directorio.mkdir(parents=True)
+        try:
             manifest = Path(directorio) / 'manifest.json'
             manifest.write_text('{"version": 5}', encoding='utf-8')
             call_command(
@@ -1457,6 +2248,8 @@ class SeguridadYRendimientoTests(TestCase):
                 fecha_origen='2026-07-01T10:00:00-05:00',
                 verbosity=0,
             )
+        finally:
+            shutil.rmtree(directorio, ignore_errors=True)
         lote = LoteImportacion.objects.get(origen_registro='BASELINE_RECONSTRUIDO')
         self.assertEqual(lote.tipo, 'BASELINE_INVENTARIO_V5')
         self.assertEqual(lote.metadatos_origen['conteos']['rutas'], 1)

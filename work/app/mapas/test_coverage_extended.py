@@ -2,10 +2,13 @@ import hashlib
 import hmac
 import json
 import os
+import shutil
 import tempfile
 import time
+import uuid
 import requests
 import pandas as pd
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +20,24 @@ from django.db import DatabaseError
 from django.http import HttpResponse
 from django.test import RequestFactory, TestCase, override_settings
 from django.urls import reverse
+
+
+class SafeTemporaryDirectory:
+    """Directorio temporal sin cambios de ACL problemáticos en Windows."""
+
+    def __init__(self):
+        self.name = str(Path(tempfile.gettempdir()) / f"fibergenius-{uuid.uuid4().hex}")
+        Path(self.name).mkdir(parents=True)
+
+    def __enter__(self):
+        return self.name
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.cleanup()
+
+    def cleanup(self):
+        shutil.rmtree(self.name, ignore_errors=True)
+
 
 from .forms import (
     CustomAuthenticationForm,
@@ -257,7 +278,7 @@ class AdministracionCoverageTests(TestCase):
 
 class PermisosTrazaOnDemandTests(TestCase):
     def setUp(self):
-        self.media_dir = tempfile.TemporaryDirectory()
+        self.media_dir = SafeTemporaryDirectory()
         self.media_override = override_settings(MEDIA_ROOT=self.media_dir.name)
         self.media_override.enable()
         self.addCleanup(self.media_dir.cleanup)
@@ -858,6 +879,7 @@ class InfraestructuraCoverageTests(TestCase):
         from fibergenius.health import health
         request = RequestFactory().get('/health/')
         self.assertEqual(health(request).status_code, 200)
+        self.assertEqual(self.client.get(reverse('health')).status_code, 200)
         with patch('fibergenius.health.connection.cursor', side_effect=RuntimeError('db caída')):
             self.assertEqual(health(request).status_code, 503)
 
@@ -1013,7 +1035,7 @@ class GeorreferenciacionCoverageTests(TestCase):
         from .management.commands.georeferenciar_eventos import (
             ensure_dir_for_path, haversine, interpolate_on_route, load_kml_route, slerp_latlon,
         )
-        with tempfile.TemporaryDirectory() as tmp:
+        with SafeTemporaryDirectory() as tmp:
             destino = f'{tmp}/sub/directorio/archivo.csv'
             ensure_dir_for_path(destino)
             kml = f'{tmp}/ruta.kml'
@@ -1071,7 +1093,7 @@ class GeorreferenciacionCoverageTests(TestCase):
         with self.assertRaises(ValueError):
             load_events(pd.DataFrame({'otra': [1]}))
 
-        with tempfile.TemporaryDirectory() as tmp:
+        with SafeTemporaryDirectory() as tmp:
             csv_path = f'{tmp}/datos.csv'
             pd.DataFrame({'a': [1]}).to_csv(csv_path, index=False)
             self.assertEqual(load_table(csv_path).iloc[0]['a'], 1)
@@ -1107,7 +1129,7 @@ class GeorreferenciacionCoverageTests(TestCase):
             'prueba_id': [1, 1], 'event_id': ['1', '2'], 'distance_m': [100.0, 200.0],
             'event_type': ['Splice', 'Fiber End'], 'loss_db': [0.2, 0.3],
         })
-        with tempfile.TemporaryDirectory() as tmp:
+        with SafeTemporaryDirectory() as tmp:
             kml = f'{tmp}/ruta.kml'
             with open(kml, 'w', encoding='utf-8') as archivo:
                 archivo.write('<kml><LineString><coordinates>-69,-23 -69.02,-23.02</coordinates></LineString></kml>')
@@ -1128,14 +1150,14 @@ class GeorreferenciacionCoverageTests(TestCase):
                 self.assertTrue(process_directory(tmp, 'RUTA-B', None, False, True, False, False))
                 self.assertTrue(reemplazo.call_args.args[1]['segment_index'].isna().all())
 
-        with tempfile.TemporaryDirectory() as vacio:
+        with SafeTemporaryDirectory() as vacio:
             self.assertFalse(process_directory(vacio, 'SIN-KML', None, True, False, False, False))
 
     def test_comando_recursivo_filtra_ruta_y_maneja_errores(self):
         from .management.commands.georeferenciar_eventos import Command
         comando = Command()
         comando.handle(root='Z:/ruta/no/existe', recursive=False, ruta=None)
-        with tempfile.TemporaryDirectory() as tmp:
+        with SafeTemporaryDirectory() as tmp:
             for nombre in ('RUTA-A', 'RUTA-B'):
                 os.makedirs(f'{tmp}/{nombre}', exist_ok=True)
                 with open(f'{tmp}/{nombre}/ruta.kml', 'w', encoding='utf-8') as archivo:
@@ -1160,11 +1182,14 @@ class OperacionInventarioAmpliadaCoverageTests(TestCase):
             },
         )
         self.puerto = DetallePuertoODF.objects.create(
-            odf_obj=self.odf, puerto_odf='1', bandeja='B1', fibra='F01',
-            estado_puerto='Ocupado', tipo_conector='SC/APC', patchcord='Sí', destino='RUTA-OPERACION',
+            odf_obj=self.odf, puerto_odf='1', bandeja='B1',
+            estado_puerto='Libre', tipo_conector='SC/APC', patchcord='Sí', destino='RUTA-OPERACION',
         )
+        DetallePuertoODF.objects.filter(pk=self.puerto.pk).update(estado_puerto='Ocupado')
+        self.puerto.refresh_from_db()
         self.ruta = Ruta.objects.create(
-            nombre='RUTA-OPERACION', distancia_m=1200, odf_origen=self.odf, odf_destino=self.odf,
+            nombre='RUTA-OPERACION',
+            distancia_m=1200,
         )
         self.tramo = InventarioTramo.objects.create(
             ruta=self.ruta, tramo_secuencia=1, hub_site='SITE-OPERACION', odf_nombre=self.odf.odf,
@@ -1172,8 +1197,9 @@ class OperacionInventarioAmpliadaCoverageTests(TestCase):
             tipo_fibra='Monomodo', tipo_trazado='Subterráneo', marca_modelo='Cable-X',
         )
         self.fibra = InventarioFibra.objects.create(
-            ruta=self.ruta, fibra_numero='F01', estado='Libre', nombre_fibra='=SERVICIO',
-            origen_odf='', destino='DESTINO', tipo_conector='SC/APC',
+            ruta=self.ruta, fibra_numero='F01', estado='Libre',
+            origen_estado='INFORMADO', nombre_fibra='=SERVICIO',
+            origen_odf=self.odf.odf, destino='DESTINO', tipo_conector='SC/APC',
         )
         self.elemento = Reserva.objects.create(
             ruta=self.ruta, tramo=self.tramo, nombre='MUFA-OPERACION', codigo='M-01', tipo='MUFA',
@@ -1185,7 +1211,14 @@ class OperacionInventarioAmpliadaCoverageTests(TestCase):
             'q': 'SERVICIO', 'estado': 'Libre', 'page_size': 'invalido', 'page': 1,
         })
         self.assertEqual(fibras.status_code, 200)
-        self.assertEqual(fibras.json()['data'][0]['origen'], self.odf.odf)
+        self.assertEqual(
+            fibras.json()['data'][0]['origen'],
+            'Pendiente de orientación',
+        )
+        self.assertEqual(
+            fibras.json()['data'][0]['trazabilidad']['extremo_a']['fuente'],
+            'LEGACY',
+        )
 
         elementos = self.client.get(reverse('api_elementos_paginados'), {
             'q': 'MUFA', 'tipo': 'MUFA', 'page_size': 25,
