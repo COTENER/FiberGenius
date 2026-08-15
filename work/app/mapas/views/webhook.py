@@ -81,7 +81,7 @@ def sync_veex_id_in_background(incident_id, distance, timestamp, event_log_id=No
         logger.exception("Error en sync_veex_id_in_background")
 
 
-logger = logging.getLogger('mapas')
+logger = logging.getLogger('fibergenius.integration')
 
 @csrf_exempt
 @require_POST

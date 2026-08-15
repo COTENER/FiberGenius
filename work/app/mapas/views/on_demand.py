@@ -21,7 +21,7 @@ from mapas.veex_api import (
 from django.core.files.base import ContentFile
 from django.utils.timezone import now
 
-logger = logging.getLogger('mapas')
+logger = logging.getLogger('fibergenius.integration')
 _ON_DEMAND_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix='fibergenius-ondemand')
 
 @login_required

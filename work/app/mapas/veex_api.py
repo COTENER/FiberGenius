@@ -3,7 +3,7 @@ import logging
 from django.conf import settings
 from django.core.cache import cache
 
-logger = logging.getLogger('mapas')
+logger = logging.getLogger('fibergenius.integration')
 
 VEEX_API_URL = getattr(settings, 'VEEX_API_URL', '')
 VEEX_API_USER = getattr(settings, 'VEEX_API_USER', '')
