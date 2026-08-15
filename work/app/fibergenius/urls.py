@@ -18,10 +18,12 @@ from django.contrib import admin
 from django.urls import path,include
 from mapas import views
 from django.contrib.auth import views as auth_views
+from .health import health
 
 admin.site.login = auth_views.LoginView.as_view(template_name='login.html')
 
 urlpatterns = [
+    path('health/', health, name='health'),
     path('admin/', admin.site.urls),
     path('', include('mapas.urls')),  # Incluye las URLs de la app 'mapas'
 
