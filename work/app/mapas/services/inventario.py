@@ -10,6 +10,27 @@ from ..models import (
     RackFisico,
     SalaTecnica,
 )
+from .ubicacion import nombre_site
+
+
+def recalcular_contadores_odf(odf: InventarioODF) -> dict[str, int]:
+    """Reconcilia la caché del ODF desde sus puertos, la fuente oficial."""
+    anteriores = {
+        "puertos_ocupados": odf.puertos_ocupados or 0,
+        "puertos_libres": odf.puertos_libres or 0,
+        "puertos_reservados": odf.puertos_reservados or 0,
+    }
+    odf.actualizar_contadores()
+    odf.refresh_from_db(fields=list(anteriores))
+    actuales = {campo: getattr(odf, campo) or 0 for campo in anteriores}
+    return {
+        "discrepancias": sum(
+            anteriores[campo] != actuales[campo] for campo in anteriores
+        ),
+        "capacidad_puertos": odf.capacidad_puertos or 0,
+        "puertos_materializados": odf.puertos_detalle.count(),
+        **actuales,
+    }
 
 
 def limpiar_texto(value) -> str:
@@ -82,7 +103,7 @@ def ajustar_puertos_a_capacidad(
         puerto
         for puerto in fuera_de_rango
         if (
-            puerto.estado_puerto != "Libre"
+            puerto.estado_puerto != "LIBRE"
             or bool((puerto.destino or "").strip())
             or bool((puerto.patchcord or "").strip())
             or bool((puerto.observaciones or "").strip())
@@ -116,9 +137,8 @@ def ajustar_puertos_a_capacidad(
     faltantes = [
         DetallePuertoODF(
             odf_obj=odf,
-            odf=odf.odf,
             puerto_odf=str(numero),
-            estado_puerto="Libre",
+            estado_puerto="LIBRE",
             tipo_conector=odf.tipo_conector or "",
             destino="",
             patchcord="",
@@ -151,21 +171,16 @@ def guardar_odf_normalizado(
         raise ValidationError("El nombre del ODF es obligatorio.")
     rack = resolver_rack(hub_nombre, sala_nombre, rack_nombre, lote=lote)
     values = dict(defaults or {})
-    values.update(
-        {
-            "hub_site": rack.sala.hub_site.nombre,
-            "sala": rack.sala.nombre,
-            "rack": rack.nombre,
-        }
-    )
     if lote is not None:
         values["lote_importacion"] = lote
     existente = InventarioODF.objects.filter(odf__iexact=odf_nombre).first()
     if existente:
         if existente.rack_obj_id != rack.pk:
             raise ValidationError(
-                f'El ODF {odf_nombre} ya existe en {existente.hub_site} / '
-                f'{existente.sala} / {existente.rack}; no puede reasignarse '
+                f'El ODF {odf_nombre} ya existe en '
+                f'{nombre_site(existente)} / '
+                f'{existente.rack_obj.sala.nombre} / {existente.rack_obj.nombre}; '
+                'no puede reasignarse '
                 'silenciosamente a otra ubicación.'
             )
         for campo, valor in values.items():

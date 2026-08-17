@@ -34,7 +34,7 @@ class GestionPuertosTests(TestCase):
         cls.fibra = InventarioFibra.objects.create(
             ruta=cls.ruta,
             fibra_numero='F12',
-            estado='Ocupado',
+            estado='OCUPADO',
             origen_estado='INFORMADO',
         )
         site = HubSite.objects.create(nombre='SITE-GESTION')
@@ -54,7 +54,7 @@ class GestionPuertosTests(TestCase):
         return DetallePuertoODF.objects.create(
             odf_obj=cls.odf,
             puerto_odf=numero,
-            estado_puerto='Libre',
+            estado_puerto='LIBRE',
         )
 
     def test_libre_a_ocupado_crea_terminacion_oficial(self):
@@ -66,10 +66,10 @@ class GestionPuertosTests(TestCase):
         self.assertTrue(creada)
         self.assertEqual(terminacion.puerto_odf_id, self.puerto_1.pk)
         self.puerto_1.refresh_from_db()
-        self.assertEqual(self.puerto_1.estado_puerto, 'Ocupado')
+        self.assertEqual(self.puerto_1.estado_puerto, 'OCUPADO')
         desconectar_puerto(puerto_id=self.puerto_1.pk)
         self.puerto_1.refresh_from_db()
-        self.assertEqual(self.puerto_1.estado_puerto, 'Libre')
+        self.assertEqual(self.puerto_1.estado_puerto, 'LIBRE')
 
     def test_permite_el_mismo_numero_de_hilo_en_provisionales_distintos(self):
         primera, _ = conectar_puerto(
@@ -112,8 +112,8 @@ class GestionPuertosTests(TestCase):
         )
         self.puerto_1.refresh_from_db()
         self.puerto_2.refresh_from_db()
-        self.assertEqual(self.puerto_1.estado_puerto, 'Libre')
-        self.assertEqual(self.puerto_2.estado_puerto, 'Ocupado')
+        self.assertEqual(self.puerto_1.estado_puerto, 'LIBRE')
+        self.assertEqual(self.puerto_2.estado_puerto, 'OCUPADO')
         self.assertEqual(
             TerminacionFibra.objects.get(
                 fibra=self.fibra,
@@ -131,8 +131,8 @@ class GestionPuertosTests(TestCase):
         desconectar_puerto(puerto_id=self.puerto_1.pk, liberar_fibra=False)
         self.puerto_1.refresh_from_db()
         self.fibra.refresh_from_db()
-        self.assertEqual(self.puerto_1.estado_puerto, 'Libre')
-        self.assertEqual(self.fibra.estado, 'Ocupado')
+        self.assertEqual(self.puerto_1.estado_puerto, 'LIBRE')
+        self.assertEqual(self.fibra.estado, 'OCUPADO')
         self.assertFalse(TerminacionFibra.objects.exists())
 
         conectar_puerto(
@@ -142,15 +142,15 @@ class GestionPuertosTests(TestCase):
         )
         desconectar_puerto(puerto_id=self.puerto_1.pk, liberar_fibra=True)
         self.fibra.refresh_from_db()
-        self.assertEqual(self.fibra.estado, 'Libre')
+        self.assertEqual(self.fibra.estado, 'DISPONIBLE')
 
     def test_reservar_cancelar_y_consumir_reserva(self):
         reservar_puerto(puerto_id=self.puerto_1.pk)
         self.puerto_1.refresh_from_db()
-        self.assertEqual(self.puerto_1.estado_puerto, 'Reservado')
+        self.assertEqual(self.puerto_1.estado_puerto, 'RESERVADO')
         cancelar_reserva_puerto(puerto_id=self.puerto_1.pk)
         self.puerto_1.refresh_from_db()
-        self.assertEqual(self.puerto_1.estado_puerto, 'Libre')
+        self.assertEqual(self.puerto_1.estado_puerto, 'LIBRE')
         reservar_puerto(puerto_id=self.puerto_1.pk)
         conectar_puerto(
             puerto_id=self.puerto_1.pk,
@@ -158,7 +158,7 @@ class GestionPuertosTests(TestCase):
             extremo='B',
         )
         self.puerto_1.refresh_from_db()
-        self.assertEqual(self.puerto_1.estado_puerto, 'Ocupado')
+        self.assertEqual(self.puerto_1.estado_puerto, 'OCUPADO')
 
     def test_no_permite_reservar_un_puerto_conectado(self):
         conectar_puerto(
@@ -170,7 +170,7 @@ class GestionPuertosTests(TestCase):
             reservar_puerto(puerto_id=self.puerto_1.pk)
 
     def test_modelo_bloquea_cambio_directo_de_estado(self):
-        self.puerto_1.estado_puerto = 'Reservado'
+        self.puerto_1.estado_puerto = 'RESERVADO'
         with self.assertRaises(ValidationError):
             self.puerto_1.save(update_fields=['estado_puerto'])
 
@@ -181,10 +181,10 @@ class GestionPuertosTests(TestCase):
             puerto_odf=self.puerto_1,
         )
         self.puerto_1.refresh_from_db()
-        self.assertEqual(self.puerto_1.estado_puerto, 'Ocupado')
+        self.assertEqual(self.puerto_1.estado_puerto, 'OCUPADO')
         terminacion.delete()
         self.puerto_1.refresh_from_db()
-        self.assertEqual(self.puerto_1.estado_puerto, 'Libre')
+        self.assertEqual(self.puerto_1.estado_puerto, 'LIBRE')
 
 
 class SincronizacionFibraPuertoTests(TestCase):
@@ -224,15 +224,15 @@ class SincronizacionFibraPuertoTests(TestCase):
         puerto = DetallePuertoODF.objects.create(
             odf_obj=self.odf,
             puerto_odf=f'{sufijo}-{cantidad}',
-            estado_puerto='Libre',
+            estado_puerto='LIBRE',
         )
         return fibra, asignaciones, puerto
 
-    def test_confirmar_conexion_informa_global_sin_reescribir_tramos(self):
+    def test_confirmar_conexion_solo_sincroniza_tramo_en_ruta_unica(self):
         for cantidad in (1, 2, 4):
             with self.subTest(tramos=cantidad):
                 fibra, asignaciones, puerto = self._crear_recorrido(
-                    cantidad, 'Libre', 'C'
+                    cantidad, 'DISPONIBLE', 'C'
                 )
                 conectar_puerto(
                     puerto_id=puerto.pk,
@@ -242,21 +242,23 @@ class SincronizacionFibraPuertoTests(TestCase):
                 )
 
                 fibra.refresh_from_db()
-                self.assertEqual(fibra.estado, 'Ocupado')
+                self.assertEqual(fibra.estado, 'OCUPADO')
                 self.assertEqual(
                     list(
                         FibraTramo.objects.filter(
                             pk__in=[item.pk for item in asignaciones]
                         ).values_list('estado', flat=True)
                     ),
-                    ['Libre'] * cantidad,
+                    [
+                        'OCUPADO' if cantidad == 1 else 'DISPONIBLE'
+                    ] * cantidad,
                 )
 
-    def test_confirmar_desconexion_informa_global_sin_reescribir_tramos(self):
+    def test_confirmar_desconexion_solo_sincroniza_tramo_en_ruta_unica(self):
         for cantidad in (1, 2, 4):
             with self.subTest(tramos=cantidad):
                 fibra, asignaciones, puerto = self._crear_recorrido(
-                    cantidad, 'Ocupado', 'D'
+                    cantidad, 'OCUPADO', 'D'
                 )
                 conectar_puerto(
                     puerto_id=puerto.pk,
@@ -266,18 +268,20 @@ class SincronizacionFibraPuertoTests(TestCase):
                 desconectar_puerto(puerto_id=puerto.pk, liberar_fibra=True)
 
                 fibra.refresh_from_db()
-                self.assertEqual(fibra.estado, 'Libre')
+                self.assertEqual(fibra.estado, 'DISPONIBLE')
                 self.assertEqual(
                     list(
                         FibraTramo.objects.filter(
                             pk__in=[item.pk for item in asignaciones]
                         ).values_list('estado', flat=True)
                     ),
-                    ['Ocupado'] * cantidad,
+                    [
+                        'DISPONIBLE' if cantidad == 1 else 'OCUPADO'
+                    ] * cantidad,
                 )
 
     def test_sin_confirmacion_solo_cambia_el_puerto(self):
-        fibra, asignaciones, puerto = self._crear_recorrido(4, 'Libre', 'N')
+        fibra, asignaciones, puerto = self._crear_recorrido(4, 'DISPONIBLE', 'N')
         conectar_puerto(
             puerto_id=puerto.pk,
             fibra_id=fibra.pk,
@@ -285,26 +289,26 @@ class SincronizacionFibraPuertoTests(TestCase):
             ocupar_fibra=False,
         )
         fibra.refresh_from_db()
-        self.assertEqual(fibra.estado, 'Libre')
+        self.assertEqual(fibra.estado, 'DISPONIBLE')
         self.assertEqual(
             set(FibraTramo.objects.filter(
                 pk__in=[item.pk for item in asignaciones]
             ).values_list('estado', flat=True)),
-            {'Libre'},
+            {'DISPONIBLE'},
         )
 
-        InventarioFibra.objects.filter(pk=fibra.pk).update(estado='Ocupado')
+        InventarioFibra.objects.filter(pk=fibra.pk).update(estado='OCUPADO')
         FibraTramo.objects.filter(
             pk__in=[item.pk for item in asignaciones]
-        ).update(estado='Ocupado')
+        ).update(estado='OCUPADO')
         desconectar_puerto(puerto_id=puerto.pk, liberar_fibra=False)
         fibra.refresh_from_db()
-        self.assertEqual(fibra.estado, 'Ocupado')
+        self.assertEqual(fibra.estado, 'OCUPADO')
         self.assertEqual(
             set(FibraTramo.objects.filter(
                 pk__in=[item.pk for item in asignaciones]
             ).values_list('estado', flat=True)),
-            {'Ocupado'},
+            {'OCUPADO'},
         )
 
 
@@ -320,7 +324,7 @@ class GestionPuertosApiTests(TestCase):
         cls.fibra = InventarioFibra.objects.create(
             ruta=cls.ruta,
             fibra_numero='F1',
-            estado='Libre',
+            estado='DISPONIBLE',
             origen_estado='INFORMADO',
         )
         site = HubSite.objects.create(nombre='SITE-API-GESTION')
@@ -330,7 +334,7 @@ class GestionPuertosApiTests(TestCase):
             rack_obj=rack, odf='ODF-API-GESTION', capacidad_puertos=1
         )
         cls.puerto = DetallePuertoODF.objects.create(
-            odf_obj=odf, puerto_odf='1', estado_puerto='Libre'
+            odf_obj=odf, puerto_odf='1', estado_puerto='LIBRE'
         )
 
     def setUp(self):
@@ -360,7 +364,7 @@ class GestionPuertosApiTests(TestCase):
         })
         self.assertEqual(respuesta.status_code, 200)
         self.puerto.refresh_from_db()
-        self.assertEqual(self.puerto.estado_puerto, 'Libre')
+        self.assertEqual(self.puerto.estado_puerto, 'LIBRE')
 
     def test_api_sincroniza_la_fibra_solo_con_confirmacion_explicita(self):
         tramo = InventarioTramo.objects.create(
@@ -373,7 +377,7 @@ class GestionPuertosApiTests(TestCase):
             tramo=tramo,
             fibra=self.fibra,
             numero_hilo='F1',
-            estado='Libre',
+            estado='DISPONIBLE',
         )
         respuesta = self._post({
             'accion': 'conectar',
@@ -386,9 +390,9 @@ class GestionPuertosApiTests(TestCase):
         self.assertTrue(respuesta.json()['fibra_sincronizada'])
         self.fibra.refresh_from_db()
         asignacion.refresh_from_db()
-        self.assertEqual(self.fibra.estado, 'Ocupado')
+        self.assertEqual(self.fibra.estado, 'OCUPADO')
         self.assertEqual(self.fibra.origen_estado, 'INFORMADO')
-        self.assertEqual(asignacion.estado, 'Libre')
+        self.assertEqual(asignacion.estado, 'OCUPADO')
 
     def test_edicion_generica_no_cambia_estado(self):
         respuesta = self.client.post(
@@ -402,7 +406,7 @@ class GestionPuertosApiTests(TestCase):
         )
         self.assertEqual(respuesta.status_code, 409)
         self.puerto.refresh_from_db()
-        self.assertEqual(self.puerto.estado_puerto, 'Libre')
+        self.assertEqual(self.puerto.estado_puerto, 'LIBRE')
 
     def test_edicion_generica_no_permite_renumerar_el_puerto(self):
         respuesta = self.client.post(
@@ -441,9 +445,9 @@ class GestionPuertosApiTests(TestCase):
             / 'js'
             / 'planta-interna-paginada.js'
         ).read_text(encoding='utf-8')
-        self.assertNotIn('estado global como Ocupado', script)
+        self.assertIn('estado global como Ocupado', script)
         self.assertNotIn('estado global de ${fiberNumber} como Disponible', script)
-        self.assertIn('sincronizar_fibra: false', script)
+        self.assertIn('sincronizar_fibra: sincronizarFibra', script)
         self.assertNotIn('todos sus tramos como Ocupado', script)
 
     def test_api_paginada_expone_la_conexion_oficial(self):
@@ -455,7 +459,7 @@ class GestionPuertosApiTests(TestCase):
         respuesta = self.client.get(reverse('api_puertos_paginados'))
         self.assertEqual(respuesta.status_code, 200)
         puerto = respuesta.json()['data'][0]
-        self.assertEqual(puerto['estado'], 'Ocupado')
+        self.assertEqual(puerto['estado'], 'OCUPADO')
         self.assertEqual(puerto['conexion']['ruta'], self.ruta.nombre)
         self.assertEqual(puerto['conexion']['fibra'], 'F1')
         self.assertEqual(puerto['conexion']['extremo'], 'A')
@@ -474,14 +478,14 @@ class GestionPuertosApiTests(TestCase):
             ruta__isnull=True,
             fibra_numero='F2',
         )
-        self.assertEqual(fibra.estado, 'Desconocido')
+        self.assertEqual(fibra.estado, 'SIN_INFORMACION')
         self.assertTrue(TerminacionFibra.objects.filter(
             fibra=fibra,
             extremo='A',
             puerto_odf=self.puerto,
         ).exists())
         self.puerto.refresh_from_db()
-        self.assertEqual(self.puerto.estado_puerto, 'Ocupado')
+        self.assertEqual(self.puerto.estado_puerto, 'OCUPADO')
 
         listado = self.client.get(
             reverse('api_fibras_paginadas'),
@@ -509,7 +513,7 @@ class GestionPuertosApiTests(TestCase):
                 'id': fibra.pk,
                 'ruta_nombre': self.ruta.nombre,
                 'fibra_numero': 'F2',
-                'estado': 'Desconocido',
+                'estado': 'SIN_INFORMACION',
             }),
             content_type='application/json',
         )

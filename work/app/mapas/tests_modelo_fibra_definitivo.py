@@ -53,14 +53,14 @@ class EstadoFibraDefinitivoTests(TestCase):
     def test_nueva_fibra_no_inventa_disponibilidad(self):
         fibra = InventarioFibra.objects.create(fibra_numero='F1')
 
-        self.assertEqual(fibra.estado, 'Desconocido')
+        self.assertEqual(fibra.estado, 'SIN_INFORMACION')
         self.assertEqual(fibra.origen_estado, 'NO_INFORMADO')
         self.assertEqual(fibra.condicion_fisica, 'SIN_VERIFICAR')
 
     def test_modelo_rechaza_estado_conocido_sin_procedencia(self):
         fibra = InventarioFibra(
             fibra_numero='F90',
-            estado='Ocupado',
+            estado='OCUPADO',
             origen_estado='NO_INFORMADO',
         )
 
@@ -74,22 +74,22 @@ class EstadoFibraDefinitivoTests(TestCase):
             InventarioFibra.objects.bulk_create([
                 InventarioFibra(
                     fibra_numero='F91',
-                    estado='Libre',
+                    estado='DISPONIBLE',
                     origen_estado='NO_INFORMADO',
                 )
             ])
 
     def test_combinaciones_de_estado_y_origen_validas(self):
         combinaciones = (
-            ('Desconocido', 'NO_INFORMADO'),
-            ('Libre', 'INFORMADO'),
-            ('Ocupado', 'INFORMADO'),
-            ('Reservado', 'INFORMADO'),
-            ('Desconocido', 'INFORMADO'),
-            ('Libre', 'INFERIDO_TRAMOS'),
-            ('Ocupado', 'INFERIDO_TRAMOS'),
-            ('Reservado', 'INFERIDO_TRAMOS'),
-            ('Desconocido', 'INFERIDO_TRAMOS'),
+            ('SIN_INFORMACION', 'NO_INFORMADO'),
+            ('DISPONIBLE', 'INFORMADO'),
+            ('OCUPADO', 'INFORMADO'),
+            ('RESERVADO', 'INFORMADO'),
+            ('SIN_INFORMACION', 'INFORMADO'),
+            ('DISPONIBLE', 'INFERIDO_TRAMOS'),
+            ('OCUPADO', 'INFERIDO_TRAMOS'),
+            ('RESERVADO', 'INFERIDO_TRAMOS'),
+            ('SIN_INFORMACION', 'INFERIDO_TRAMOS'),
         )
         for indice, (estado, origen) in enumerate(combinaciones, start=100):
             with self.subTest(estado=estado, origen=origen):
@@ -111,14 +111,14 @@ class EstadoFibraDefinitivoTests(TestCase):
                 tramo=tramo,
                 fibra=fibra,
                 numero_hilo='F2',
-                estado='Ocupado',
+                estado='OCUPADO',
             )
 
-        establecer_estado_fibra_informado(fibra=fibra, estado='Libre')
+        establecer_estado_fibra_informado(fibra=fibra, estado='DISPONIBLE')
         sincronizar_estado_fibra(fibra)
         fibra.refresh_from_db()
 
-        self.assertEqual(fibra.estado, 'Libre')
+        self.assertEqual(fibra.estado, 'DISPONIBLE')
         self.assertEqual(fibra.origen_estado, 'INFORMADO')
 
     def test_restablecer_estado_no_infiere_en_la_misma_accion(self):
@@ -126,10 +126,10 @@ class EstadoFibraDefinitivoTests(TestCase):
         fibra = InventarioFibra.objects.create(
             ruta=ruta,
             fibra_numero='F3',
-            estado='Libre',
+            estado='DISPONIBLE',
             origen_estado='INFORMADO',
         )
-        for tramo, estado in zip(tramos, ('Libre', 'Reservado', 'Ocupado')):
+        for tramo, estado in zip(tramos, ('DISPONIBLE', 'RESERVADO', 'OCUPADO')):
             FibraTramo.objects.create(
                 tramo=tramo,
                 fibra=fibra,
@@ -140,7 +140,7 @@ class EstadoFibraDefinitivoTests(TestCase):
         restablecer_estado_fibra(fibra=fibra)
         fibra.refresh_from_db()
 
-        self.assertEqual(fibra.estado, 'Desconocido')
+        self.assertEqual(fibra.estado, 'SIN_INFORMACION')
         self.assertEqual(fibra.origen_estado, 'NO_INFORMADO')
         self.assertEqual(
             list(AuditoriaFibra.objects.filter(fibra=fibra).values_list(
@@ -148,17 +148,17 @@ class EstadoFibraDefinitivoTests(TestCase):
             )),
             [(
                 'RESTABLECER_ESTADO',
-                'Libre/INFORMADO',
-                'Desconocido/NO_INFORMADO',
+                'DISPONIBLE/INFORMADO',
+                'SIN_INFORMACION/NO_INFORMADO',
             )],
         )
 
         sincronizar_estado_fibra(fibra, causa='RECALCULO_EXPLICITO')
         fibra.refresh_from_db()
-        self.assertEqual(fibra.estado, 'Ocupado')
+        self.assertEqual(fibra.estado, 'OCUPADO')
         self.assertEqual(fibra.origen_estado, 'INFERIDO_TRAMOS')
 
-    def test_libre_solo_se_infiere_con_cobertura_completa(self):
+    def test_disponible_solo_se_infiere_con_cobertura_completa(self):
         ruta, tramos = self._ruta('RUTA-COBERTURA', 2)
         fibra = InventarioFibra.objects.create(
             ruta=ruta,
@@ -168,29 +168,29 @@ class EstadoFibraDefinitivoTests(TestCase):
             tramo=tramos[0],
             fibra=fibra,
             numero_hilo='F4',
-            estado='Libre',
+            estado='DISPONIBLE',
         )
 
         sincronizar_estado_fibra(fibra)
         fibra.refresh_from_db()
-        self.assertEqual(fibra.estado, 'Desconocido')
+        self.assertEqual(fibra.estado, 'SIN_INFORMACION')
 
         FibraTramo.objects.create(
             tramo=tramos[1],
             fibra=fibra,
             numero_hilo='F4',
-            estado='Libre',
+            estado='DISPONIBLE',
         )
         sincronizar_estado_fibra(fibra)
         fibra.refresh_from_db()
-        self.assertEqual(fibra.estado, 'Libre')
+        self.assertEqual(fibra.estado, 'DISPONIBLE')
         self.assertEqual(fibra.origen_estado, 'INFERIDO_TRAMOS')
 
     def test_asignar_ruta_de_un_tramo_materializa_uno_a_uno_y_audita(self):
         ruta, tramos = self._ruta('RUTA-UN-TRAMO', 1)
         fibra = InventarioFibra.objects.create(
             fibra_numero='F5',
-            estado='Ocupado',
+            estado='OCUPADO',
             origen_estado='INFORMADO',
             nombre_fibra='Servicio X',
         )
@@ -205,7 +205,7 @@ class EstadoFibraDefinitivoTests(TestCase):
         detalle = FibraTramo.objects.get(fibra=fibra)
         self.assertEqual(detalle.tramo, tramos[0])
         self.assertEqual(detalle.numero_hilo, 'F5')
-        self.assertEqual(detalle.estado, 'Ocupado')
+        self.assertEqual(detalle.estado, 'OCUPADO')
         fibra.refresh_from_db()
         self.assertEqual(fibra.nombre_fibra, 'Servicio X')
         self.assertTrue(
@@ -225,7 +225,7 @@ class EstadoFibraDefinitivoTests(TestCase):
             tramo=tramos[0],
             fibra=ocupante,
             numero_hilo='F6',
-            estado='Desconocido',
+            estado='SIN_INFORMACION',
         )
         fibra = InventarioFibra.objects.create(fibra_numero='F6')
 
@@ -274,7 +274,7 @@ class ImportacionModeloFibraDefinitivoTests(TestCase):
             DetallePuertoODF.objects.create(
                 odf_obj=cls.odf,
                 puerto_odf=str(numero),
-                estado_puerto='Libre',
+                estado_puerto='LIBRE',
             )
             for numero in range(1, 5)
         ]
@@ -289,13 +289,13 @@ class ImportacionModeloFibraDefinitivoTests(TestCase):
 
         fibra = InventarioFibra.objects.get(fibra_numero='F8')
         self.assertIsNone(fibra.ruta_id)
-        self.assertEqual(fibra.estado, 'Desconocido')
+        self.assertEqual(fibra.estado, 'SIN_INFORMACION')
         self.assertEqual(fibra.origen_estado, 'NO_INFORMADO')
         self.assertEqual(fibra.condicion_fisica, 'CON_FALLA')
         self.assertEqual(fibra.nombre_fibra, 'Servicio BHP')
         self.assertEqual(fibra.observaciones, 'Falla reportada')
         self.puertos[0].refresh_from_db()
-        self.assertEqual(self.puertos[0].estado_puerto, 'Ocupado')
+        self.assertEqual(self.puertos[0].estado_puerto, 'OCUPADO')
 
     def test_estado_y_condicion_se_conservan_como_dimensiones_separadas(self):
         ruta = Ruta.objects.create(nombre='RUTA-BHP-ESTADO')
@@ -311,7 +311,7 @@ class ImportacionModeloFibraDefinitivoTests(TestCase):
         _procesar_terminaciones_fibra(_csv('bhp-estado.csv', contenido))
 
         fibra.refresh_from_db()
-        self.assertEqual(fibra.estado, 'Ocupado')
+        self.assertEqual(fibra.estado, 'OCUPADO')
         self.assertEqual(fibra.origen_estado, 'INFORMADO')
         self.assertEqual(fibra.condicion_fisica, 'CON_FALLA')
 
@@ -333,15 +333,15 @@ class ImportacionModeloFibraDefinitivoTests(TestCase):
         fibra = InventarioFibra.objects.get(ruta=ruta, fibra_numero='F11')
         self.assertEqual(
             (fibra.estado, fibra.origen_estado),
-            ('Desconocido', 'NO_INFORMADO'),
+            ('SIN_INFORMACION', 'NO_INFORMADO'),
         )
         asignacion = FibraTramo.objects.get(fibra=fibra, tramo=tramo)
-        asignacion.estado = 'Libre'
+        asignacion.estado = 'DISPONIBLE'
         asignacion.save(update_fields=['estado'])
         fibra.refresh_from_db()
         self.assertEqual(
             (fibra.estado, fibra.origen_estado),
-            ('Libre', 'INFERIDO_TRAMOS'),
+            ('DISPONIBLE', 'INFERIDO_TRAMOS'),
         )
 
     def test_dos_f2_sin_ruta_en_odf_distintos_no_se_fusionan_y_reimportan(self):
@@ -356,7 +356,7 @@ class ImportacionModeloFibraDefinitivoTests(TestCase):
         puerto_2 = DetallePuertoODF.objects.create(
             odf_obj=odf_2,
             puerto_odf='2',
-            estado_puerto='Libre',
+            estado_puerto='LIBRE',
         )
         contenido = '\n'.join([
             'Ruta,Fibra,Codigo Fibra,Site,ODF,Puerto,Extremo,Estado',
@@ -427,7 +427,7 @@ class ImportacionModeloFibraDefinitivoTests(TestCase):
         )
 
         self.puertos[2].refresh_from_db()
-        self.assertEqual(self.puertos[2].estado_puerto, 'Ocupado')
+        self.assertEqual(self.puertos[2].estado_puerto, 'OCUPADO')
         self.assertEqual(
             self.puertos[2].observaciones,
             'Metadato actualizado',

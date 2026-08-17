@@ -442,12 +442,12 @@ class Command(BaseCommand):
                 ))
 
         estados_fibra = {
-            'libre': 'Libre',
-            'ocupado': 'Ocupado',
-            'ocupada': 'Ocupado',
-            'reservado': 'Reservado',
-            'reservada': 'Reservado',
-            'desconocido': 'Desconocido',
+            'disponible': 'DISPONIBLE',
+            'ocupado': 'OCUPADO',
+            'reservado': 'RESERVADO',
+            'sin informacion': 'SIN_INFORMACION',
+            'sin información': 'SIN_INFORMACION',
+            'malo': 'SIN_INFORMACION',
         }
         fibras_vistas = set()
         fibras_logicas_por_tramo = set()
@@ -458,7 +458,7 @@ class Command(BaseCommand):
             fibra = str(fila.get('fibra', '')).strip().upper()
             codigo_fibra = str(
                 fila.get('codigo_fibra', '')
-            ).strip().upper() or fibra
+            ).strip().upper()
             estado = str(fila.get('estado', '')).strip().casefold()
             codigo = str(
                 fila.get('codigo_tramo', '')
@@ -475,9 +475,10 @@ class Command(BaseCommand):
                     f'Fibras fila {numero + 2}: Fibra debe usar F<n>'
                 )
                 continue
-            if not re.fullmatch(r'F[1-9]\d*', codigo_fibra):
+            if codigo_fibra and re.fullmatch(r'F[1-9]\d*', codigo_fibra):
                 problemas.append(
-                    f'Fibras fila {numero + 2}: Codigo Fibra debe usar F<n>'
+                    f'Fibras fila {numero + 2}: Codigo Fibra debe ser una '
+                    'identidad estable distinta de la posición F<n>'
                 )
                 continue
             if not codigo:
@@ -506,12 +507,12 @@ class Command(BaseCommand):
             fibras_vistas.add(clave)
             clave_logica = (
                 ruta_nombre.casefold(),
-                codigo_fibra.casefold(),
+                (codigo_fibra or fibra).casefold(),
             )
             clave_logica_tramo = (
                 ruta_nombre.casefold(),
                 codigo.casefold(),
-                codigo_fibra.casefold(),
+                (codigo_fibra or fibra).casefold(),
             )
             if clave_logica_tramo in fibras_logicas_por_tramo:
                 problemas.append(

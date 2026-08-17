@@ -45,7 +45,7 @@ class ResincronizacionTopologiaTests(TestCase):
             for indice in range(1, cantidad + 1)
         ]
         datos_estado = (
-            {'estado': 'Libre', 'origen_estado': 'INFORMADO'}
+            {'estado': 'DISPONIBLE', 'origen_estado': 'INFORMADO'}
             if informado else {}
         )
         fibra = InventarioFibra.objects.create(
@@ -58,7 +58,7 @@ class ResincronizacionTopologiaTests(TestCase):
                 tramo=tramo,
                 fibra=fibra,
                 numero_hilo=numero,
-                estado='Libre',
+                estado='DISPONIBLE',
             )
             for tramo in tramos
         ]
@@ -68,7 +68,7 @@ class ResincronizacionTopologiaTests(TestCase):
     def test_agregar_y_eliminar_tramo_resincroniza_solo_afectadas(self):
         ruta, _, fibra, _ = self._recorrido('TOPO-AGREGAR')
         self.assertEqual((fibra.estado, fibra.origen_estado), (
-            'Libre', 'INFERIDO_TRAMOS'
+            'DISPONIBLE', 'INFERIDO_TRAMOS'
         ))
 
         nuevo = InventarioTramo.objects.create(
@@ -79,13 +79,13 @@ class ResincronizacionTopologiaTests(TestCase):
         )
         fibra.refresh_from_db()
         self.assertEqual((fibra.estado, fibra.origen_estado), (
-            'Desconocido', 'INFERIDO_TRAMOS'
+            'SIN_INFORMACION', 'INFERIDO_TRAMOS'
         ))
 
         nuevo.delete()
         fibra.refresh_from_db()
         self.assertEqual((fibra.estado, fibra.origen_estado), (
-            'Libre', 'INFERIDO_TRAMOS'
+            'DISPONIBLE', 'INFERIDO_TRAMOS'
         ))
 
     def test_eliminar_fibra_tramo_invalida_cobertura(self):
@@ -94,7 +94,7 @@ class ResincronizacionTopologiaTests(TestCase):
         fibra.refresh_from_db()
 
         self.assertEqual((fibra.estado, fibra.origen_estado), (
-            'Desconocido', 'INFERIDO_TRAMOS'
+            'SIN_INFORMACION', 'INFERIDO_TRAMOS'
         ))
         self.assertTrue(AuditoriaFibra.objects.filter(
             fibra=fibra,
@@ -114,7 +114,7 @@ class ResincronizacionTopologiaTests(TestCase):
             tramo=tramos[1],
             fibra=fibra_b,
             numero_hilo='F2',
-            estado='Libre',
+            estado='DISPONIBLE',
         )
 
         movida = asignaciones_a[0]
@@ -124,8 +124,8 @@ class ResincronizacionTopologiaTests(TestCase):
         fibra_a.refresh_from_db()
         fibra_b.refresh_from_db()
 
-        self.assertEqual(fibra_a.estado, 'Desconocido')
-        self.assertEqual(fibra_b.estado, 'Libre')
+        self.assertEqual(fibra_a.estado, 'SIN_INFORMACION')
+        self.assertEqual(fibra_b.estado, 'DISPONIBLE')
         self.assertEqual(fibra_b.origen_estado, 'INFERIDO_TRAMOS')
 
     def test_topologia_no_sobrescribe_estado_informado(self):
@@ -140,7 +140,7 @@ class ResincronizacionTopologiaTests(TestCase):
         )
         fibra.refresh_from_db()
         self.assertEqual((fibra.estado, fibra.origen_estado), (
-            'Libre', 'INFORMADO'
+            'DISPONIBLE', 'INFORMADO'
         ))
 
 
@@ -154,13 +154,11 @@ class ApiParcialFibraTests(TestCase):
         )
         cls.fibra = InventarioFibra.objects.create(
             fibra_numero='F40',
-            estado='Libre',
+            estado='DISPONIBLE',
             origen_estado='INFORMADO',
             nombre_fibra='Servicio CCTV',
             observaciones='No borrar',
             tipo_conector='LC',
-            origen_odf='Legacy origen',
-            destino='Router externo',
             condicion_fisica='OPERATIVA',
         )
 
@@ -175,15 +173,13 @@ class ApiParcialFibraTests(TestCase):
         )
 
     def test_payload_parcial_conserva_campos_ausentes(self):
-        respuesta = self._actualizar({'estado': 'Ocupado'})
+        respuesta = self._actualizar({'estado': 'OCUPADO'})
         self.assertEqual(respuesta.status_code, 200)
         self.fibra.refresh_from_db()
 
         self.assertEqual(self.fibra.nombre_fibra, 'Servicio CCTV')
         self.assertEqual(self.fibra.observaciones, 'No borrar')
         self.assertEqual(self.fibra.tipo_conector, 'LC')
-        self.assertEqual(self.fibra.origen_odf, 'Legacy origen')
-        self.assertEqual(self.fibra.destino, 'Router externo')
         self.assertEqual(self.fibra.condicion_fisica, 'OPERATIVA')
 
     def test_vacio_explicito_limpia_texto_y_restablece_condicion(self):
@@ -191,7 +187,6 @@ class ApiParcialFibraTests(TestCase):
             'servicio': '',
             'observaciones': '',
             'tipo_conector': '',
-            'destino': '',
             'condicion_fisica': '',
         })
         self.assertEqual(respuesta.status_code, 200)
@@ -200,7 +195,6 @@ class ApiParcialFibraTests(TestCase):
         self.assertEqual(self.fibra.nombre_fibra, '')
         self.assertEqual(self.fibra.observaciones, '')
         self.assertEqual(self.fibra.tipo_conector, '')
-        self.assertEqual(self.fibra.destino, '')
         self.assertEqual(self.fibra.condicion_fisica, 'SIN_VERIFICAR')
 
 
@@ -224,7 +218,7 @@ class ApiParcialPuertoTests(TestCase):
             odf_obj=odf,
             puerto_odf='1',
             bandeja='B1',
-            estado_puerto='Libre',
+            estado_puerto='LIBRE',
             tipo_conector='SC/APC',
             patchcord='Si',
             destino='Router externo',
@@ -274,7 +268,7 @@ class FibraTramoAdminSoloLecturaTests(TestCase):
             tramo=tramo,
             fibra=fibra,
             numero_hilo='F1',
-            estado='Desconocido',
+            estado='SIN_INFORMACION',
         )
 
     def setUp(self):
@@ -329,7 +323,7 @@ class ImportacionBhpEndurecidaTests(TestCase):
         return DetallePuertoODF.objects.create(
             odf_obj=odf,
             puerto_odf=str(numero),
-            estado_puerto='Libre',
+            estado_puerto='LIBRE',
         )
 
     def _ruta_un_tramo(self, nombre):
@@ -363,10 +357,10 @@ class ImportacionBhpEndurecidaTests(TestCase):
 
     def test_ruta_un_tramo_materializa_el_estado_definitivo(self):
         casos = (
-            ('Disponible', 'Libre'),
-            ('Ocupado', 'Ocupado'),
-            ('Reservado', 'Reservado'),
-            ('Sin informacion', 'Desconocido'),
+            ('Disponible', 'DISPONIBLE'),
+            ('Ocupado', 'OCUPADO'),
+            ('Reservado', 'RESERVADO'),
+            ('Sin informacion', 'SIN_INFORMACION'),
         )
         for indice, (entrada, esperado) in enumerate(casos, start=1):
             with self.subTest(estado=entrada):
@@ -398,7 +392,7 @@ class ImportacionBhpEndurecidaTests(TestCase):
             tramo=tramo,
             fibra=ocupante,
             numero_hilo='F6',
-            estado='Libre',
+            estado='DISPONIBLE',
         )
         contenido = self._fila_larga(ruta.nombre, 'F6', 6, 'Ocupado')
 
@@ -428,13 +422,13 @@ class ImportacionBhpEndurecidaTests(TestCase):
 
         fibra = InventarioFibra.objects.get(ruta=ruta, fibra_numero='F10')
         detalle = FibraTramo.objects.get(fibra=fibra, tramo=tramo)
-        self.assertEqual((fibra.estado, detalle.estado), ('Ocupado', 'Ocupado'))
+        self.assertEqual((fibra.estado, detalle.estado), ('OCUPADO', 'OCUPADO'))
         self.assertEqual(fibra.condicion_fisica, 'CON_FALLA')
 
     def test_site_informado_se_valida_contra_jerarquia_odf(self):
         ruta = Ruta.objects.create(nombre='BHP-SITE')
         correcto = self._fila_larga(
-            ruta.nombre, 'F20', 7, 'Libre', site='SITE-BHP-A'
+            ruta.nombre, 'F20', 7, 'Disponible', site='SITE-BHP-A'
         )
         _procesar_terminaciones_fibra(_csv('site-ok.csv', correcto))
         self.assertTrue(InventarioFibra.objects.filter(
@@ -443,7 +437,7 @@ class ImportacionBhpEndurecidaTests(TestCase):
         ).exists())
 
         incorrecto = self._fila_larga(
-            ruta.nombre, 'F21', 8, 'Libre', site='SITE-BHP-B'
+            ruta.nombre, 'F21', 8, 'Disponible', site='SITE-BHP-B'
         )
         with self.assertRaises(ValueError):
             _procesar_terminaciones_fibra(_csv('site-error.csv', incorrecto))
@@ -494,7 +488,7 @@ class ImportacionBhpEndurecidaTests(TestCase):
             fibra_id=fibra.pk,
             extremo='A',
         )
-        mover = self._fila_larga(ruta.nombre, 'F40', 4, 'Libre')
+        mover = self._fila_larga(ruta.nombre, 'F40', 4, 'Disponible')
         with self.assertRaises(ValueError):
             _procesar_terminaciones_fibra(_csv('no-mover.csv', mover))
         self.assertEqual(
@@ -503,11 +497,11 @@ class ImportacionBhpEndurecidaTests(TestCase):
         )
 
         reservar_puerto(puerto_id=self.puertos_a[4].pk)
-        reservada = self._fila_larga(ruta.nombre, 'F41', 5, 'Libre')
+        reservada = self._fila_larga(ruta.nombre, 'F41', 5, 'Disponible')
         with self.assertRaises(ValueError):
             _procesar_terminaciones_fibra(_csv('reserva.csv', reservada))
         self.puertos_a[4].refresh_from_db()
-        self.assertEqual(self.puertos_a[4].estado_puerto, 'Reservado')
+        self.assertEqual(self.puertos_a[4].estado_puerto, 'RESERVADO')
 
 
 class ImportadorPuertosRetiradoTests(TestCase):
@@ -549,7 +543,7 @@ class RutaUnTramoIdempotenteTests(TestCase):
         fibra = InventarioFibra.objects.create(
             ruta=ruta,
             fibra_numero='F3',
-            estado='Reservado',
+            estado='RESERVADO',
             origen_estado='INFORMADO',
         )
 
@@ -557,7 +551,7 @@ class RutaUnTramoIdempotenteTests(TestCase):
 
         self.assertFalse(asignada)
         detalle = FibraTramo.objects.get(fibra=fibra, tramo=tramo)
-        self.assertEqual(detalle.estado, 'Reservado')
+        self.assertEqual(detalle.estado, 'RESERVADO')
         self.assertFalse(AuditoriaFibra.objects.filter(
             fibra=fibra,
             accion='ASIGNAR_RUTA',

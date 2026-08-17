@@ -81,7 +81,7 @@ class CalidadFixtureMixin:
         fibra = InventarioFibra.objects.create(
             ruta=ruta,
             fibra_numero='F12',
-            estado='Libre',
+            estado='DISPONIBLE',
             origen_estado='INFORMADO',
         )
         asignados = cantidad if asignados is None else asignados
@@ -91,7 +91,7 @@ class CalidadFixtureMixin:
                 tramo=tramo,
                 fibra=fibra,
                 numero_hilo=posicion,
-                estado='Libre',
+                estado='DISPONIBLE',
             )
         return fibra, tramos
 
@@ -99,7 +99,7 @@ class CalidadFixtureMixin:
         detalle = DetallePuertoODF.objects.create(
             odf_obj=odf,
             puerto_odf=puerto,
-            estado_puerto='Libre',
+            estado_puerto='LIBRE',
         )
         TerminacionFibra.objects.create(
             fibra=fibra,
@@ -176,7 +176,7 @@ class CalidadFibraTests(CalidadFixtureMixin, TestCase):
         puerto_a = self._terminar(fibra, 'A', self.odf_x, 'SITE-A')
         self._terminar(fibra, 'B', self.odf_b, 'SITE-B')
         DetallePuertoODF.objects.filter(pk=puerto_a.pk).update(
-            estado_puerto='Libre'
+            estado_puerto='LIBRE'
         )
 
         calidad = evaluar_completitud_fibra(fibra)
@@ -233,10 +233,10 @@ class CalidadFibraTests(CalidadFixtureMixin, TestCase):
 
     def test_global_ocupado_con_detalle_desconocido_o_libre_reporta_calidad(self):
         desconocida, _ = self._recorrido('CALIDAD-DETALLE-DESCONOCIDO', 2)
-        desconocida.estado = 'Ocupado'
+        desconocida.estado = 'OCUPADO'
         desconocida.origen_estado = 'INFORMADO'
         desconocida.save(update_fields=['estado', 'origen_estado'])
-        desconocida.asignaciones_tramo.update(estado='Desconocido')
+        desconocida.asignaciones_tramo.update(estado='SIN_INFORMACION')
         codigos_desconocida = {
             item['codigo']
             for item in evaluar_completitud_fibra(desconocida)['hallazgos']
@@ -244,7 +244,7 @@ class CalidadFibraTests(CalidadFixtureMixin, TestCase):
         self.assertIn('DETALLE_TRAMO_PENDIENTE', codigos_desconocida)
 
         libre, _ = self._recorrido('CALIDAD-GLOBAL-CONTRADICCION', 2)
-        libre.estado = 'Ocupado'
+        libre.estado = 'OCUPADO'
         libre.origen_estado = 'INFORMADO'
         libre.save(update_fields=['estado', 'origen_estado'])
         codigos_libre = {
@@ -260,7 +260,7 @@ class CalidadFibraTests(CalidadFixtureMixin, TestCase):
             posiciones=['F12', 'F14'],
         )
         asignacion = fibra.asignaciones_tramo.order_by('tramo__tramo_secuencia').last()
-        FibraTramo.objects.filter(pk=asignacion.pk).update(estado='Ocupado')
+        FibraTramo.objects.filter(pk=asignacion.pk).update(estado='OCUPADO')
         InventarioFibra.objects.filter(pk=fibra.pk).update(
             origen_estado='INFORMADO'
         )
@@ -322,7 +322,7 @@ class CalidadFibraApiTests(CalidadFixtureMixin, TestCase):
         self.assertContains(respuesta, 'fiber-operations-8')
         self.assertContains(respuesta, 'data-fiber-destination-context')
         self.assertContains(respuesta, 'data-clear-fiber-destination')
-        self.assertContains(respuesta, 'data-fiber-state="Libre"')
+        self.assertContains(respuesta, 'data-fiber-state="DISPONIBLE"')
         self.assertContains(respuesta, 'Estado efectivo de fibras')
 
     def test_resumen_usa_estado_global_aunque_falte_cobertura_fisica(self):
@@ -349,11 +349,11 @@ class CalidadFibraApiTests(CalidadFixtureMixin, TestCase):
     def test_resumen_infiere_estado_desde_tramos_si_global_no_esta_informado(self):
         fibra, _ = self._recorrido('CALIDAD-RESUMEN-INFERIDO', 2)
         InventarioFibra.objects.filter(pk=fibra.pk).update(
-            estado='Desconocido',
+            estado='SIN_INFORMACION',
             origen_estado='NO_INFORMADO',
-            destino='DESTINO-INFERIDO',
+            nombre_fibra='DESTINO-INFERIDO',
         )
-        FibraTramo.objects.filter(fibra=fibra).update(estado='Ocupado')
+        FibraTramo.objects.filter(fibra=fibra).update(estado='OCUPADO')
 
         respuesta = self.client.get(
             reverse('api_fibras_paginadas'),
@@ -366,7 +366,7 @@ class CalidadFibraApiTests(CalidadFixtureMixin, TestCase):
         self.assertEqual(payload['summary']['sin_estado'], 0)
         self.assertEqual(payload['summary']['estados_informados'], 0)
         self.assertEqual(payload['summary']['estados_inferidos'], 1)
-        self.assertEqual(payload['data'][0]['estado'], 'Ocupado')
+        self.assertEqual(payload['data'][0]['estado'], 'OCUPADO')
         self.assertEqual(
             payload['data'][0]['origen_estado'],
             'INFERIDO_TRAMOS',
@@ -377,7 +377,7 @@ class CalidadFibraApiTests(CalidadFixtureMixin, TestCase):
         )
         filtrada = self.client.get(
             reverse('api_fibras_paginadas'),
-            {'ruta': fibra.ruta.nombre, 'estado': 'Ocupado'},
+            {'ruta': fibra.ruta.nombre, 'estado': 'OCUPADO'},
         ).json()
         self.assertEqual(filtrada['pagination']['total'], 1)
         ficha = self.client.get(
@@ -393,14 +393,14 @@ class CalidadFibraApiTests(CalidadFixtureMixin, TestCase):
         ocupada, _ = self._recorrido('CALIDAD-DESTINO-OCUPADA', 1)
         disponible, _ = self._recorrido('CALIDAD-DESTINO-DISPONIBLE', 1)
         InventarioFibra.objects.filter(pk=ocupada.pk).update(
-            estado='Ocupado',
+            estado='OCUPADO',
             origen_estado='INFORMADO',
-            destino='DESTINO-COMPARTIDO',
+            nombre_fibra='DESTINO-COMPARTIDO',
         )
         InventarioFibra.objects.filter(pk=disponible.pk).update(
-            estado='Libre',
+            estado='DISPONIBLE',
             origen_estado='INFORMADO',
-            destino='DESTINO-COMPARTIDO',
+            nombre_fibra='DESTINO-COMPARTIDO',
         )
 
         resumen = self.client.get(reverse('api_fibras_paginadas')).json()[
@@ -423,7 +423,7 @@ class CalidadFibraApiTests(CalidadFixtureMixin, TestCase):
             },
         ).json()
         self.assertEqual(filtrada['pagination']['total'], 1)
-        self.assertEqual(filtrada['data'][0]['estado'], 'Ocupado')
+        self.assertEqual(filtrada['data'][0]['estado'], 'OCUPADO')
         destino_filtrado = filtrada['summary']['destinos_mayor_uso'][0]
         self.assertEqual(destino_filtrado['total'], 1)
         self.assertEqual(destino_filtrado['total_asociadas'], 2)
@@ -436,4 +436,4 @@ class CalidadFibraApiTests(CalidadFixtureMixin, TestCase):
         self.assertContains(respuesta, 'Sin información')
         self.assertContains(respuesta, 'fibras-stat-unknown')
         self.assertContains(respuesta, 'fiber-summary-unknown')
-        self.assertContains(respuesta, 'value="Desconocido"')
+        self.assertContains(respuesta, 'value="SIN_INFORMACION"')

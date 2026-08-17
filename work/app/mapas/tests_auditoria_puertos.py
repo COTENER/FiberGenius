@@ -39,15 +39,15 @@ class AuditoriaPuertosODFTests(TestCase):
             capacidad_puertos=12,
         )
         cls.puerto_1 = DetallePuertoODF.objects.create(
-            odf_obj=odf, puerto_odf='1', estado_puerto='Libre'
+            odf_obj=odf, puerto_odf='1', estado_puerto='LIBRE'
         )
         cls.puerto_2 = DetallePuertoODF.objects.create(
-            odf_obj=odf, puerto_odf='2', estado_puerto='Libre'
+            odf_obj=odf, puerto_odf='2', estado_puerto='LIBRE'
         )
         cls.fibra = InventarioFibra.objects.create(
             ruta=Ruta.objects.create(nombre='RUTA-AUD'),
             fibra_numero='F12',
-            estado='Libre',
+            estado='DISPONIBLE',
             origen_estado='INFORMADO',
         )
 
@@ -64,7 +64,7 @@ class AuditoriaPuertosODFTests(TestCase):
         self.assertEqual(conexion.origen, 'GUI')
         self.assertIsNone(conexion.puerto_anterior)
         self.assertEqual(conexion.puerto_nuevo, self.puerto_1)
-        self.assertEqual((conexion.estado_anterior, conexion.estado_nuevo), ('Libre', 'Ocupado'))
+        self.assertEqual((conexion.estado_anterior, conexion.estado_nuevo), ('LIBRE', 'OCUPADO'))
         self.assertEqual(conexion.referencia_fibra, 'RUTA-AUD / F12')
 
         conectar_puerto(
@@ -80,7 +80,7 @@ class AuditoriaPuertosODFTests(TestCase):
         self.assertEqual(movimiento.puerto_nuevo, self.puerto_2)
         self.assertEqual(
             movimiento.metadatos['estado_puerto_origen_nuevo'],
-            'Libre',
+            'LIBRE',
         )
 
         desconectar_puerto(
@@ -92,7 +92,7 @@ class AuditoriaPuertosODFTests(TestCase):
         self.assertEqual(desconexion.extremo, 'A')
         self.assertEqual(desconexion.puerto_anterior, self.puerto_2)
         self.assertIsNone(desconexion.puerto_nuevo)
-        self.assertEqual((desconexion.estado_anterior, desconexion.estado_nuevo), ('Ocupado', 'Libre'))
+        self.assertEqual((desconexion.estado_anterior, desconexion.estado_nuevo), ('OCUPADO', 'LIBRE'))
 
     def test_registra_reserva_y_cancelacion(self):
         reservar_puerto(
@@ -113,7 +113,7 @@ class AuditoriaPuertosODFTests(TestCase):
     def test_evento_es_inmutable(self):
         reservar_puerto(puerto_id=self.puerto_1.pk)
         evento = AuditoriaPuertoODF.objects.get()
-        evento.estado_nuevo = 'Libre'
+        evento.estado_nuevo = 'LIBRE'
         with self.assertRaises(ValidationError):
             evento.save()
         with self.assertRaises(ValidationError):
@@ -131,7 +131,7 @@ class AuditoriaPuertosODFTests(TestCase):
         except RuntimeError:
             pass
         self.puerto_1.refresh_from_db()
-        self.assertEqual(self.puerto_1.estado_puerto, 'Libre')
+        self.assertEqual(self.puerto_1.estado_puerto, 'LIBRE')
         self.assertFalse(AuditoriaPuertoODF.objects.exists())
 
     def test_api_filtra_por_puerto_y_la_pantalla_expone_historial(self):

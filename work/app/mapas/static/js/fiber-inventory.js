@@ -82,7 +82,7 @@
         putText('fiber-summary-reserved-pct', pct(reserved));
         putText('fiber-summary-unknown-pct', pct(unknown));
         const selectedState = root.querySelector('[data-resource="fibras"] [data-filter="estado"]')?.value || '';
-        const stateCounts = { Libre: free, Ocupado: used, Reservado: reserved, Desconocido: unknown };
+        const stateCounts = { DISPONIBLE: free, OCUPADO: used, RESERVADO: reserved, SIN_INFORMACION: unknown };
         root.querySelectorAll('[data-fiber-state]').forEach((button) => {
             const selected = button.dataset.fiberState === selectedState;
             button.classList.toggle('is-selected', selected);
@@ -281,7 +281,12 @@
     }
 
     function fiberStateLabel(value) {
-        return value === 'Libre' ? 'Disponible' : value === 'Desconocido' ? 'Sin información' : (value || 'Sin información');
+        return {
+            DISPONIBLE: 'Disponible',
+            OCUPADO: 'Ocupado',
+            RESERVADO: 'Reservado',
+            SIN_INFORMACION: 'Sin información',
+        }[value] || 'Sin información';
     }
 
     function fiberStateSource(value) {
@@ -302,7 +307,6 @@
 
     function fiberEndpoint(endpoint) {
         if (endpoint?.confirmado) return `${endpoint.odf || 'ODF'} · Puerto ${endpoint.puerto || '—'}`;
-        if (endpoint?.referencia_legacy) return `${endpoint.referencia_legacy} · referencia histórica`;
         return 'Sin terminación confirmada';
     }
 
@@ -322,12 +326,12 @@
         document.getElementById('fiber-selected-name').textContent = `${item.troncal} · Fibra ${item.numero}`;
         status.textContent = displayedState;
         status.className = 'network-asset-status';
-        if (item.estado === 'Ocupado') status.classList.add('is-used');
-        else if (item.estado === 'Reservado') status.classList.add('is-reserved');
-        else if (item.estado === 'Desconocido') status.classList.add('is-unknown');
+        if (item.estado === 'OCUPADO') status.classList.add('is-used');
+        else if (item.estado === 'RESERVADO') status.classList.add('is-reserved');
+        else if (item.estado === 'SIN_INFORMACION') status.classList.add('is-unknown');
         document.getElementById('fiber-selected-state-source').textContent = fiberStateSource(item.origen_estado);
         document.getElementById('fiber-selected-condition').textContent = fiberCondition(item.condicion_fisica);
-        document.getElementById('fiber-selected-service').textContent = item.servicio && item.servicio !== '—' && item.servicio !== 'Libre' ? item.servicio : 'Sin servicio asignado';
+        document.getElementById('fiber-selected-service').textContent = item.servicio && item.servicio !== '—' ? item.servicio : 'Sin servicio asignado';
         document.getElementById('fiber-selected-end-a').textContent = fiberEndpoint(item.terminacion_a);
         document.getElementById('fiber-selected-end-b').textContent = fiberEndpoint(item.terminacion_b);
         document.getElementById('fiber-selected-route').textContent = item.troncal;

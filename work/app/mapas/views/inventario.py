@@ -27,6 +27,7 @@ from ..services.puertos import (
     desconectar_puerto,
     reservar_puerto,
 )
+from ..services.ubicacion import nombre_site
 
 logger = logging.getLogger('mapas')
 ERRORES_DATOS_ENTRADA = (json.JSONDecodeError, TypeError, ValueError, ValidationError)
@@ -375,7 +376,9 @@ def dashboard_inventario(request):
     coordenadas_filtradas = CoordenadaRuta.objects.filter(ruta_id__in=rutas_ids)
     odfs_filtrados = InventarioODF.objects.all()
     if site_seleccionado:
-        odfs_filtrados = odfs_filtrados.filter(hub_site=site_seleccionado)
+        odfs_filtrados = odfs_filtrados.filter(
+            rack_obj__sala__hub_site__nombre=site_seleccionado
+        )
     puertos_filtrados = DetallePuertoODF.objects.filter(odf_obj__in=odfs_filtrados)
 
     conteo_puertos = defaultdict(int)
@@ -383,8 +386,8 @@ def dashboard_inventario(request):
         conteo_puertos[(fila['estado_puerto'] or '').strip().lower()] += fila['total']
 
     puertos_libres = conteo_puertos['libre']
-    puertos_ocupados = conteo_puertos['ocupado'] + conteo_puertos['ocupada']
-    puertos_reservados = conteo_puertos['reservado'] + conteo_puertos['reservada']
+    puertos_ocupados = conteo_puertos['ocupado']
+    puertos_reservados = conteo_puertos['reservado']
     total_puertos = puertos_libres + puertos_ocupados + puertos_reservados
     resumenes_fibras_logicas = [
         capacidad_por_ruta[ruta_id]
@@ -419,10 +422,22 @@ def dashboard_inventario(request):
         for resumen in resumenes_fibras_logicas
     )
 
-    odfs_data = list(odfs_filtrados.values(
-        'id', 'odf', 'hub_site', 'sala', 'rack', 'capacidad_puertos',
-        'puertos_ocupados', 'puertos_libres', 'puertos_reservados',
-    ).order_by('odf'))
+    odfs_data = [
+        {
+            'id': odf.pk,
+            'odf': odf.odf,
+            'hub_site': nombre_site(odf),
+            'sala': odf.rack_obj.sala.nombre,
+            'rack': odf.rack_obj.nombre,
+            'capacidad_puertos': odf.capacidad_puertos,
+            'puertos_ocupados': odf.puertos_ocupados,
+            'puertos_libres': odf.puertos_libres,
+            'puertos_reservados': odf.puertos_reservados,
+        }
+        for odf in odfs_filtrados.select_related(
+            'rack_obj__sala__hub_site'
+        ).order_by('odf')
+    ]
     total_odfs = len(odfs_data)
     total_salas = len({
         (odf['hub_site'], odf['sala']) for odf in odfs_data
@@ -782,11 +797,17 @@ def inventario_interno(request):
 
     queryset = InventarioODF.objects.all()
     def opciones(campo):
+        ruta_campo = {
+            'hub_site': 'rack_obj__sala__hub_site__nombre',
+            'sala': 'rack_obj__sala__nombre',
+            'rack': 'rack_obj__nombre',
+            'estado': 'estado',
+        }[campo]
         return list(
-            queryset.exclude(**{f'{campo}__isnull': True})
-            .exclude(**{campo: ''})
-            .order_by(campo)
-            .values_list(campo, flat=True)
+            queryset.exclude(**{f'{ruta_campo}__isnull': True})
+            .exclude(**{ruta_campo: ''})
+            .order_by(ruta_campo)
+            .values_list(ruta_campo, flat=True)
             .distinct()
         )
 
@@ -1242,8 +1263,7 @@ def create_detalle_fibra(request):
         from ..models import InventarioFibra
         from ..services.fibras import (
             asignar_fibra_a_tramos,
-            asignar_ruta_fibra,
-            establecer_estado_fibra_informado,
+            crear_fibra,
             normalizar_condicion_fisica,
             normalizar_estado_fibra,
             normalizar_numero_hilo,
@@ -1276,37 +1296,25 @@ def create_detalle_fibra(request):
                 status=409,
             )
 
-        estado = normalizar_estado_fibra(data.get('estado', 'Desconocido'))
+        estado = normalizar_estado_fibra(
+            data.get('estado', 'SIN_INFORMACION')
+        )
         condicion = normalizar_condicion_fisica(
             data.get('condicion_fisica', 'SIN_VERIFICAR')
         )
-        fibra = InventarioFibra.objects.create(
-            ruta=None,
+        fibra = crear_fibra(
             fibra_numero=fibra_numero,
-            estado='Desconocido',
-            origen_estado='NO_INFORMADO',
+            ruta=ruta,
+            estado=estado,
             condicion_fisica=condicion,
             nombre_fibra=str(data.get('nombre_fibra', '')).strip(),
-            origen_odf=str(data.get('origen_odf', '')).strip(),
-            destino=str(data.get('destino', '')).strip(),
             tipo_conector=str(data.get('tipo_conector', '')).strip(),
             observaciones=str(data.get('observaciones', '')).strip(),
+            usuario=request.user,
+            origen='GUI',
         )
-        if estado != 'Desconocido':
-            establecer_estado_fibra_informado(
-                fibra=fibra,
-                estado=estado,
-                usuario=request.user,
-                origen='GUI',
-            )
         advertencia = ''
         if ruta:
-            fibra, _, advertencia = asignar_ruta_fibra(
-                fibra=fibra,
-                ruta=ruta,
-                usuario=request.user,
-                origen='GUI',
-            )
             seleccion_explicita = (
                 ('tramo_ids' in data and data.get('tramo_ids') is not None)
                 or (
@@ -1485,6 +1493,7 @@ def update_detalle_fibra(request):
         from ..models import InventarioFibra
         from ..services.fibras import (
             asignar_ruta_fibra,
+            actualizar_metadatos_fibra,
             establecer_estado_fibra_informado,
             normalizar_condicion_fisica,
             normalizar_estado_fibra,
@@ -1542,14 +1551,11 @@ def update_detalle_fibra(request):
                 },
                 status=409,
             )
-        campos_actualizados = []
+        cambios_metadatos = {}
         if fibra.fibra_numero != numero_logico:
-            fibra.fibra_numero = numero_logico
-            campos_actualizados.append('fibra_numero')
+            cambios_metadatos['fibra_numero'] = numero_logico
         campos_texto = {
             'nombre_fibra': ('nombre_fibra', 'servicio'),
-            'origen_odf': ('origen_odf',),
-            'destino': ('destino',),
             'tipo_conector': ('tipo_conector',),
             'observaciones': ('observaciones',),
         }
@@ -1562,8 +1568,7 @@ def update_detalle_fibra(request):
                 continue
             valor = str(data.get(clave_payload) or '').strip()
             if getattr(fibra, campo_modelo) != valor:
-                setattr(fibra, campo_modelo, valor)
-                campos_actualizados.append(campo_modelo)
+                cambios_metadatos[campo_modelo] = valor
         if 'condicion_fisica' in data:
             condicion_raw = str(data.get('condicion_fisica') or '').strip()
             condicion = (
@@ -1572,14 +1577,18 @@ def update_detalle_fibra(request):
                 else 'SIN_VERIFICAR'
             )
             if fibra.condicion_fisica != condicion:
-                fibra.condicion_fisica = condicion
-                campos_actualizados.append('condicion_fisica')
-        if campos_actualizados:
-            fibra.save(update_fields=campos_actualizados)
+                cambios_metadatos['condicion_fisica'] = condicion
+        if cambios_metadatos:
+            actualizar_metadatos_fibra(
+                fibra=fibra,
+                usuario=request.user,
+                origen='GUI',
+                **cambios_metadatos,
+            )
 
         if 'estado' in data:
             nuevo_estado = normalizar_estado_fibra(data.get('estado'))
-            if nuevo_estado == 'Desconocido':
+            if nuevo_estado == 'SIN_INFORMACION':
                 restablecer_estado_fibra(
                     fibra=fibra,
                     usuario=request.user,
@@ -1645,12 +1654,22 @@ def update_detalle_fibra(request):
 def get_odfs(request):
     """Retorna la lista de todos los ODFs para la tabla del dashboard."""
     from ..models import InventarioODF
-    odfs = InventarioODF.objects.all().values(
-        'id', 'hub_site', 'sala', 'rack', 'odf', 
-        'capacidad_puertos', 'puertos_ocupados', 'puertos_libres', 'puertos_reservados',
-        'tipo_conector', 'estado', 'observaciones'
-    )
-    return JsonResponse({"status": "success", "data": list(odfs)})
+    odfs = InventarioODF.objects.select_related('rack_obj__sala__hub_site')
+    data = [{
+        'id': odf.pk,
+        'hub_site': nombre_site(odf),
+        'sala': odf.rack_obj.sala.nombre,
+        'rack': odf.rack_obj.nombre,
+        'odf': odf.odf,
+        'capacidad_puertos': odf.capacidad_puertos,
+        'puertos_ocupados': odf.puertos_ocupados,
+        'puertos_libres': odf.puertos_libres,
+        'puertos_reservados': odf.puertos_reservados,
+        'tipo_conector': odf.tipo_conector,
+        'estado': odf.estado,
+        'observaciones': odf.observaciones,
+    } for odf in odfs]
+    return JsonResponse({"status": "success", "data": data})
 
 @login_required
 @permission_required('mapas.view_detallepuertoodf', raise_exception=True)
@@ -1661,7 +1680,9 @@ def get_detalle_puertos(request, odf_nombre):
     
     hub_site = request.GET.get('hub_site', '').strip()
     query = (
-        DetallePuertoODF.objects.select_related('odf_obj')
+        DetallePuertoODF.objects.select_related(
+            'odf_obj__rack_obj__sala__hub_site'
+        )
         .prefetch_related(Prefetch(
             'terminaciones_fibra',
             queryset=TerminacionFibra.objects.select_related('fibra__ruta'),
@@ -1670,7 +1691,9 @@ def get_detalle_puertos(request, odf_nombre):
         .filter(odf_obj__odf__iexact=odf_nombre)
     )
     if hub_site:
-        query = query.filter(odf_obj__hub_site=hub_site)
+        query = query.filter(
+            odf_obj__rack_obj__sala__hub_site__nombre=hub_site
+        )
         
     puertos = list(query)
     
@@ -1693,6 +1716,7 @@ def get_detalle_puertos(request, odf_nombre):
             'puerto_odf': p.puerto_odf,
             'fibra': terminacion.fibra.fibra_numero if terminacion else '',
             'estado_puerto': p.estado_puerto,
+            'estado_puerto_label': p.get_estado_puerto_display(),
             'tipo_conector': p.tipo_conector,
             'patchcord': p.patchcord,
             'destino': p.destino,
@@ -2092,22 +2116,26 @@ def create_odf_manual(request):
         if not odf_nombre:
             return JsonResponse({'status': 'error', 'message': 'El nombre del ODF es obligatorio'})
 
-        rack_obj = resolver_rack(hub, sala, rack)
-        exists = InventarioODF.objects.filter(rack_obj=rack_obj, odf=odf_nombre).exists()
-        
-        if exists:
-            return JsonResponse({
-                'status': 'error', 
-                'message': f'El ODF "{odf_nombre}" ya existe en esta ubicación (Hub: {hub}, Sala: {sala}, Rack: {rack}).'
-            })
+        existente = InventarioODF.objects.select_related(
+            'rack_obj__sala__hub_site'
+        ).filter(odf__iexact=odf_nombre).first()
 
+        if existente:
+            return JsonResponse({
+                'status': 'error',
+                'message': (
+                    f'Ya existe {existente.odf} en '
+                    f'{nombre_site(existente)} / '
+                    f'{existente.rack_obj.sala.nombre} / '
+                    f'{existente.rack_obj.nombre}.'
+                ),
+            }, status=409)
+
+        rack_obj = resolver_rack(hub, sala, rack)
         capacidad = int(data.get('capacidad_puertos', 0) or 0)
         # Crear el ODF y materializar todas sus posiciones físicas.
         odf = InventarioODF.objects.create(
             rack_obj=rack_obj,
-            hub_site=hub,
-            sala=sala,
-            rack=rack,
             odf=odf_nombre,
             capacidad_puertos=capacidad,
             puertos_libres=0,
@@ -2174,9 +2202,9 @@ def create_puerto_manual(request):
                 )
 
         estado_puerto = normalizar_estado_puerto_odf(
-            data.get('estado_puerto', 'Libre')
+            data.get('estado_puerto', 'LIBRE')
         )
-        if estado_puerto == 'Ocupado':
+        if estado_puerto == 'OCUPADO':
             return JsonResponse(
                 {
                     'status': 'error',
@@ -2188,7 +2216,6 @@ def create_puerto_manual(request):
         # Crear Puerto
         DetallePuertoODF.objects.create(
             odf_obj=odf_obj,
-            odf=odf_nombre,
             puerto_odf=puerto_num,
             bandeja=data.get('bandeja', ''),
             estado_puerto=estado_puerto,
@@ -2472,29 +2499,47 @@ def update_odf_manual(request):
         if not odf:
             return JsonResponse({'status': 'error', 'message': 'ODF no encontrado'})
             
-        hub = data.get('hub_site', '').strip()
-        sala = data.get('sala', '').strip()
-        rack = data.get('rack', '').strip()
-        odf_nombre = data.get('odf', '').strip()
-        
+        odf = InventarioODF.objects.select_related(
+            'rack_obj__sala__hub_site'
+        ).get(pk=odf.pk)
+        hub = str(data.get('hub_site', nombre_site(odf)) or '').strip()
+        sala = str(data.get('sala', odf.rack_obj.sala.nombre) or '').strip()
+        rack = str(data.get('rack', odf.rack_obj.nombre) or '').strip()
+        odf_nombre = str(data.get('odf', odf.odf) or '').strip()
+        if not odf_nombre:
+            return JsonResponse({
+                'status': 'error',
+                'message': 'El nombre del ODF es obligatorio.',
+            }, status=400)
+
+        duplicado = InventarioODF.objects.select_related(
+            'rack_obj__sala__hub_site'
+        ).filter(odf__iexact=odf_nombre).exclude(id=id_odf).first()
+        if duplicado:
+            return JsonResponse({
+                'status': 'error',
+                'message': (
+                    f'Ya existe {duplicado.odf} en '
+                    f'{nombre_site(duplicado)} / '
+                    f'{duplicado.rack_obj.sala.nombre} / '
+                    f'{duplicado.rack_obj.nombre}.'
+                ),
+            }, status=409)
+
         rack_obj = resolver_rack(hub, sala, rack)
-        # Validar duplicados si cambian los campos clave
-        if odf.rack_obj_id != rack_obj.id or odf.odf != odf_nombre:
-            exists = InventarioODF.objects.filter(rack_obj=rack_obj, odf=odf_nombre).exclude(id=id_odf).exists()
-            if exists:
-                return JsonResponse({'status': 'error', 'message': 'Ya existe otro ODF con esta misma ubicación/nombre'})
-                
         # Actualizar campos
-        odf.hub_site = hub
-        odf.sala = sala
-        odf.rack = rack
         odf.rack_obj = rack_obj
         odf.odf = odf_nombre
-        # Solo actualizamos capacidad si no hay lógicas complejas de puertos ocupados, o se ajusta puertos libres
-        nueva_capacidad = int(data.get('capacidad_puertos', 0) or 0)
+        nueva_capacidad = int(
+            data.get('capacidad_puertos', odf.capacidad_puertos) or 0
+        )
         
-        odf.tipo_conector = data.get('tipo_conector', '')
-        odf.estado = data.get('estado', 'Activo')
+        if 'tipo_conector' in data:
+            odf.tipo_conector = data.get('tipo_conector') or ''
+        if 'estado' in data:
+            odf.estado = data.get('estado') or ''
+        if 'observaciones' in data:
+            odf.observaciones = data.get('observaciones') or ''
         odf.save()
         odf = ajustar_puertos_a_capacidad(odf, nueva_capacidad)
         
@@ -2544,9 +2589,9 @@ def get_puertos_odf_api(request):
     Retorna la lista de puertos para un ODF específico.
     Se usa en el mapa de inventario para el panel lateral flotante.
     """
-    from django.db.models import Prefetch, Q
+    from django.db.models import Prefetch
     from ..models import (
-        InventarioODF, DetallePuertoODF, Ruta, TerminacionFibra,
+        InventarioODF, DetallePuertoODF, TerminacionFibra,
     )
     
     hub_site = request.GET.get('hub_site', '').strip()
@@ -2559,7 +2604,10 @@ def get_puertos_odf_api(request):
     # Si no hay hub_site o no coincide exactamente, buscamos solo por odf_nombre y tomamos el primero
     odf = None
     if hub_site:
-        odf = InventarioODF.objects.filter(hub_site=hub_site, odf=odf_nombre).first()
+        odf = InventarioODF.objects.filter(
+            rack_obj__sala__hub_site__nombre=hub_site,
+            odf__iexact=odf_nombre,
+        ).first()
         
     if not odf:
         odf = InventarioODF.objects.filter(odf__iexact=odf_nombre).first()
@@ -2589,31 +2637,6 @@ def get_puertos_odf_api(request):
             
     puertos.sort(key=sort_key)
     
-    # Buscar la ruta troncal asociada a este ODF basándose en los tramos de las rutas
-    ruta_asociada = Ruta.objects.filter(
-        Q(
-            fibras_inventario__terminaciones__puerto_odf__odf_obj=odf,
-        )
-        | Q(tramos_inventario__odf_nombre__iexact=odf.odf)
-        | Q(
-            tramos_inventario__origen_nodo__tipo='ODF',
-            tramos_inventario__origen_nodo__codigo__iexact=odf.odf,
-        )
-        | Q(
-            tramos_inventario__origen_nodo__tipo='ODF',
-            tramos_inventario__origen_nodo__nombre__iexact=odf.odf,
-        )
-        | Q(
-            tramos_inventario__destino_nodo__tipo='ODF',
-            tramos_inventario__destino_nodo__codigo__iexact=odf.odf,
-        )
-        | Q(
-            tramos_inventario__destino_nodo__tipo='ODF',
-            tramos_inventario__destino_nodo__nombre__iexact=odf.odf,
-        )
-    ).distinct().first()
-    nombre_ruta_global = ruta_asociada.nombre if ruta_asociada else 'N/A'
-
     data = []
     for p in puertos:
         terminacion = next(
@@ -2625,17 +2648,13 @@ def get_puertos_odf_api(request):
         )
         if terminacion is not None:
             ruta_nombre = terminacion.fibra.nombre_troncal
-        elif str(p.estado_puerto or '').casefold() == 'ocupado':
-            ruta_nombre = nombre_ruta_global
-            # Fallback cuando Destino contiene una referencia de ruta.
-            if ruta_nombre == 'N/A' and p.destino and "Puerto" in p.destino:
-                ruta_nombre = p.destino
         else:
-            ruta_nombre = 'N/A'
+            ruta_nombre = 'No determinada'
                 
         data.append({
             'puerto': p.puerto_odf,
             'estado': p.estado_puerto,
+            'estado_label': p.get_estado_puerto_display(),
             'bandeja': p.bandeja,
             'fibra': terminacion.fibra.fibra_numero if terminacion else '',
             'destino': p.destino,
@@ -2646,7 +2665,7 @@ def get_puertos_odf_api(request):
     return JsonResponse({
         'status': 'success',
         'odf': odf.odf,
-        'hub_site': odf.hub_site,
+        'hub_site': nombre_site(odf),
         'capacidad': odf.capacidad_puertos,
         'puertos': data
     })
@@ -2861,9 +2880,23 @@ def planta_interna_view(request):
     """Consulta global de puertos; los registros se solicitan por página."""
     from ..models import InventarioODF
 
-    odfs = list(InventarioODF.objects.values(
-        'id', 'odf', 'hub_site', 'sala', 'rack'
-    ).order_by('hub_site', 'sala', 'rack', 'odf'))
+    odfs = [
+        {
+            'id': odf.pk,
+            'odf': odf.odf,
+            'hub_site': nombre_site(odf),
+            'sala': odf.rack_obj.sala.nombre,
+            'rack': odf.rack_obj.nombre,
+        }
+        for odf in InventarioODF.objects.select_related(
+            'rack_obj__sala__hub_site'
+        ).order_by(
+            'rack_obj__sala__hub_site__nombre',
+            'rack_obj__sala__nombre',
+            'rack_obj__nombre',
+            'odf',
+        )
+    ]
     context = {
         'odfs_puertos': odfs,
         'sites_puertos': sorted({odf['hub_site'] for odf in odfs if odf['hub_site']}),

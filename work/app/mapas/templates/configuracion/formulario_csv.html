@@ -226,15 +226,15 @@
     {% elif tipo_csv == 'terminaciones_fibra' %}
     <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
         <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Terminaciones de Fibra</h4>
-        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Una fila por hilo lógico. Ruta puede quedar vacía; completa al menos un extremo con ODF y puerto:</p>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Una fila por terminación física. Ruta y Codigo Fibra pueden quedar vacíos en la primera carga si el puerto identifica la fibra sin ambigüedad:</p>
         <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
             <span class="badge badge--info">Ruta (opcional)</span>
             <span class="badge badge--accent">Fibra</span>
-            <span class="badge badge--accent">ODF Extremo A</span>
-            <span class="badge badge--accent">Puerto Extremo A</span>
-            <span class="badge badge--accent">ODF Extremo B</span>
-            <span class="badge badge--accent">Puerto Extremo B</span>
-            <span class="badge badge--info">Conector A/B (opcional)</span>
+            <span class="badge badge--info">Codigo Fibra (opcional en primera carga)</span>
+            <span class="badge badge--accent">Extremo A/B</span>
+            <span class="badge badge--accent">ODF</span>
+            <span class="badge badge--accent">Puerto</span>
+            <span class="badge badge--info">Conector (opcional)</span>
         </div>
         <div style="display:flex;flex-wrap:wrap;gap:8px;">
             <a href="{% url 'plantilla_terminaciones_fibra' %}" download class="btn btn--sm btn--secondary">Descargar plantilla precargada</a>

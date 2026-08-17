@@ -56,7 +56,7 @@ class ConcurrenciaModeloFibraPostgreSQLTests(TransactionTestCase):
             DetallePuertoODF.objects.create(
                 odf_obj=odf,
                 puerto_odf=str(numero),
-                estado_puerto='Libre',
+                estado_puerto='LIBRE',
             )
             for numero in range(1, cantidad + 1)
         ]
@@ -114,7 +114,7 @@ class ConcurrenciaModeloFibraPostgreSQLTests(TransactionTestCase):
             tramo=tramo,
             fibra=fibra,
             numero_hilo='F1',
-            estado='Libre',
+            estado='DISPONIBLE',
         )
         AuditoriaFibra.objects.all().delete()
         bloqueo_tomado = threading.Event()
@@ -126,7 +126,7 @@ class ConcurrenciaModeloFibraPostgreSQLTests(TransactionTestCase):
                 bloqueada = InventarioFibra.objects.select_for_update().get(pk=fibra.pk)
                 establecer_estado_fibra_informado(
                     fibra=bloqueada,
-                    estado='Ocupado',
+                    estado='OCUPADO',
                 )
                 bloqueo_tomado.set()
                 liberar.wait(10)
@@ -422,7 +422,7 @@ class ConcurrenciaModeloFibraPostgreSQLTests(TransactionTestCase):
             barrera.wait(10)
             establecer_estado_fibra_informado(
                 fibra=InventarioFibra.objects.get(pk=fibra.pk),
-                estado='Ocupado',
+                estado='OCUPADO',
             )
 
         hilos = (
@@ -539,7 +539,7 @@ class ConstraintsModeloFibraPostgreSQLTests(TransactionTestCase):
 
         with self.assertRaises(IntegrityError), transaction.atomic():
             InventarioFibra.objects.filter(pk=fibra.pk).update(
-                estado='Ocupado',
+                estado='OCUPADO',
                 origen_estado='NO_INFORMADO',
             )
 
@@ -569,7 +569,7 @@ class ConstraintsModeloFibraPostgreSQLTests(TransactionTestCase):
             DetallePuertoODF.objects.create(
                 odf_obj=odf,
                 puerto_odf=str(numero),
-                estado_puerto='Libre',
+                estado_puerto='LIBRE',
             )
             for numero in (1, 2)
         ]

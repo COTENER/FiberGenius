@@ -419,9 +419,9 @@ input:checked + .slider:before { transform: translateX(22px); }
 <template id="tmpl-fibras_globales">
     <div class="import-guide-summary">
         <h4>Identidad y estado global</h4>
-        <p><strong>Código Fibra</strong> es la clave estable. No uses F1/F2 como código global. Esta carga no crea posiciones por tramo ni ocupa puertos ODF.</p>
+        <p><strong>Código Fibra</strong> es la clave estable preferente. En la primera carga puede quedar vacío si informas Ruta + Fibra; Fiber Genius generará el código. No uses F1/F2 como código global. Esta carga no crea posiciones por tramo ni ocupa puertos ODF.</p>
         <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:10px;">
-            <span class="badge badge--accent">Codigo Fibra (obligatorio)</span>
+            <span class="badge badge--info">Codigo Fibra (opcional en primera carga)</span>
             <span class="badge badge--accent">Fibra (obligatorio)</span>
             <span class="badge badge--accent">Estado (obligatorio)</span>
             <span class="badge badge--info">Ruta (opcional)</span>
@@ -887,35 +887,30 @@ input:checked + .slider:before { transform: translateX(22px); }
     <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
         <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Terminaciones de Fibra</h4>
         <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">
-            Una fila representa una fibra global. Código Fibra es obligatorio y estable; Ruta es opcional y puede quedar pendiente. Cada extremo debe incluir juntos el ODF y el puerto exactos.
+            Una fila representa una terminación A o B. Código Fibra es estable y preferente; en la primera carga puede quedar vacío cuando Ruta + Fibra o el puerto identifican el registro sin ambigüedad.
         </p>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;">
             <span class="badge badge--info">Ruta (opcional)</span>
             <span class="badge badge--accent">Fibra</span>
-            <span class="badge badge--warning">Codigo Fibra (obligatorio)</span>
-            <span class="badge badge--info">Nodo A (referencia)</span>
-            <span class="badge badge--accent">ODF Extremo A</span>
-            <span class="badge badge--accent">Puerto Extremo A</span>
-            <span class="badge badge--info">Conector A</span>
-            <span class="badge badge--info">Nodo B (referencia)</span>
-            <span class="badge badge--accent">ODF Extremo B</span>
-            <span class="badge badge--accent">Puerto Extremo B</span>
-            <span class="badge badge--info">Conector B</span>
+            <span class="badge badge--info">Codigo Fibra (opcional en primera carga)</span>
+            <span class="badge badge--accent">Extremo A/B</span>
+            <span class="badge badge--info">Site (validación)</span>
+            <span class="badge badge--accent">ODF</span>
+            <span class="badge badge--accent">Puerto</span>
+            <span class="badge badge--info">Conector</span>
         </div>
         <div style="overflow-x:auto;">
             <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);min-width:1250px;">
                 <thead style="border-bottom:1px solid var(--border-color);color:var(--text-secondary);">
                     <tr>
-                        <th style="text-align:left;padding:4px;">Ruta</th><th>Fibra</th><th>Codigo Fibra</th><th>Nodo A</th>
-                        <th>ODF Extremo A</th><th>Puerto Extremo A</th><th>Conector A</th><th>Nodo B</th>
-                        <th>ODF Extremo B</th><th>Puerto Extremo B</th><th>Conector B</th>
+                        <th style="text-align:left;padding:4px;">Ruta</th><th>Fibra</th><th>Codigo Fibra</th><th>Extremo</th>
+                        <th>Site</th><th>ODF</th><th>Puerto</th><th>Conector</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr>
-                        <td style="padding:4px;font-weight:600;">MEL-TC-001</td><td style="text-align:center;">F1</td><td style="text-align:center;">FGF-EJEMPLO-0001</td><td style="text-align:center;">SITE-A</td>
-                        <td style="text-align:center;">MEL-SITE-A-ODF-01</td><td style="text-align:center;">1</td><td style="text-align:center;">LC</td><td style="text-align:center;">SITE-B</td>
-                        <td style="text-align:center;">MEL-SITE-B-ODF-01</td><td style="text-align:center;">1</td><td style="text-align:center;">LC</td>
+                        <td style="padding:4px;font-weight:600;">MEL-TC-001</td><td style="text-align:center;">F1</td><td style="text-align:center;">FGF-EJEMPLO-0001</td><td style="text-align:center;">A</td>
+                        <td style="text-align:center;">SITE-A</td><td style="text-align:center;">MEL-SITE-A-ODF-01</td><td style="text-align:center;">1</td><td style="text-align:center;">LC</td>
                     </tr>
                 </tbody>
             </table>
@@ -923,7 +918,7 @@ input:checked + .slider:before { transform: translateX(22px); }
         <details style="margin-top:var(--space-3);padding-top:var(--space-3);border-top:1px solid var(--border-color);">
             <summary style="cursor:pointer;font-size:var(--text-sm);font-weight:600;color:var(--text-primary);">Reglas de carga segura</summary>
             <p style="font-size:var(--text-xs);color:var(--text-secondary);margin-top:var(--space-2);">
-                La carga crea o actualiza únicamente los extremos incluidos y no elimina terminaciones omitidas. Cada terminación deja su puerto Ocupado. Un puerto no puede pertenecer a dos terminaciones. El sistema reconcilia siempre por Codigo Fibra; ID Fibra y Ruta solo se usan para verificar coherencia. Nunca identifica una fibra global usando solamente F1/F2.
+                La carga crea o actualiza únicamente los extremos incluidos y no elimina terminaciones omitidas. Cada terminación deja su puerto Ocupado. La identidad se resuelve por Codigo Fibra, luego Ruta + Fibra y, con ruta pendiente, por el puerto declarado. Nunca se reconcilia solamente por F1/F2.
             </p>
         </details>
         <div style="margin-top:16px;display:flex;flex-wrap:wrap;gap:8px;">

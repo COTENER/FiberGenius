@@ -103,9 +103,9 @@
         donut.append(totalNode, caption);
         const list = document.createElement('ul');
         const states = [
-            ['is-free', 'Libres', 'Libre', free],
-            ['is-used', 'Ocupados', 'Ocupado', used],
-            ['is-reserved', 'Reservados', 'Reservado', reserved],
+            ['is-free', 'Libres', 'LIBRE', free],
+            ['is-used', 'Ocupados', 'OCUPADO', used],
+            ['is-reserved', 'Reservados', 'RESERVADO', reserved],
         ];
         if (unknown) states.push(['is-unknown', 'Sin información', '', unknown]);
         states.forEach(([className, label, statusValue, value]) => {
@@ -241,8 +241,8 @@
         const title = document.createElement('h3');
         title.textContent = `${port.odf} · Puerto ${port.puerto}`;
         const status = document.createElement('span');
-        status.className = `network-asset-status ${port.estado === 'Reservado' ? 'is-reserved' : (port.estado === 'Ocupado' ? 'is-used' : '')}`;
-        status.textContent = port.estado || 'Sin estado';
+        status.className = `network-asset-status ${port.estado === 'RESERVADO' ? 'is-reserved' : (port.estado === 'OCUPADO' ? 'is-used' : '')}`;
+        status.textContent = port.estado_label || 'Sin estado';
         const grid = document.createElement('div');
         grid.className = 'network-asset-grid';
         grid.append(
@@ -442,11 +442,15 @@
 
     function statusBadge(value) {
         const badge = document.createElement('span');
-        const modifier = value === 'Ocupado'
+        const modifier = value === 'OCUPADO'
             ? 'is-used'
-            : (value === 'Reservado' ? 'is-reserved' : 'is-free');
+            : (value === 'RESERVADO' ? 'is-reserved' : 'is-free');
         badge.className = `port-status ${modifier}`;
-        badge.textContent = value || 'Sin estado';
+        badge.textContent = {
+            LIBRE: 'Libre',
+            OCUPADO: 'Ocupado',
+            RESERVADO: 'Reservado',
+        }[value] || 'Sin estado';
         return badge;
     }
 
@@ -766,17 +770,17 @@
         const target = managementValue('port-management-current');
         if (!target) return;
         const status = document.createElement('span');
-        status.className = `port-management-status ${port.estado === 'Ocupado' ? 'is-used' : (port.estado === 'Reservado' ? 'is-reserved' : 'is-free')}`;
-        status.textContent = port.estado || 'Libre';
+        status.className = `port-management-status ${port.estado === 'OCUPADO' ? 'is-used' : (port.estado === 'RESERVADO' ? 'is-reserved' : 'is-free')}`;
+        status.textContent = port.estado_label || 'Libre';
         const identity = document.createElement('div');
         const title = document.createElement('strong');
         title.textContent = `${port.site} · ${port.odf} · Puerto ${port.puerto}`;
         const connection = document.createElement('p');
         if (port.conexion) {
             connection.textContent = `${port.conexion.fibra} · Extremo ${port.conexion.extremo} · ${port.conexion.ruta || 'Troncal pendiente'}`;
-        } else if (port.estado === 'Ocupado') {
-            connection.textContent = 'Estado heredado sin terminación oficial. Vincula una fibra para regularizarlo.';
-        } else if (port.estado === 'Reservado') {
+        } else if (port.estado === 'OCUPADO') {
+            connection.textContent = 'Inconsistencia: puerto ocupado sin terminación oficial.';
+        } else if (port.estado === 'RESERVADO') {
             connection.textContent = 'Puerto reservado, sin fibra conectada.';
         } else {
             connection.textContent = 'Puerto libre, sin fibra conectada.';
@@ -841,7 +845,7 @@
                     .filter(value => value && !value.startsWith('Pendiente de orientación'))
                     .join(' ↔ ');
                 const option = new Option(
-                    `${fiber.numero} · ${fiber.troncal || 'Troncal pendiente'} · ${ubicaciones || fiber.estado}`,
+                    `${fiber.numero} · ${fiber.troncal || 'Troncal pendiente'} · ${ubicaciones || fiber.estado_label || 'Sin información'}`,
                     String(fiber.id),
                 );
                 option.dataset.trace = JSON.stringify(fiber.trazabilidad || {});
@@ -877,16 +881,16 @@
         fillManagementData(port);
 
         const canConnect = root.dataset.canConnect === 'true' && (
-            port.estado === 'Libre' || port.estado === 'Reservado'
-            || (port.estado === 'Ocupado' && !port.conexion)
+            port.estado === 'LIBRE' || port.estado === 'RESERVADO'
+            || (port.estado === 'OCUPADO' && !port.conexion)
         );
         managementValue('port-connect-section').hidden = !canConnect;
         managementValue('port-disconnect-section').hidden = !port.conexion
             || root.dataset.canDisconnect !== 'true';
-        managementValue('port-reservation-section').hidden = !['Libre', 'Reservado'].includes(port.estado);
-        managementValue('port-management-reserve').hidden = port.estado !== 'Libre';
-        managementValue('port-management-cancel-reserve').hidden = port.estado !== 'Reservado';
-        managementValue('port-reservation-help').textContent = port.estado === 'Reservado'
+        managementValue('port-reservation-section').hidden = !['LIBRE', 'RESERVADO'].includes(port.estado);
+        managementValue('port-management-reserve').hidden = port.estado !== 'LIBRE';
+        managementValue('port-management-cancel-reserve').hidden = port.estado !== 'RESERVADO';
+        managementValue('port-reservation-help').textContent = port.estado === 'RESERVADO'
             ? 'Puede cancelar la reserva o conectar una fibra para consumirla.'
             : 'Reserve el puerto sin crear una conexión de fibra.';
         managementValue('port-management-fiber-query').value = '';
@@ -950,13 +954,18 @@
         if (!window.confirm(
             `¿Conectar ${fiberLabel} · extremo ${endpoint} con ${managedPort.odf} / puerto ${managedPort.puerto}?`
         )) return;
+        const sincronizarFibra = !creatingProvisional
+            && selectedFiber?.dataset.state === 'DISPONIBLE'
+            && window.confirm(
+                `La fibra ${selectedFiber?.dataset.number || fiberLabel} está Disponible. ¿Desea informar también su estado global como Ocupado?`
+            );
         setManagementMessage('Conectando…');
         try {
             await postManagement('conectar', {
                 fibra_id: creatingProvisional ? null : fiberId,
                 fibra_numero: creatingProvisional ? provisionalNumber : '',
                 extremo: endpoint,
-                sincronizar_fibra: false,
+                sincronizar_fibra: sincronizarFibra,
             });
         } catch (error) {
             setManagementMessage(error.message);
@@ -966,12 +975,15 @@
     async function disconnectManagedPort() {
         const fiberNumber = managedPort?.conexion?.fibra || 'conectada';
         if (!window.confirm(
-            `¿Desconectar la fibra ${fiberNumber} de ${managedPort.odf} / puerto ${managedPort.puerto}?\n\nEl puerto quedará Libre y el estado global de la fibra no cambiará.`
+            `¿Desconectar la fibra ${fiberNumber} de ${managedPort.odf} / puerto ${managedPort.puerto}?\n\nEl puerto quedará Libre.`
         )) return;
+        const sincronizarFibra = window.confirm(
+            `¿Desea informar también la fibra ${fiberNumber} como Disponible?`
+        );
         setManagementMessage('Desconectando…');
         try {
             await postManagement('desconectar', {
-                sincronizar_fibra: false,
+                sincronizar_fibra: sincronizarFibra,
             });
         } catch (error) {
             setManagementMessage(error.message);
@@ -1203,7 +1215,7 @@
 
     const incoming = new URLSearchParams(window.location.search);
     elements.query.value = incoming.get('q') || '';
-    if (['Libre', 'Ocupado', 'Reservado'].includes(incoming.get('estado'))) elements.status.value = incoming.get('estado');
+    if (['LIBRE', 'OCUPADO', 'RESERVADO'].includes(incoming.get('estado'))) elements.status.value = incoming.get('estado');
     elements.site.value = incoming.get('site') || '';
     elements.room.value = incoming.get('sala') || '';
     elements.rack.value = incoming.get('rack') || '';

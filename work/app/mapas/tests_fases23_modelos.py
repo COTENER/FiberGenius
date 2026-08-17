@@ -101,13 +101,13 @@ class FibraTramoModeloTests(TestCase):
         cls.fibra_a = InventarioFibra.objects.create(
             ruta=cls.ruta_a,
             fibra_numero='F1',
-            estado='Ocupado',
+            estado='OCUPADO',
             origen_estado='INFORMADO',
         )
         cls.fibra_b = InventarioFibra.objects.create(
             ruta=cls.ruta_b,
             fibra_numero='F1',
-            estado='Libre',
+            estado='DISPONIBLE',
             origen_estado='INFORMADO',
         )
 
@@ -116,7 +116,7 @@ class FibraTramoModeloTests(TestCase):
             FibraTramo.objects.create(
                 tramo=self.tramo_a,
                 numero_hilo='F1',
-                estado='Libre',
+                estado='DISPONIBLE',
                 fibra=self.fibra_b,
             )
 
@@ -126,7 +126,7 @@ class FibraTramoModeloTests(TestCase):
         FibraTramo.objects.create(
             tramo=self.tramo_a,
             numero_hilo='F1',
-            estado='Ocupado',
+            estado='OCUPADO',
             fibra=self.fibra_a,
         )
 
@@ -136,7 +136,7 @@ class FibraTramoModeloTests(TestCase):
                     FibraTramo(
                         tramo=self.tramo_a,
                         numero_hilo='f1',
-                        estado='Libre',
+                        estado='DISPONIBLE',
                     )
                 ])
 
@@ -146,7 +146,7 @@ class FibraTramoModeloTests(TestCase):
         FibraTramo.objects.create(
             tramo=self.tramo_a,
             numero_hilo='F1',
-            estado='Ocupado',
+            estado='OCUPADO',
             fibra=self.fibra_a,
         )
 
@@ -156,7 +156,7 @@ class FibraTramoModeloTests(TestCase):
                     FibraTramo(
                         tramo=self.tramo_a,
                         numero_hilo='F2',
-                        estado='Ocupado',
+                        estado='OCUPADO',
                         fibra=self.fibra_a,
                     )
                 ])
@@ -168,13 +168,13 @@ class FibraTramoModeloTests(TestCase):
             FibraTramo.objects.create(
                 tramo=self.tramo_a,
                 numero_hilo='HILO-1',
-                estado='Libre',
+                estado='DISPONIBLE',
             )
         with self.assertRaises(ValidationError):
             FibraTramo.objects.create(
                 tramo=self.tramo_a,
                 numero_hilo='F25',
-                estado='Libre',
+                estado='DISPONIBLE',
             )
 
         self.assertFalse(FibraTramo.objects.exists())
@@ -183,7 +183,7 @@ class FibraTramoModeloTests(TestCase):
         FibraTramo.objects.create(
             tramo=self.tramo_a,
             numero_hilo='F1',
-            estado='Ocupado',
+            estado='OCUPADO',
             fibra=self.fibra_a,
         )
 
@@ -198,13 +198,13 @@ class FibraTramoModeloTests(TestCase):
         fibra = InventarioFibra.objects.create(
             ruta=self.ruta_a,
             fibra_numero='F24',
-            estado='Libre',
+            estado='DISPONIBLE',
             origen_estado='INFORMADO',
         )
         FibraTramo.objects.create(
             tramo=self.tramo_a,
             numero_hilo='F24',
-            estado='Libre',
+            estado='DISPONIBLE',
             fibra=fibra,
         )
 
@@ -372,22 +372,11 @@ class CompletitudTramoTests(TestCase):
 
 
 class RecorridoFibraTests(TestCase):
-    def test_extremos_del_recorrido_deben_ser_distintos(self):
-        ruta = Ruta.objects.create(nombre='RUTA-RECORRIDO')
-        nodo = NodoRed.objects.create(tipo='SITE', codigo='NODO-RECORRIDO')
+    def test_extremos_del_recorrido_no_se_almacenan_en_campos_legacy(self):
+        campos = {campo.name for campo in InventarioFibra._meta.get_fields()}
 
-        with self.assertRaisesRegex(
-            ValidationError,
-            'deben ser distintos',
-        ):
-            InventarioFibra.objects.create(
-                ruta=ruta,
-                fibra_numero='F1',
-                estado='Libre',
-                origen_estado='INFORMADO',
-                origen_nodo=nodo,
-                destino_nodo=nodo,
-            )
+        self.assertNotIn('origen_nodo', campos)
+        self.assertNotIn('destino_nodo', campos)
 
 
 class AdministracionIdentidadesTests(TestCase):
@@ -405,13 +394,13 @@ class AdministracionIdentidadesTests(TestCase):
         self.fibra = InventarioFibra.objects.create(
             ruta=self.ruta,
             fibra_numero='F1',
-            estado='Libre',
+            estado='DISPONIBLE',
             origen_estado='INFORMADO',
         )
         FibraTramo.objects.create(
             tramo=self.tramo,
             numero_hilo='F1',
-            estado='Libre',
+            estado='DISPONIBLE',
             fibra=self.fibra,
         )
 
@@ -462,13 +451,13 @@ class CapacidadFases23Tests(TestCase):
         cls.fibra_completa = InventarioFibra.objects.create(
             ruta=cls.ruta,
             fibra_numero='LOGICA-01',
-            estado='Ocupado',
+            estado='OCUPADO',
             origen_estado='INFORMADO',
         )
         cls.fibra_parcial = InventarioFibra.objects.create(
             ruta=cls.ruta,
             fibra_numero='LOGICA-02',
-            estado='Libre',
+            estado='DISPONIBLE',
             origen_estado='INFORMADO',
         )
 
@@ -476,14 +465,14 @@ class CapacidadFases23Tests(TestCase):
             FibraTramo.objects.create(
                 tramo=tramo,
                 numero_hilo=f'F{indice}',
-                estado='Ocupado',
+                estado='OCUPADO',
                 fibra=cls.fibra_completa,
             )
         for indice, tramo in enumerate(cls.tramos[:2], start=10):
             FibraTramo.objects.create(
                 tramo=tramo,
                 numero_hilo=f'F{indice}',
-                estado='Libre',
+                estado='DISPONIBLE',
                 fibra=cls.fibra_parcial,
             )
 
@@ -535,7 +524,7 @@ class CapacidadFases23Tests(TestCase):
     def test_el_detalle_fisico_prevalece_sobre_un_cache_logico_desactualizado(self):
         InventarioFibra.objects.filter(
             pk=self.fibra_completa.pk,
-        ).update(estado='Libre')
+        ).update(estado='DISPONIBLE')
 
         resumen = resumen_ruta(self.ruta)
 

@@ -67,7 +67,7 @@ class ImportadoresGuiadosTests(TestCase):
         self.assertEqual(resultado['creadas'], 1)
         fibra = InventarioFibra.objects.get(codigo_fibra='FGF-0001')
         self.assertIsNone(fibra.ruta_id)
-        self.assertEqual(fibra.estado, 'Ocupado')
+        self.assertEqual(fibra.estado, 'OCUPADO')
         self.assertEqual(fibra.origen_estado, 'INFORMADO')
 
     def test_fibra_global_se_asocia_despues_sin_duplicarse(self):
@@ -86,7 +86,7 @@ class ImportadoresGuiadosTests(TestCase):
         self.assertEqual(InventarioFibra.objects.count(), 1)
         fibra = InventarioFibra.objects.get(codigo_fibra='FGF-0002')
         self.assertEqual(fibra.ruta, ruta)
-        self.assertEqual(fibra.estado, 'Libre')
+        self.assertEqual(fibra.estado, 'DISPONIBLE')
 
     def test_fibra_global_no_acepta_posicion_fisica_como_codigo(self):
         with self.assertRaisesMessage(ValueError, 'Codigo Fibra debe ser global'):

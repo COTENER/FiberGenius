@@ -11,7 +11,8 @@ from ..models import (
     InventarioFibra,
     TerminacionFibra,
 )
-from .fibras import establecer_estado_fibra_informado
+from .fibras import crear_fibra, establecer_estado_fibra_informado
+from .ubicacion import nombre_site
 
 
 class MovimientoRequiereConfirmacion(ValidationError):
@@ -85,7 +86,7 @@ def _referencia_puerto(puerto):
     if not puerto:
         return ""
     odf = puerto.odf_obj
-    return f"{odf.hub_site} / {odf.odf} / Puerto {puerto.puerto_odf}"
+    return f"{nombre_site(odf)} / {odf.odf} / Puerto {puerto.puerto_odf}"
 
 
 def _registrar_auditoria(
@@ -145,11 +146,11 @@ def conectar_puerto(
             )
         if len(numero_provisional) > 50:
             raise ValidationError("El número del hilo no puede superar 50 caracteres.")
-        fibra = InventarioFibra.objects.create(
-            ruta=None,
+        fibra = crear_fibra(
             fibra_numero=numero_provisional,
-            estado="Desconocido",
-            origen_estado="NO_INFORMADO",
+            usuario=usuario,
+            origen=origen,
+            lote_importacion=lote_importacion,
         )
         fibra_id = fibra.pk
 
@@ -178,14 +179,14 @@ def conectar_puerto(
         )
     estado_destino_anterior = puerto.estado_puerto
     if existente and existente.puerto_odf_id == puerto.pk:
-        cambio_puerto = puerto.estado_puerto != "Ocupado"
-        if puerto.estado_puerto != "Ocupado":
-            _establecer_estado(puerto, "Ocupado")
+        cambio_puerto = puerto.estado_puerto != "OCUPADO"
+        if puerto.estado_puerto != "OCUPADO":
+            _establecer_estado(puerto, "OCUPADO")
             _actualizar_contadores(puerto.odf_obj)
         if ocupar_fibra:
             establecer_estado_fibra_informado(
                 fibra=fibra,
-                estado="Ocupado",
+                estado="OCUPADO",
                 usuario=usuario,
                 origen=origen,
                 lote_importacion=lote_importacion,
@@ -201,14 +202,14 @@ def conectar_puerto(
                 puerto_anterior=puerto,
                 puerto_nuevo=puerto,
                 estado_anterior=estado_destino_anterior,
-                estado_nuevo="Ocupado",
+                estado_nuevo="OCUPADO",
                 sincronizo_fibra=ocupar_fibra,
                 metadatos={"conexion_existente": True},
             )
         return existente, False
     if existente and not permitir_mover:
         raise MovimientoRequiereConfirmacion(existente)
-    if puerto.estado_puerto not in {"Libre", "Reservado", "Ocupado"}:
+    if puerto.estado_puerto not in {"LIBRE", "RESERVADO", "OCUPADO"}:
         raise ValidationError("El puerto no tiene un estado válido para conectarlo.")
 
     odf_anterior = None
@@ -221,7 +222,7 @@ def conectar_puerto(
         existente.puerto_odf = puerto
         existente.save(update_fields=["puerto_odf"])
         if puerto_anterior.pk != puerto.pk:
-            _establecer_estado(puerto_anterior, "Libre")
+            _establecer_estado(puerto_anterior, "LIBRE")
         terminacion = existente
         creada = False
     else:
@@ -233,11 +234,11 @@ def conectar_puerto(
         )
         creada = True
 
-    _establecer_estado(puerto, "Ocupado")
+    _establecer_estado(puerto, "OCUPADO")
     if ocupar_fibra:
         establecer_estado_fibra_informado(
             fibra=fibra,
-            estado="Ocupado",
+            estado="OCUPADO",
             usuario=usuario,
             origen=origen,
             lote_importacion=lote_importacion,
@@ -253,12 +254,12 @@ def conectar_puerto(
         puerto_anterior=puerto_anterior,
         puerto_nuevo=puerto,
         estado_anterior=estado_destino_anterior,
-        estado_nuevo="Ocupado",
+        estado_nuevo="OCUPADO",
         sincronizo_fibra=ocupar_fibra,
         metadatos=(
             {
                 "estado_puerto_origen_anterior": estado_puerto_origen,
-                "estado_puerto_origen_nuevo": "Libre",
+                "estado_puerto_origen_nuevo": "LIBRE",
             }
             if existente else {}
         ),
@@ -291,11 +292,11 @@ def desconectar_puerto(
     extremo = terminacion.extremo
     estado_anterior = puerto.estado_puerto
     terminacion.delete()
-    _establecer_estado(puerto, "Libre")
+    _establecer_estado(puerto, "LIBRE")
     if liberar_fibra:
         establecer_estado_fibra_informado(
             fibra=fibra,
-            estado="Libre",
+            estado="DISPONIBLE",
             usuario=usuario,
             origen=origen,
             lote_importacion=lote_importacion,
@@ -310,7 +311,7 @@ def desconectar_puerto(
         extremo=extremo,
         puerto_anterior=puerto,
         estado_anterior=estado_anterior,
-        estado_nuevo="Libre",
+        estado_nuevo="LIBRE",
         sincronizo_fibra=liberar_fibra,
     )
     return fibra
@@ -323,10 +324,10 @@ def reservar_puerto(
     puerto = _bloquear_puerto(puerto_id)
     if TerminacionFibra.objects.filter(puerto_odf=puerto).exists():
         raise ValidationError("No se puede reservar un puerto que tiene una fibra conectada.")
-    if puerto.estado_puerto == "Ocupado":
+    if puerto.estado_puerto == "OCUPADO":
         raise ValidationError("Un puerto ocupado debe regularizarse antes de reservarlo.")
     estado_anterior = puerto.estado_puerto
-    _establecer_estado(puerto, "Reservado")
+    _establecer_estado(puerto, "RESERVADO")
     _actualizar_contadores(puerto.odf_obj)
     _registrar_auditoria(
         accion="RESERVAR",
@@ -336,7 +337,7 @@ def reservar_puerto(
         puerto_anterior=puerto,
         puerto_nuevo=puerto,
         estado_anterior=estado_anterior,
-        estado_nuevo="Reservado",
+        estado_nuevo="RESERVADO",
     )
     return puerto
 
@@ -348,10 +349,10 @@ def cancelar_reserva_puerto(
     puerto = _bloquear_puerto(puerto_id)
     if TerminacionFibra.objects.filter(puerto_odf=puerto).exists():
         raise ValidationError("El puerto tiene una fibra conectada y no puede liberarse como reserva.")
-    if puerto.estado_puerto != "Reservado":
+    if puerto.estado_puerto != "RESERVADO":
         raise ValidationError("El puerto no está reservado.")
     estado_anterior = puerto.estado_puerto
-    _establecer_estado(puerto, "Libre")
+    _establecer_estado(puerto, "LIBRE")
     _actualizar_contadores(puerto.odf_obj)
     _registrar_auditoria(
         accion="CANCELAR_RESERVA",
@@ -361,6 +362,6 @@ def cancelar_reserva_puerto(
         puerto_anterior=puerto,
         puerto_nuevo=puerto,
         estado_anterior=estado_anterior,
-        estado_nuevo="Libre",
+        estado_nuevo="LIBRE",
     )
     return puerto

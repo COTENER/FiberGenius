@@ -64,6 +64,7 @@ from .models import (
 )
 from .otdr_analyzer import analizar_trazas
 from .services.inventario import guardar_odf_normalizado, limpiar_texto, resolver_rack
+from .services.puertos import conectar_puerto
 from .views.on_demand import process_on_demand_flow
 from .views.api import actualizar_medicion_individual, ejecutar_alarmas, ejecutar_script_actualizacion
 from .views.usuarios import obtener_permisos_agrupados
@@ -1183,10 +1184,8 @@ class OperacionInventarioAmpliadaCoverageTests(TestCase):
         )
         self.puerto = DetallePuertoODF.objects.create(
             odf_obj=self.odf, puerto_odf='1', bandeja='B1',
-            estado_puerto='Libre', tipo_conector='SC/APC', patchcord='Sí', destino='RUTA-OPERACION',
+            estado_puerto='LIBRE', tipo_conector='SC/APC', patchcord='Sí', destino='RUTA-OPERACION',
         )
-        DetallePuertoODF.objects.filter(pk=self.puerto.pk).update(estado_puerto='Ocupado')
-        self.puerto.refresh_from_db()
         self.ruta = Ruta.objects.create(
             nombre='RUTA-OPERACION',
             distancia_m=1200,
@@ -1197,10 +1196,16 @@ class OperacionInventarioAmpliadaCoverageTests(TestCase):
             tipo_fibra='Monomodo', tipo_trazado='Subterráneo', marca_modelo='Cable-X',
         )
         self.fibra = InventarioFibra.objects.create(
-            ruta=self.ruta, fibra_numero='F01', estado='Libre',
+            ruta=self.ruta, fibra_numero='F01', estado='DISPONIBLE',
             origen_estado='INFORMADO', nombre_fibra='=SERVICIO',
-            origen_odf=self.odf.odf, destino='DESTINO', tipo_conector='SC/APC',
+            tipo_conector='SC/APC',
         )
+        conectar_puerto(
+            puerto_id=self.puerto.pk,
+            fibra_id=self.fibra.pk,
+            extremo='A',
+        )
+        self.puerto.refresh_from_db()
         self.elemento = Reserva.objects.create(
             ruta=self.ruta, tramo=self.tramo, nombre='MUFA-OPERACION', codigo='M-01', tipo='MUFA',
             reserva_m=30, latitud='-23.1', longitud='-69.2', orden_en_ruta=1, estado='CONFIRMADO',
@@ -1208,7 +1213,7 @@ class OperacionInventarioAmpliadaCoverageTests(TestCase):
 
     def test_apis_paginadas_cubren_filtros_y_serializadores(self):
         fibras = self.client.get(reverse('api_fibras_paginadas'), {
-            'q': 'SERVICIO', 'estado': 'Libre', 'page_size': 'invalido', 'page': 1,
+            'q': 'SERVICIO', 'estado': 'DISPONIBLE', 'page_size': 'invalido', 'page': 1,
         })
         self.assertEqual(fibras.status_code, 200)
         self.assertEqual(
@@ -1217,7 +1222,7 @@ class OperacionInventarioAmpliadaCoverageTests(TestCase):
         )
         self.assertEqual(
             fibras.json()['data'][0]['trazabilidad']['extremo_a']['fuente'],
-            'LEGACY',
+            'TERMINACION_FIBRA',
         )
 
         elementos = self.client.get(reverse('api_elementos_paginados'), {
@@ -1227,7 +1232,7 @@ class OperacionInventarioAmpliadaCoverageTests(TestCase):
         self.assertEqual(elementos.json()['data'][0]['tramo'], 1)
 
         puertos = self.client.get(reverse('api_puertos_paginados'), {
-            'q': 'ODF-OPERACION', 'estado': 'Ocupado', 'page_size': 200,
+            'q': 'ODF-OPERACION', 'estado': 'OCUPADO', 'page_size': 200,
         })
         self.assertEqual(puertos.status_code, 200)
         self.assertEqual(puertos.json()['data'][0]['patchcord'], 'Sí')

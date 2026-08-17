@@ -1,12 +1,10 @@
-"""Lectura canónica de las terminaciones físicas de una fibra.
-
-La única fuente confirmada es TerminacionFibra. Los textos heredados de
-InventarioFibra se conservan únicamente como referencia histórica.
-"""
+"""Lectura canónica de las terminaciones físicas de una fibra."""
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+
+from .ubicacion import nombre_site
 
 
 @dataclass(frozen=True)
@@ -20,7 +18,6 @@ class ExtremoFibra:
     odf: str | None = None
     puerto: str | None = None
     conector: str | None = None
-    referencia_legacy: str | None = None
 
     def como_dict(self):
         return asdict(self)
@@ -29,8 +26,6 @@ class ExtremoFibra:
     def etiqueta(self):
         if self.confirmado:
             return f"{self.odf} / Puerto {self.puerto}"
-        if self.referencia_legacy:
-            return f"{self.referencia_legacy} (referencia histórica)"
         return "Sin terminación confirmada"
 
 
@@ -53,36 +48,32 @@ def _terminaciones_indexadas(fibra):
 
 
 def obtener_extremo_fibra(fibra, extremo, terminaciones=None):
-    """Devuelve un extremo confirmado o una referencia legacy identificada."""
+    """Devuelve exclusivamente una terminación física confirmada."""
     if extremo not in {"A", "B"}:
         raise ValueError("El extremo debe ser A o B.")
     terminaciones = terminaciones or _terminaciones_indexadas(fibra)
     terminacion = terminaciones.get(extremo)
-    legado = _texto(fibra.origen_odf if extremo == "A" else fibra.destino)
     if terminacion is None:
         return ExtremoFibra(
             extremo=extremo,
             confirmado=False,
-            fuente="LEGACY" if legado else "SIN_DATO",
-            referencia_legacy=legado,
+            fuente="SIN_DATO",
         )
 
     puerto = terminacion.puerto_odf
     odf = puerto.odf_obj
     rack = odf.rack_obj
     sala = rack.sala
-    site = sala.hub_site
     return ExtremoFibra(
         extremo=extremo,
         confirmado=True,
         fuente="TERMINACION_FIBRA",
-        site=site.nombre,
+        site=nombre_site(odf),
         sala=sala.nombre,
         rack=rack.nombre,
         odf=odf.odf,
         puerto=puerto.puerto_odf,
         conector=_texto(terminacion.tipo_conector),
-        referencia_legacy=legado,
     )
 
 
@@ -109,15 +100,7 @@ def _nombre_site_terminal(tramo, lado):
     if tramo is None:
         return None
     nodo = getattr(tramo, f"{lado}_nodo", None)
-    if nodo is not None and getattr(nodo, "tipo", None) == "SITE":
-        site = getattr(nodo, "hub_site_obj", None)
-        return _texto(getattr(site, "nombre", None) or nodo.nombre or nodo.codigo)
-    if lado == "origen":
-        valor = _texto(getattr(tramo, "hub_site", None))
-        if valor and valor != "N/A":
-            return valor
-    valor = _texto(getattr(tramo, lado, None))
-    return None if valor == "N/A" else valor
+    return nombre_site(nodo)
 
 
 def obtener_sites_terminales_ruta(fibra):

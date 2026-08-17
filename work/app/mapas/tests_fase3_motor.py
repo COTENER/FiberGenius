@@ -84,19 +84,19 @@ class MotorOperativoRutaTests(TestCase):
         )
 
     def test_prioridad_de_estados_y_cierre_con_capacidad(self):
-        self._fibra('F1', ('Libre', 'Ocupado'))
-        self._fibra('F2', ('Libre', 'Reservado'))
-        self._fibra('F3', ('Libre', 'Libre'))
+        self._fibra('F1', ('DISPONIBLE', 'OCUPADO'))
+        self._fibra('F2', ('DISPONIBLE', 'RESERVADO'))
+        self._fibra('F3', ('DISPONIBLE', 'DISPONIBLE'))
         fibra_incompleta = InventarioFibra.objects.create(
             ruta=self.ruta,
             fibra_numero='F4',
-            estado='Libre',
+            estado='DISPONIBLE',
             origen_estado='INFORMADO',
         )
         FibraTramo.objects.create(
             tramo=self.tramos[0],
             numero_hilo='F4',
-            estado='Libre',
+            estado='DISPONIBLE',
             fibra=fibra_incompleta,
         )
 
@@ -115,7 +115,7 @@ class MotorOperativoRutaTests(TestCase):
         )
 
     def test_declaracion_completa_de_estados_tiene_prioridad(self):
-        self._fibra('F1', ('Libre', 'Ocupado'))
+        self._fibra('F1', ('DISPONIBLE', 'OCUPADO'))
         self.ruta.capacidad_declarada_hilos = 4
         self.ruta.hilos_ocupados_declarados = 1
         self.ruta.hilos_reservados_declarados = 1
@@ -132,7 +132,7 @@ class MotorOperativoRutaTests(TestCase):
         self.assertEqual(resumen['hilos_ocupados_calculados'], 1)
 
     def test_declaracion_parcial_no_mezcla_contadores_con_calculados(self):
-        self._fibra('F1', ('Libre', 'Ocupado'))
+        self._fibra('F1', ('DISPONIBLE', 'OCUPADO'))
         self.ruta.hilos_ocupados_declarados = 2
         self.ruta.save()
 

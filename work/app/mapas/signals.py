@@ -60,6 +60,17 @@ def _recontar_odfs(ids):
         odf.actualizar_contadores()
 
 
+@receiver(post_save, sender=DetallePuertoODF)
+def recontar_odf_al_guardar_puerto(sender, instance, raw=False, **kwargs):
+    if not raw:
+        _recontar_odfs((instance.odf_obj_id,))
+
+
+@receiver(post_delete, sender=DetallePuertoODF)
+def recontar_odf_al_eliminar_puerto(sender, instance, **kwargs):
+    _recontar_odfs((instance.odf_obj_id,))
+
+
 def _sincronizar_fibras(ids, causa, lote_importacion=None):
     from .services.fibras import sincronizar_estado_fibra
 
@@ -172,8 +183,8 @@ def ocupar_puerto_terminado(sender, instance, raw=False, **kwargs):
     puerto = DetallePuertoODF.objects.select_related('odf_obj').get(pk=instance.puerto_odf_id)
     anterior_id = getattr(instance, '_puerto_anterior_id', None)
     if anterior_id and anterior_id != puerto.pk:
-        DetallePuertoODF.objects.filter(pk=anterior_id).update(estado_puerto='Libre')
-    DetallePuertoODF.objects.filter(pk=puerto.pk).update(estado_puerto='Ocupado')
+        DetallePuertoODF.objects.filter(pk=anterior_id).update(estado_puerto='LIBRE')
+    DetallePuertoODF.objects.filter(pk=puerto.pk).update(estado_puerto='OCUPADO')
     _recontar_odfs((getattr(instance, '_odf_anterior_id', None), puerto.odf_obj_id))
 
 
@@ -184,5 +195,5 @@ def liberar_puerto_desconectado(sender, instance, **kwargs):
     ).first()
     if not puerto:
         return
-    DetallePuertoODF.objects.filter(pk=puerto.pk).update(estado_puerto='Libre')
+    DetallePuertoODF.objects.filter(pk=puerto.pk).update(estado_puerto='LIBRE')
     _recontar_odfs((puerto.odf_obj_id,))

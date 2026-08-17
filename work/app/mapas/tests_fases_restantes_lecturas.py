@@ -59,27 +59,27 @@ class LecturasMultitramoTests(TestCase):
         cls.fibra_completa = InventarioFibra.objects.create(
             ruta=cls.ruta,
             fibra_numero="F1",
-            estado="Ocupado",
+            estado="OCUPADO",
             origen_estado="INFORMADO",
         )
         cls.fibra_parcial = InventarioFibra.objects.create(
             ruta=cls.ruta,
             fibra_numero="F2",
-            estado="Libre",
+            estado="DISPONIBLE",
             origen_estado="INFORMADO",
         )
         for tramo in cls.tramos:
             FibraTramo.objects.create(
                 tramo=tramo,
                 numero_hilo="F1",
-                estado="Ocupado",
+                estado="OCUPADO",
                 fibra=cls.fibra_completa,
             )
         for tramo in cls.tramos[:2]:
             FibraTramo.objects.create(
                 tramo=tramo,
                 numero_hilo="F2",
-                estado="Libre",
+                estado="DISPONIBLE",
                 fibra=cls.fibra_parcial,
             )
 
@@ -110,12 +110,12 @@ class LecturasMultitramoTests(TestCase):
     def test_ficha_separa_estado_global_de_cobertura_parcial(self):
         ficha = _ficha_fibra(self.fibra_parcial.pk)
 
-        self.assertEqual(ficha["status"], "Libre")
+        self.assertEqual(ficha["status"], "Disponible")
         self.assertEqual(_valores(ficha["summary"])["Completitud"], "Recorrido parcial")
         self.assertEqual(_ficha_fibra(self.fibra_completa.pk)["status"], "Ocupado")
 
-    def test_ficha_fibra_legacy_de_un_tramo_conserva_estado_libre(self):
-        ruta = Ruta.objects.create(nombre="RUTA-LEGACY-FICHA")
+    def test_ficha_fibra_de_un_tramo_conserva_estado_disponible(self):
+        ruta = Ruta.objects.create(nombre="RUTA-FICHA-UN-TRAMO")
         InventarioTramo.objects.create(
             ruta=ruta,
             tramo_secuencia=1,
@@ -125,11 +125,11 @@ class LecturasMultitramoTests(TestCase):
         fibra = InventarioFibra.objects.create(
             ruta=ruta,
             fibra_numero="F1",
-            estado="Libre",
+            estado="DISPONIBLE",
             origen_estado="INFORMADO",
         )
 
-        self.assertEqual(_ficha_fibra(fibra.pk)["status"], "Libre")
+        self.assertEqual(_ficha_fibra(fibra.pk)["status"], "Disponible")
 
     def test_resumen_troncales_aplica_la_misma_precedencia_de_distancia(self):
         request = self.factory.get("/", {"q": self.ruta.nombre})
@@ -193,7 +193,7 @@ class LecturasMultitramoTests(TestCase):
             InventarioFibra.objects.create(
                 ruta=self.ruta,
                 fibra_numero=codigo,
-                estado="Ocupado",
+                estado="OCUPADO",
                 origen_estado="INFORMADO",
             )
 

@@ -88,6 +88,9 @@ class InventarioODFAdmin(admin.ModelAdmin):
         'puertos_libres', 'puertos_reservados',
     )
     search_fields = ('odf', 'rack_obj__nombre', 'rack_obj__sala__hub_site__nombre')
+    readonly_fields = (
+        'puertos_ocupados', 'puertos_libres', 'puertos_reservados',
+    )
 
 
 @admin.register(DetallePuertoODF)
@@ -99,6 +102,7 @@ class DetallePuertoODFAdmin(admin.ModelAdmin):
         'terminaciones_fibra__fibra__ruta__nombre',
     )
     list_filter = ('estado_puerto',)
+    readonly_fields = ('estado_puerto',)
 
 
 @admin.register(InventarioTramo)
@@ -153,7 +157,7 @@ class InventarioFibraAdmin(admin.ModelAdmin):
         'condicion_fisica', 'nombre_fibra',
     )
     search_fields = (
-        'codigo_fibra', 'ruta__nombre', 'fibra_numero', 'nombre_fibra', 'destino',
+        'codigo_fibra', 'ruta__nombre', 'fibra_numero', 'nombre_fibra',
         'observaciones',
     )
     list_filter = ('estado', 'origen_estado', 'condicion_fisica')
@@ -182,11 +186,11 @@ class InventarioFibraAdmin(admin.ModelAdmin):
             obj.origen_estado = anterior.origen_estado
         else:
             obj.ruta = None
-            obj.estado = 'Desconocido'
+            obj.estado = 'SIN_INFORMACION'
             obj.origen_estado = 'NO_INFORMADO'
         super().save_model(request, obj, form, change)
         if estado_cambio:
-            if estado_solicitado == 'Desconocido':
+            if estado_solicitado == 'SIN_INFORMACION':
                 restablecer_estado_fibra(
                     fibra=obj,
                     usuario=request.user,

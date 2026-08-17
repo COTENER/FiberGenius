@@ -73,7 +73,7 @@
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
                 <input id="ports-query" name="q" type="search" placeholder="ODF, puerto, fibra, destino, site, sala o rack" autocomplete="off">
             </label>
-            <label class="ports-filter-field"><span>Estado</span><select id="ports-status-filter" name="estado"><option value="">Todos</option><option value="Libre">Libre</option><option value="Ocupado">Ocupado</option><option value="Reservado">Reservado</option></select></label>
+            <label class="ports-filter-field"><span>Estado</span><select id="ports-status-filter" name="estado"><option value="">Todos</option><option value="LIBRE">Libre</option><option value="OCUPADO">Ocupado</option><option value="RESERVADO">Reservado</option></select></label>
             <label class="ports-filter-field"><span>Site</span><select id="ports-site-filter" name="site"><option value="">Todos</option>{% for site in sites_puertos %}<option value="{{ site }}">{{ site }}</option>{% endfor %}</select></label>
             <label class="ports-filter-field"><span>Sala</span><select id="ports-room-filter" name="sala"><option value="">Todas</option>{% for sala in salas_puertos %}<option value="{{ sala }}">{{ sala }}</option>{% endfor %}</select></label>
             <label class="ports-filter-field"><span>Rack</span><select id="ports-rack-filter" name="rack"><option value="">Todos</option>{% for rack in racks_puertos %}<option value="{{ rack }}">{{ rack }}</option>{% endfor %}</select></label>
@@ -153,7 +153,7 @@
                     <label><span>ODF *</span><select id="port-editor-odf" required><option value="">Seleccionar ODF</option>{% for odf in odfs_puertos %}<option value="{{ odf.odf }}">{{ odf.hub_site }} · {{ odf.odf }}</option>{% endfor %}</select><small>Equipo padre donde está instalado.</small></label>
                     <label><span>Número de puerto *</span><input id="port-editor-number" maxlength="50" placeholder="Ej. 01" required><small>Debe ser único dentro del ODF.</small></label>
                     <label><span>Bandeja</span><input id="port-editor-tray" maxlength="50" placeholder="Ej. B-01"><small>Agrupación o módulo físico.</small></label>
-                    <label><span>Estado inicial</span><select id="port-editor-status"><option value="Libre">Libre</option><option value="Reservado">Reservado</option></select><small>Ocupado se calcula únicamente al conectar una fibra.</small></label>
+                    <label><span>Estado inicial</span><select id="port-editor-status"><option value="LIBRE">Libre</option><option value="RESERVADO">Reservado</option></select><small>Ocupado se calcula únicamente al conectar una fibra.</small></label>
                 </div>
             </section>
             <section class="port-dialog__section">
@@ -210,13 +210,13 @@
                         <label><span>Fibra *</span><select id="port-management-fiber" disabled><option value="">Busca o filtra una fibra</option></select></label>
                         <label id="port-management-new-fiber-field" hidden><span>N.º de hilo *</span><input id="port-management-new-fiber" maxlength="50" placeholder="F2"><small>Se creará como hilo con troncal pendiente.</small></label>
                         <div class="port-management-connect-row port-dialog__wide">
-                            <label><span>Extremo *</span><select id="port-management-end"><option value="A">Extremo A</option><option value="B">Extremo B</option></select><small>A/B identifica la terminación técnica; no define orientación geográfica.</small></label>
+                            <label><span>Extremo *</span><select id="port-management-end"><option value="A">Extremo A</option><option value="B">Extremo B</option></select><small>A/B identifica la terminación técnica; no define la orientación geográfica.</small></label>
                             <div class="port-management-connect-action"><button id="port-management-connect" class="ports-btn ports-btn--primary" type="button">Conectar fibra</button></div>
                         </div>
                     </div>
                 </section>
                 <section id="port-disconnect-section" class="port-dialog__section" hidden>
-                    <div class="port-dialog__section-title"><span>1</span><div><h3>Conexión oficial</h3><p>Desconectar elimina la terminación y libera el puerto. El estado global de la fibra no se modifica.</p></div></div>
+                    <div class="port-dialog__section-title"><span>1</span><div><h3>Conexión oficial</h3><p>Desconectar elimina la terminación y libera el puerto. Luego puede informar opcionalmente la fibra como Disponible.</p></div></div>
                     <button id="port-management-disconnect" class="ports-btn ports-btn--danger" type="button">Desconectar fibra</button>
                 </section>
                 <section id="port-reservation-section" class="port-dialog__section" hidden>

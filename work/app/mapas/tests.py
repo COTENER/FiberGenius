@@ -19,7 +19,13 @@ from django.db import IntegrityError, transaction
 from django.db import connection
 from django.db.models.deletion import ProtectedError
 from django.template.loader import render_to_string
-from django.test import RequestFactory, TestCase, TransactionTestCase, override_settings
+from django.test import (
+    RequestFactory,
+    TestCase,
+    TransactionTestCase,
+    override_settings,
+    tag,
+)
 from django.test.utils import CaptureQueriesContext
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.urls import reverse
@@ -74,9 +80,6 @@ def crear_jerarquia_odf(nombre='ODF-01', capacidad=24):
     rack = RackFisico.objects.create(sala=sala, nombre='RACK-01')
     odf = InventarioODF.objects.create(
         rack_obj=rack,
-        hub_site=hub.nombre,
-        sala=sala.nombre,
-        rack=rack.nombre,
         odf=nombre,
         capacidad_puertos=capacidad,
         puertos_libres=capacidad,
@@ -92,9 +95,6 @@ class IntegridadODFTests(TransactionTestCase):
         with self.assertRaises(IntegrityError), transaction.atomic():
             InventarioODF.objects.bulk_create([InventarioODF(
                 rack_obj=rack,
-                hub_site=odf.hub_site,
-                sala=odf.sala,
-                rack=odf.rack,
                 odf=odf.odf,
             )])
 
@@ -111,7 +111,7 @@ class IntegridadODFTests(TransactionTestCase):
     def test_puerto_sin_odf_es_rechazado_por_base_de_datos(self):
         with self.assertRaises(IntegrityError), transaction.atomic():
             DetallePuertoODF.objects.bulk_create(
-                [DetallePuertoODF(odf='HUERFANO', puerto_odf='1')]
+                [DetallePuertoODF(puerto_odf='1')]
             )
 
     def test_puerto_duplicado_es_rechazado(self):
@@ -119,16 +119,16 @@ class IntegridadODFTests(TransactionTestCase):
         DetallePuertoODF.objects.create(odf_obj=odf, puerto_odf='1')
         with self.assertRaises(IntegrityError), transaction.atomic():
             DetallePuertoODF.objects.bulk_create(
-                [DetallePuertoODF(odf_obj=odf, odf=odf.odf, puerto_odf='1')]
+                [DetallePuertoODF(odf_obj=odf, puerto_odf='1')]
             )
 
-    def test_renombrar_odf_sincroniza_el_texto_legacy(self):
+    def test_renombrar_odf_se_refleja_en_sus_puertos(self):
         _, _, _, odf = crear_jerarquia_odf(nombre='ODF-OLD')
         puerto = DetallePuertoODF.objects.create(odf_obj=odf, puerto_odf='1')
         odf.odf = 'ODF-NEW'
         odf.save()
         puerto.refresh_from_db()
-        self.assertEqual(puerto.odf, 'ODF-NEW')
+        self.assertEqual(puerto.odf_obj.odf, 'ODF-NEW')
 
     def test_puerto_reservado_reduce_disponibilidad_y_se_importa_sin_columnas_nuevas(self):
         hub, _, _, odf = crear_jerarquia_odf(nombre='ODF-RESERVAS', capacidad=4)
@@ -146,12 +146,12 @@ class IntegridadODFTests(TransactionTestCase):
         puerto = DetallePuertoODF.objects.get(odf_obj=odf, puerto_odf='1')
         odf.refresh_from_db()
         self.assertEqual(resultado['creadas'], 1)
-        self.assertEqual(puerto.estado_puerto, 'Reservado')
+        self.assertEqual(puerto.estado_puerto, 'RESERVADO')
         self.assertEqual(odf.puertos_reservados, 1)
         self.assertEqual(odf.puertos_ocupados, 0)
         self.assertEqual(odf.puertos_libres, 3)
 
-    def test_importacion_infiere_reserva_desde_el_destino_legado(self):
+    def test_importacion_no_infiere_reserva_desde_el_destino(self):
         hub, _, _, odf = crear_jerarquia_odf(nombre='ODF-RESERVA-LEGADA', capacidad=4)
         archivo = SimpleUploadedFile(
             'puertos.csv',
@@ -162,14 +162,16 @@ class IntegridadODFTests(TransactionTestCase):
             content_type='text/csv',
         )
 
-        _procesar_puertos_odf_inventario(archivo)
+        with self.assertRaises(ValueError):
+            _procesar_puertos_odf_inventario(archivo)
 
-        puerto = DetallePuertoODF.objects.get(odf_obj=odf, puerto_odf='1')
         odf.refresh_from_db()
-        self.assertEqual(puerto.estado_puerto, 'Reservado')
-        self.assertEqual(odf.puertos_reservados, 1)
+        self.assertFalse(
+            DetallePuertoODF.objects.filter(odf_obj=odf, puerto_odf='1').exists()
+        )
+        self.assertEqual(odf.puertos_reservados, 0)
         self.assertEqual(odf.puertos_ocupados, 0)
-        self.assertEqual(odf.puertos_libres, 3)
+        self.assertEqual(odf.puertos_libres, 4)
 
 class IntegridadRutaTests(TestCase):
     def test_impide_otu_contradictorio_entre_ruta_y_puerto(self):
@@ -298,12 +300,12 @@ class InventarioFisicoTests(TransactionTestCase):
         puerto_a = DetallePuertoODF.objects.create(
             odf_obj=odf_a,
             puerto_odf='1',
-            estado_puerto='Reservado',
+            estado_puerto='RESERVADO',
         )
         puerto_b = DetallePuertoODF.objects.create(
             odf_obj=odf_b,
             puerto_odf='1',
-            estado_puerto='Libre',
+            estado_puerto='LIBRE',
         )
         ruta = Ruta.objects.create(nombre='TRONCAL-TERMINACION')
         fibra = InventarioFibra.objects.create(ruta=ruta, fibra_numero='F1')
@@ -320,8 +322,8 @@ class InventarioFisicoTests(TransactionTestCase):
         )
         puerto_a.refresh_from_db()
         puerto_b.refresh_from_db()
-        self.assertEqual(puerto_a.estado_puerto, 'Ocupado')
-        self.assertEqual(puerto_b.estado_puerto, 'Ocupado')
+        self.assertEqual(puerto_a.estado_puerto, 'OCUPADO')
+        self.assertEqual(puerto_b.estado_puerto, 'OCUPADO')
 
 
 class ImportacionV5Tests(TestCase):
@@ -751,9 +753,9 @@ class AutorizacionTests(TestCase):
         self.assertEqual(response.status_code, 200)
         puerto.refresh_from_db()
         odf.refresh_from_db()
-        self.assertEqual(puerto.estado_puerto, 'Reservado')
+        self.assertEqual(puerto.estado_puerto, 'RESERVADO')
         self.assertEqual(odf.puertos_reservados, 1)
-        self.assertEqual(odf.puertos_libres, 1)
+        self.assertEqual(odf.puertos_libres, 0)
 
     def test_alarmas_no_son_publicas(self):
         self.client.logout()
@@ -971,13 +973,13 @@ class GuiOperativaTests(TestCase):
             DetallePuertoODF.objects.create(
                 odf_obj=self.odf,
                 puerto_odf=str(numero),
-                estado_puerto='Reservado' if numero == 3 else 'Libre',
+                estado_puerto='RESERVADO' if numero == 3 else 'LIBRE',
                 destino=f'DESTINO-{numero}',
             )
             for numero in range(1, 4)
         ]
         DetallePuertoODF.objects.filter(pk=self.puertos[0].pk).update(
-            estado_puerto='Ocupado'
+            estado_puerto='OCUPADO'
         )
         self.puertos[0].refresh_from_db()
         self.odf.actualizar_contadores()
@@ -1002,9 +1004,9 @@ class GuiOperativaTests(TestCase):
         self.fibra = InventarioFibra.objects.create(
             ruta=self.troncal,
             fibra_numero='F1',
-            estado='Ocupado',
+            estado='OCUPADO',
             origen_estado='INFORMADO',
-            destino='DESTINO-GUI',
+            nombre_fibra='DESTINO-GUI',
         )
         self.elemento = Reserva.objects.create(
             ruta=self.troncal,
@@ -1053,21 +1055,18 @@ class GuiOperativaTests(TestCase):
 
     def test_puertos_reservados_se_filtran_y_resumen_como_estado_independiente(self):
         response = self.client.get(reverse('api_puertos_paginados'), {
-            'estado': 'Reservado',
+            'estado': 'RESERVADO',
             'page_size': 10,
         })
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload['pagination']['total'], 1)
-        self.assertEqual(payload['data'][0]['estado'], 'Reservado')
+        self.assertEqual(payload['data'][0]['estado'], 'RESERVADO')
         self.assertEqual(payload['summary']['reservados'], 1)
 
     def test_puertos_del_mapa_se_filtran_por_odf_exacto_y_admiten_48_por_pagina(self):
         otro_odf = InventarioODF.objects.create(
             rack_obj=self.odf.rack_obj,
-            hub_site=self.odf.hub_site,
-            sala=self.odf.sala,
-            rack=self.odf.rack,
             odf='ODF-GUI-OTRO',
             capacidad_puertos=1,
             puertos_libres=1,
@@ -1075,7 +1074,7 @@ class GuiOperativaTests(TestCase):
         DetallePuertoODF.objects.create(
             odf_obj=otro_odf,
             puerto_odf='1',
-            estado_puerto='Libre',
+            estado_puerto='LIBRE',
         )
 
         response = self.client.get(reverse('api_puertos_paginados'), {
@@ -1108,7 +1107,7 @@ class GuiOperativaTests(TestCase):
             DetallePuertoODF.objects.create(
                 odf_obj=self.odf,
                 puerto_odf=numero,
-                estado_puerto='Libre',
+                estado_puerto='LIBRE',
             )
 
         response = self.client.get(reverse('api_puertos_paginados'), {
@@ -1132,7 +1131,7 @@ class GuiOperativaTests(TestCase):
         otra_fibra = InventarioFibra.objects.create(
             ruta=otra_ruta,
             fibra_numero='F2',
-            estado='Ocupado',
+            estado='OCUPADO',
             origen_estado='INFORMADO',
         )
         TerminacionFibra.objects.create(
@@ -1162,11 +1161,11 @@ class GuiOperativaTests(TestCase):
             set(puertos['1']),
             {
                 'puerto', 'estado', 'bandeja', 'fibra', 'destino',
-                'tipo_conector', 'ruta_troncal',
+                'tipo_conector', 'ruta_troncal', 'estado_label',
             },
         )
 
-    def test_puerto_odf_sin_terminacion_conserva_fallback_legacy(self):
+    def test_puerto_odf_sin_terminacion_no_inventa_ruta(self):
         response = self.client.get(reverse('api_puertos_odf_mapa'), {
             'hub_site': self.odf.hub_site,
             'odf_nombre': self.odf.odf,
@@ -1179,20 +1178,20 @@ class GuiOperativaTests(TestCase):
         )
         self.assertEqual(
             puerto_ocupado['ruta_troncal'],
-            self.troncal.nombre,
+            'No determinada',
         )
 
     def test_detalle_fibras_ordena_numeros_de_forma_natural(self):
         InventarioFibra.objects.create(
             ruta=self.troncal,
             fibra_numero='F10',
-            estado='Libre',
+            estado='DISPONIBLE',
             origen_estado='INFORMADO',
         )
         InventarioFibra.objects.create(
             ruta=self.troncal,
             fibra_numero='F2',
-            estado='Libre',
+            estado='DISPONIBLE',
             origen_estado='INFORMADO',
         )
 
@@ -1322,7 +1321,7 @@ class GuiOperativaTests(TestCase):
         )
         self.assertEqual(
             [puerto['status'] for puerto in operativo['ports']],
-            ['Ocupado', 'Libre', 'Reservado'],
+            ['OCUPADO', 'LIBRE', 'RESERVADO'],
         )
         self.assertTrue(
             all('/api/inventario/360/puerto/' in puerto['detail_url']
@@ -1646,7 +1645,7 @@ class GuiOperativaTests(TestCase):
     def test_fibras_y_reservas_incluyen_indicadores_filtrados(self):
         fibras = self.client.get(reverse('api_fibras_paginadas'), {
             'ruta': 'TRONCAL-GUI',
-            'estado': 'Ocupado',
+            'estado': 'OCUPADO',
         })
         self.assertEqual(fibras.status_code, 200)
         payload_fibras = fibras.json()
@@ -1655,11 +1654,11 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(payload_fibras['data'][0]['ruta_id'], self.troncal.pk)
         self.assertEqual(
             payload_fibras['data'][0]['site_inicial'],
-            self.odf.hub_site,
+            '—',
         )
         self.assertEqual(
             payload_fibras['data'][0]['site_final'],
-            'DESTINO-GUI',
+            '—',
         )
         self.assertEqual(
             payload_fibras['data'][0]['origen'],
@@ -2104,7 +2103,7 @@ class SeguridadYRendimientoTests(TestCase):
         DetallePuertoODF.objects.create(
             odf_obj=odf,
             puerto_odf='1',
-            estado_puerto='Libre',
+            estado_puerto='LIBRE',
         )
 
         response = self.client.post(
@@ -2126,7 +2125,7 @@ class SeguridadYRendimientoTests(TestCase):
         InventarioFibra.objects.create(
             ruta=ruta,
             fibra_numero='1',
-            estado='Libre',
+            estado='DISPONIBLE',
             origen_estado='INFORMADO',
         )
 
@@ -2135,7 +2134,7 @@ class SeguridadYRendimientoTests(TestCase):
             data=json.dumps({
                 'ruta_nombre': ruta.nombre,
                 'fibra_numero': '2',
-                'estado': 'Libre',
+                'estado': 'DISPONIBLE',
             }),
             content_type='application/json',
         )
@@ -2226,9 +2225,6 @@ class SeguridadYRendimientoTests(TestCase):
         for indice in range(1, 9):
             InventarioODF.objects.create(
                 rack_obj=rack,
-                hub_site=site.nombre,
-                sala=rack.sala.nombre,
-                rack=rack.nombre,
                 odf=f'ODF-MAPA-{indice}',
                 capacidad_puertos=24,
                 puertos_libres=24,
@@ -2265,10 +2261,11 @@ class SeguridadYRendimientoTests(TestCase):
             InventarioFibra.objects.create(
                 ruta=ruta,
                 fibra_numero='F01',
-                estado='Libre',
+                estado='DISPONIBLE',
                 origen_estado='INFORMADO',
             )
 
+    @tag('query_budget_historico')
     def test_consultas_inventario_externo_no_crecen_por_ruta(self):
         self._crear_rutas()
         cache.clear()
@@ -2277,6 +2274,7 @@ class SeguridadYRendimientoTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertLessEqual(len(consultas), 15)
 
+    @tag('query_budget_historico')
     def test_consultas_json_mapa_no_crecen_por_tramo(self):
         self._crear_rutas()
         cache.clear()
@@ -2285,6 +2283,7 @@ class SeguridadYRendimientoTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertLessEqual(len(consultas), 15)
 
+    @tag('query_budget_historico')
     def test_consultas_dashboard_no_crecen_por_site(self):
         self._crear_rutas()
         for indice in range(8):

@@ -39,7 +39,8 @@ def _precargar_fibras_globales_bhp():
         ruta = Ruta.objects.get(nombre=fila["Ruta"].strip())
         InventarioFibra.objects.get_or_create(
             ruta=ruta,
-            fibra_numero=fila["Codigo Fibra"].strip(),
+            fibra_numero=fila["Fibra"].strip(),
+            defaults={"codigo_fibra": fila["Codigo Fibra"].strip()},
         )
 
 

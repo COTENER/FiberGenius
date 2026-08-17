@@ -36,13 +36,13 @@ class ImportacionTerminacionesFibraTests(TestCase):
         cls.fibra_1 = InventarioFibra.objects.create(
             ruta=cls.ruta,
             fibra_numero='F1',
-            estado='Libre',
+            estado='DISPONIBLE',
             origen_estado='INFORMADO',
         )
         cls.fibra_2 = InventarioFibra.objects.create(
             ruta=cls.ruta,
             fibra_numero='F2',
-            estado='Libre',
+            estado='DISPONIBLE',
             origen_estado='INFORMADO',
         )
 
@@ -70,9 +70,8 @@ class ImportacionTerminacionesFibraTests(TestCase):
     def _crear_puerto(cls, odf, numero):
         return DetallePuertoODF.objects.create(
             odf_obj=odf,
-            odf=odf.odf,
             puerto_odf=numero,
-            estado_puerto='Libre',
+            estado_puerto='LIBRE',
             tipo_conector='LC',
         )
 
@@ -89,15 +88,9 @@ class ImportacionTerminacionesFibraTests(TestCase):
                 'F2': self.fibra_2.codigo_fibra,
             }[fibra]
         return '\n'.join([
-            (
-                'Ruta,Fibra,Codigo Fibra,Nodo A,ODF Extremo A,'
-                'Puerto Extremo A,Conector A,Nodo B,ODF Extremo B,'
-                'Puerto Extremo B,Conector B'
-            ),
-            (
-                f'MEL-TC-TEST,{fibra},{codigo_fibra},SITE-A,ODF-A,'
-                f'{puerto_a},LC,SITE-B,ODF-B,{puerto_b},LC'
-            ),
+            'Ruta,Fibra,Codigo Fibra,Extremo,Site,ODF,Puerto,Conector',
+            f'MEL-TC-TEST,{fibra},{codigo_fibra},A,SITE-A,ODF-A,{puerto_a},LC',
+            f'MEL-TC-TEST,{fibra},{codigo_fibra},B,SITE-B,ODF-B,{puerto_b},LC',
         ])
 
     def test_crea_los_dos_extremos_de_una_fibra(self):
@@ -105,7 +98,7 @@ class ImportacionTerminacionesFibraTests(TestCase):
             _csv('terminaciones.csv', self._contenido())
         )
 
-        self.assertEqual(resultado['total'], 1)
+        self.assertEqual(resultado['total'], 2)
         self.assertEqual(resultado['creadas'], 2)
         self.assertEqual(
             list(
@@ -117,8 +110,8 @@ class ImportacionTerminacionesFibraTests(TestCase):
         )
         self.puerto_a_1.refresh_from_db()
         self.puerto_b_1.refresh_from_db()
-        self.assertEqual(self.puerto_a_1.estado_puerto, 'Ocupado')
-        self.assertEqual(self.puerto_b_1.estado_puerto, 'Ocupado')
+        self.assertEqual(self.puerto_a_1.estado_puerto, 'OCUPADO')
+        self.assertEqual(self.puerto_b_1.estado_puerto, 'OCUPADO')
 
     def test_recarga_no_mueve_un_extremo_implicitamente(self):
         _procesar_terminaciones_fibra(
@@ -126,10 +119,9 @@ class ImportacionTerminacionesFibraTests(TestCase):
         )
         parche = '\n'.join([
             (
-                'Ruta,Fibra,Codigo Fibra,ODF Extremo A,Puerto Extremo A,'
-                'Conector A,ODF Extremo B,Puerto Extremo B,Conector B'
+                'Ruta,Fibra,Codigo Fibra,Extremo,ODF,Puerto,Conector'
             ),
-            f'MEL-TC-TEST,F1,{self.fibra_1.codigo_fibra},ODF-A,2,,,,',
+            f'MEL-TC-TEST,F1,{self.fibra_1.codigo_fibra},A,ODF-A,2,',
         ])
 
         with self.assertRaisesRegex(ValueError, 'operación de movimiento'):
@@ -151,8 +143,8 @@ class ImportacionTerminacionesFibraTests(TestCase):
         )
         self.puerto_a_1.refresh_from_db()
         self.puerto_a_2.refresh_from_db()
-        self.assertEqual(self.puerto_a_1.estado_puerto, 'Ocupado')
-        self.assertEqual(self.puerto_a_2.estado_puerto, 'Libre')
+        self.assertEqual(self.puerto_a_1.estado_puerto, 'OCUPADO')
+        self.assertEqual(self.puerto_a_2.estado_puerto, 'LIBRE')
 
     def test_rechaza_un_puerto_asignado_a_otra_fibra_sin_cambios(self):
         _procesar_terminaciones_fibra(
@@ -178,8 +170,8 @@ class ImportacionTerminacionesFibraTests(TestCase):
 
     def test_rechaza_un_extremo_incompleto(self):
         contenido = '\n'.join([
-            'Ruta,Fibra,Codigo Fibra,ODF Extremo A,Puerto Extremo A',
-            f'MEL-TC-TEST,F1,{self.fibra_1.codigo_fibra},ODF-A,',
+            'Ruta,Fibra,Codigo Fibra,Extremo,ODF,Puerto',
+            f'MEL-TC-TEST,F1,{self.fibra_1.codigo_fibra},A,ODF-A,',
         ])
 
         with self.assertRaisesRegex(ValueError, 'declarar juntos ODF y puerto'):
@@ -206,10 +198,10 @@ class ImportacionTerminacionesFibraTests(TestCase):
     def test_ruta_vacia_crea_hilo_provisional_y_la_recarga_es_idempotente(self):
         contenido = '\n'.join([
             (
-                'Ruta,Fibra,Codigo Fibra,ODF Extremo A,Puerto Extremo A,'
-                'ODF Extremo B,Puerto Extremo B'
+                'Ruta,Fibra,Codigo Fibra,Extremo,ODF,Puerto'
             ),
-            ',F9,FGF-PROVISIONAL-0009,ODF-A,2,ODF-B,2',
+            ',F9,FGF-PROVISIONAL-0009,A,ODF-A,2',
+            ',F9,FGF-PROVISIONAL-0009,B,ODF-B,2',
         ])
 
         resultado = _procesar_terminaciones_fibra(
@@ -228,8 +220,8 @@ class ImportacionTerminacionesFibraTests(TestCase):
         )
         self.puerto_a_2.refresh_from_db()
         self.puerto_b_2.refresh_from_db()
-        self.assertEqual(self.puerto_a_2.estado_puerto, 'Ocupado')
-        self.assertEqual(self.puerto_b_2.estado_puerto, 'Ocupado')
+        self.assertEqual(self.puerto_a_2.estado_puerto, 'OCUPADO')
+        self.assertEqual(self.puerto_b_2.estado_puerto, 'OCUPADO')
 
         repeticion = _procesar_terminaciones_fibra(
             _csv('provisional-recarga.csv', contenido)
@@ -244,17 +236,22 @@ class ImportacionTerminacionesFibraTests(TestCase):
             1,
         )
 
-    def test_rechaza_terminacion_sin_codigo_aunque_tenga_ruta(self):
+    def test_acepta_terminacion_sin_codigo_si_ruta_e_hilo_identifican(self):
         contenido = '\n'.join([
-            'Ruta,Fibra,Codigo Fibra,ODF Extremo A,Puerto Extremo A',
-            'MEL-TC-TEST,F1,,ODF-A,2',
+            'Ruta,Fibra,Codigo Fibra,Extremo,ODF,Puerto',
+            'MEL-TC-TEST,F1,,A,ODF-A,2',
         ])
 
-        with self.assertRaisesRegex(ValueError, 'Codigo Fibra es obligatorio'):
-            _procesar_terminaciones_fibra(
-                _csv('terminacion-sin-codigo.csv', contenido)
-            )
-        self.assertFalse(TerminacionFibra.objects.exists())
+        resultado = _procesar_terminaciones_fibra(
+            _csv('terminacion-sin-codigo.csv', contenido)
+        )
+
+        self.assertEqual(resultado['creadas'], 1)
+        self.assertTrue(TerminacionFibra.objects.filter(
+            fibra=self.fibra_1,
+            extremo='A',
+            puerto_odf=self.puerto_a_2,
+        ).exists())
 
     def test_codigo_estable_reconcilia_extremos_en_filas_separadas(self):
         contenido = '\n'.join([
@@ -287,9 +284,31 @@ class GuiTerminacionesFibraTests(TestCase):
         cls.fibra = InventarioFibra.objects.create(
             ruta=cls.ruta,
             fibra_numero='F1',
-            estado='Desconocido',
-            origen_odf='SITE-A',
-            destino='SITE-B',
+            estado='SIN_INFORMACION',
+        )
+        site = HubSite.objects.create(nombre='SITE-PLANTILLA')
+        sala = SalaTecnica.objects.create(
+            hub_site=site,
+            nombre='SALA-PLANTILLA',
+        )
+        rack = RackFisico.objects.create(
+            sala=sala,
+            nombre='RACK-PLANTILLA',
+        )
+        odf = InventarioODF.objects.create(
+            rack_obj=rack,
+            odf='ODF-PLANTILLA',
+            capacidad_puertos=1,
+        )
+        cls.puerto = DetallePuertoODF.objects.create(
+            odf_obj=odf,
+            puerto_odf='1',
+            estado_puerto='LIBRE',
+        )
+        TerminacionFibra.objects.create(
+            fibra=cls.fibra,
+            extremo='A',
+            puerto_odf=cls.puerto,
         )
 
     def setUp(self):
@@ -302,11 +321,11 @@ class GuiTerminacionesFibraTests(TestCase):
         self.assertContains(respuesta, 'Descargar plantilla precargada')
         self.assertContains(
             respuesta,
-            'Codigo Fibra (obligatorio)',
+            'Codigo Fibra (opcional en primera carga)',
         )
         self.assertContains(
             respuesta,
-            'Nunca identifica una fibra global',
+            'Nunca se reconcilia solamente por F1/F2',
         )
         self.assertContains(
             respuesta,
@@ -320,11 +339,31 @@ class GuiTerminacionesFibraTests(TestCase):
         contenido = respuesta.content.decode('utf-8-sig')
 
         self.assertEqual(respuesta.status_code, 200)
-        self.assertIn('ODF Extremo A', contenido)
+        self.assertIn('Extremo,Site,ODF,Puerto,Conector', contenido)
         self.assertIn('ID Fibra', contenido)
         self.assertIn('Estado Global,Condicion Fisica,Servicio,Observaciones', contenido)
         self.assertIn(
             f'RUTA-PLANTILLA,{self.fibra.pk},F1,'
-            f'{self.fibra.codigo_fibra},SITE-A',
+            f'{self.fibra.codigo_fibra},',
             contenido,
         )
+
+    def test_plantilla_generada_se_reimporta_sin_transformacion(self):
+        respuesta = self.client.get(
+            reverse('plantilla_terminaciones_fibra')
+        )
+        codigo_original = self.fibra.codigo_fibra
+
+        resultado = _procesar_terminaciones_fibra(
+            _csv('plantilla-generada.csv', respuesta.content.decode('utf-8-sig'))
+        )
+
+        self.fibra.refresh_from_db()
+        self.assertEqual(resultado['total'], 1)
+        self.assertEqual(resultado['actualizadas'], 1)
+        self.assertEqual(self.fibra.codigo_fibra, codigo_original)
+        self.assertTrue(TerminacionFibra.objects.filter(
+            fibra=self.fibra,
+            extremo='A',
+            puerto_odf=self.puerto,
+        ).exists())

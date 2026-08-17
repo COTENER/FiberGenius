@@ -15,27 +15,29 @@ from ..models import (
 )
 
 
-ESTADOS_FIBRA = ("Libre", "Ocupado", "Reservado", "Desconocido")
+ESTADOS_FIBRA = (
+    "DISPONIBLE",
+    "OCUPADO",
+    "RESERVADO",
+    "SIN_INFORMACION",
+)
 
 
 def normalizar_estado_fibra(valor: str | None) -> str:
     equivalencias = {
-        "libre": "Libre",
-        "disponible": "Libre",
-        "ocupado": "Ocupado",
-        "ocupada": "Ocupado",
-        "reservado": "Reservado",
-        "reservada": "Reservado",
-        "desconocido": "Desconocido",
-        "desconocida": "Desconocido",
-        "sin informacion": "Desconocido",
-        "sin información": "Desconocido",
-        "sin verificar": "Desconocido",
+        "disponible": "DISPONIBLE",
+        "ocupado": "OCUPADO",
+        "ocupada": "OCUPADO",
+        "reservado": "RESERVADO",
+        "reservada": "RESERVADO",
+        "sin informacion": "SIN_INFORMACION",
+        "sin información": "SIN_INFORMACION",
+        "sin_informacion": "SIN_INFORMACION",
     }
     estado = equivalencias.get(str(valor or "").strip().casefold())
     if not estado:
         raise ValidationError(
-            "Estado de fibra no válido. Use Libre, Ocupado, Reservado o Desconocido."
+            "Estado de fibra no válido. Use Disponible, Ocupado, Reservado o Sin información."
         )
     return estado
 
@@ -98,9 +100,9 @@ def recalcular_cache_tramo(tramo: InventarioTramo) -> dict[str, int]:
         FibraTramo.objects.filter(tramo=tramo).values_list("estado", flat=True)
     )
     valores = {
-        "hilos_ocupados": conteo["Ocupado"],
-        "hilos_libres": conteo["Libre"],
-        "hilos_reservados": conteo["Reservado"],
+        "hilos_ocupados": conteo["OCUPADO"],
+        "hilos_libres": conteo["DISPONIBLE"],
+        "hilos_reservados": conteo["RESERVADO"],
     }
     InventarioTramo.objects.filter(pk=tramo.pk).update(**valores)
     return valores
@@ -135,10 +137,131 @@ def _registrar_auditoria(
     )
 
 
+def _sincronizar_estado_tramo_unico(
+    fibra: InventarioFibra,
+    estado: str,
+) -> None:
+    """Mantiene la equivalencia 1:1 solo para una troncal de un tramo."""
+    if not fibra.ruta_id:
+        return
+    preparacion = _preparar_tramo_unico(fibra, fibra.ruta)
+    asignacion = _materializar_tramo_unico(fibra, preparacion)
+    if asignacion is not None and asignacion.estado != estado:
+        FibraTramo.objects.filter(pk=asignacion.pk).update(estado=estado)
+        asignacion.estado = estado
+        recalcular_cache_tramo(asignacion.tramo)
+
+
+@transaction.atomic
+def actualizar_metadatos_fibra(
+    *, fibra: InventarioFibra, usuario=None, origen="SISTEMA",
+    lote_importacion=None, **cambios,
+) -> bool:
+    """Actualiza metadatos sin decidir estado, Ruta ni terminaciones."""
+    permitidos = {
+        "fibra_numero",
+        "nombre_fibra",
+        "condicion_fisica",
+        "tipo_conector",
+        "observaciones",
+        "lote_importacion",
+    }
+    desconocidos = set(cambios) - permitidos
+    if desconocidos:
+        raise ValidationError(
+            "Metadatos de fibra no admitidos: " + ", ".join(sorted(desconocidos))
+        )
+    bloqueada = InventarioFibra.objects.select_for_update().get(pk=fibra.pk)
+    anteriores = {}
+    campos = []
+    for campo, valor in cambios.items():
+        if campo == "condicion_fisica" and valor not in (None, ""):
+            valor = normalizar_condicion_fisica(valor)
+        if campo == "fibra_numero":
+            valor, _ = normalizar_numero_hilo(valor)
+        if campo in {"nombre_fibra", "tipo_conector", "observaciones"}:
+            valor = str(valor or "").strip()
+        if getattr(bloqueada, campo) != valor:
+            anteriores[campo] = getattr(bloqueada, campo)
+            setattr(bloqueada, campo, valor)
+            campos.append(campo)
+    if lote_importacion is not None and "lote_importacion" not in cambios:
+        if bloqueada.lote_importacion_id != lote_importacion.pk:
+            anteriores["lote_importacion_id"] = bloqueada.lote_importacion_id
+            bloqueada.lote_importacion = lote_importacion
+            campos.append("lote_importacion")
+    if not campos:
+        return False
+    bloqueada.save(update_fields=sorted(set(campos)))
+    _registrar_auditoria(
+        fibra=bloqueada,
+        accion="ACTUALIZAR_METADATOS",
+        valor_anterior=anteriores,
+        valor_nuevo={campo: getattr(bloqueada, campo) for campo in campos},
+        usuario=usuario,
+        origen=origen,
+        lote_importacion=lote_importacion,
+        metadatos={"campos": sorted(set(campos))},
+    )
+    for campo in campos:
+        setattr(fibra, campo, getattr(bloqueada, campo))
+    return True
+
+
+@transaction.atomic
+def crear_fibra(
+    *, fibra_numero: str, codigo_fibra: str = "", ruta: Ruta | None = None,
+    estado: str = "SIN_INFORMACION", condicion_fisica: str = "SIN_VERIFICAR",
+    nombre_fibra: str = "", tipo_conector: str = "", observaciones: str = "",
+    usuario=None, origen="SISTEMA", lote_importacion=None,
+) -> InventarioFibra:
+    """Crea la identidad y delega Ruta/estado a sus servicios oficiales."""
+    numero, _ = normalizar_numero_hilo(fibra_numero)
+    fibra = InventarioFibra.objects.create(
+        **({"codigo_fibra": codigo_fibra} if str(codigo_fibra or "").strip() else {}),
+        ruta=None,
+        fibra_numero=numero,
+        estado="SIN_INFORMACION",
+        origen_estado="NO_INFORMADO",
+        condicion_fisica=normalizar_condicion_fisica(condicion_fisica),
+        nombre_fibra=str(nombre_fibra or "").strip(),
+        tipo_conector=str(tipo_conector or "").strip(),
+        observaciones=str(observaciones or "").strip(),
+        lote_importacion=lote_importacion,
+    )
+    _registrar_auditoria(
+        fibra=fibra,
+        accion="CREAR_FIBRA",
+        valor_anterior="",
+        valor_nuevo=fibra.codigo_fibra,
+        usuario=usuario,
+        origen=origen,
+        lote_importacion=lote_importacion,
+    )
+    estado_normalizado = normalizar_estado_fibra(estado)
+    if estado_normalizado != "SIN_INFORMACION":
+        establecer_estado_fibra_informado(
+            fibra=fibra,
+            estado=estado_normalizado,
+            usuario=usuario,
+            origen=origen,
+            lote_importacion=lote_importacion,
+        )
+    if ruta is not None:
+        fibra, _, _ = asignar_ruta_fibra(
+            fibra=fibra,
+            ruta=ruta,
+            usuario=usuario,
+            origen=origen,
+            lote_importacion=lote_importacion,
+        )
+    return fibra
+
+
 def calcular_estado_desde_tramos(fibra: InventarioFibra) -> tuple[str, str]:
     """Calcula el global sin confundir evidencia de uso con cobertura."""
     if not fibra.ruta_id:
-        return "Desconocido", "NO_INFORMADO"
+        return "SIN_INFORMACION", "NO_INFORMADO"
 
     tramos_esperados = set(
         InventarioTramo.objects.filter(ruta_id=fibra.ruta_id).values_list(
@@ -149,13 +272,13 @@ def calcular_estado_desde_tramos(fibra: InventarioFibra) -> tuple[str, str]:
         FibraTramo.objects.filter(fibra=fibra).values("tramo_id", "estado")
     )
     if not asignaciones:
-        return "Desconocido", "NO_INFORMADO"
+        return "SIN_INFORMACION", "NO_INFORMADO"
 
     estados = {item["estado"] for item in asignaciones}
-    if "Ocupado" in estados:
-        return "Ocupado", "INFERIDO_TRAMOS"
-    if "Reservado" in estados:
-        return "Reservado", "INFERIDO_TRAMOS"
+    if "OCUPADO" in estados:
+        return "OCUPADO", "INFERIDO_TRAMOS"
+    if "RESERVADO" in estados:
+        return "RESERVADO", "INFERIDO_TRAMOS"
 
     cubiertos = {
         item["tramo_id"]
@@ -165,11 +288,11 @@ def calcular_estado_desde_tramos(fibra: InventarioFibra) -> tuple[str, str]:
     cobertura_completa = bool(
         tramos_esperados and tramos_esperados.issubset(cubiertos)
     )
-    if not cobertura_completa or "Desconocido" in estados:
-        return "Desconocido", "INFERIDO_TRAMOS"
-    if estados == {"Libre"}:
-        return "Libre", "INFERIDO_TRAMOS"
-    return "Desconocido", "INFERIDO_TRAMOS"
+    if not cobertura_completa or "SIN_INFORMACION" in estados:
+        return "SIN_INFORMACION", "INFERIDO_TRAMOS"
+    if estados == {"DISPONIBLE"}:
+        return "DISPONIBLE", "INFERIDO_TRAMOS"
+    return "SIN_INFORMACION", "INFERIDO_TRAMOS"
 
 
 @transaction.atomic
@@ -229,6 +352,15 @@ def establecer_estado_fibra_informado(
     lote_importacion=None,
 ) -> bool:
     estado_normalizado = normalizar_estado_fibra(estado)
+    if estado_normalizado == "SIN_INFORMACION":
+        anterior = (fibra.estado, fibra.origen_estado)
+        restablecer_estado_fibra(
+            fibra=fibra,
+            usuario=usuario,
+            origen=origen,
+            lote_importacion=lote_importacion,
+        )
+        return anterior != (fibra.estado, fibra.origen_estado)
     bloqueada = InventarioFibra.objects.select_for_update().get(pk=fibra.pk)
     anterior = f"{bloqueada.estado}/{bloqueada.origen_estado}"
     cambio = (
@@ -251,6 +383,7 @@ def establecer_estado_fibra_informado(
             origen=origen,
             lote_importacion=lote_importacion,
         )
+        _sincronizar_estado_tramo_unico(bloqueada, estado_normalizado)
     fibra.estado = bloqueada.estado
     fibra.origen_estado = bloqueada.origen_estado
     return cambio
@@ -264,20 +397,21 @@ def restablecer_estado_fibra(
     bloqueada = InventarioFibra.objects.select_for_update().get(pk=fibra.pk)
     anterior = f"{bloqueada.estado}/{bloqueada.origen_estado}"
     InventarioFibra.objects.filter(pk=bloqueada.pk).update(
-        estado="Desconocido",
+        estado="SIN_INFORMACION",
         origen_estado="NO_INFORMADO",
     )
-    bloqueada.estado = "Desconocido"
+    bloqueada.estado = "SIN_INFORMACION"
     bloqueada.origen_estado = "NO_INFORMADO"
     _registrar_auditoria(
         fibra=bloqueada,
         accion="RESTABLECER_ESTADO",
         valor_anterior=anterior,
-        valor_nuevo="Desconocido/NO_INFORMADO",
+        valor_nuevo="SIN_INFORMACION/NO_INFORMADO",
         usuario=usuario,
         origen=origen,
         lote_importacion=lote_importacion,
     )
+    _sincronizar_estado_tramo_unico(bloqueada, "SIN_INFORMACION")
     fibra.estado = bloqueada.estado
     fibra.origen_estado = bloqueada.origen_estado
     return bloqueada.estado

@@ -183,13 +183,13 @@ class ImportacionTramosFase2Tests(TestCase):
         fibra = InventarioFibra.objects.create(
             ruta=self.ruta,
             fibra_numero="F48",
-            estado="Ocupado",
+            estado="OCUPADO",
             origen_estado="INFORMADO",
         )
         FibraTramo.objects.create(
             tramo=tramo,
             numero_hilo="F48",
-            estado="Ocupado",
+            estado="OCUPADO",
             fibra=fibra,
         )
         contenido = "\n".join([
@@ -364,8 +364,6 @@ class ImportacionFibrasFase3Tests(TestCase):
             ruta=cls.ruta,
             fibra_numero='F1',
             nombre_fibra='SERVICIO-ORIGINAL',
-            origen_odf='ORIGEN-ORIGINAL',
-            destino='DESTINO-ORIGINAL',
             tipo_conector='SC/APC',
             observaciones='OBSERVACION-GLOBAL',
         )
@@ -401,8 +399,6 @@ class ImportacionFibrasFase3Tests(TestCase):
         self.assertEqual(FibraTramo.objects.count(), 2)
         fibra = InventarioFibra.objects.get(fibra_numero='F1')
         self.assertEqual(fibra.nombre_fibra, 'SERVICIO-ORIGINAL')
-        self.assertEqual(fibra.origen_odf, 'ORIGEN-ORIGINAL')
-        self.assertEqual(fibra.destino, 'DESTINO-ORIGINAL')
         self.assertEqual(fibra.tipo_conector, 'SC/APC')
         self.assertEqual(fibra.observaciones, 'OBSERVACION-GLOBAL')
         self.assertEqual(
@@ -470,7 +466,7 @@ class ImportacionFibrasFase3Tests(TestCase):
                 "Tipo de Servicio,Origen,Destino,Conector"
             ),
             (
-                f"RUTA-FASE-3,T-001,F3,{self.fibra_3.codigo_fibra},Libre,LIBRE,"
+                f"RUTA-FASE-3,T-001,F3,{self.fibra_3.codigo_fibra},Disponible,LIBRE,"
                 "ODF-A,ODF-B,LC"
             ),
         ])
@@ -494,7 +490,7 @@ class ImportacionFibrasFase3Tests(TestCase):
     def test_estado_invalido_revierte_todas_las_filas(self):
         contenido = self._contenido_fibra_completa().replace(
             f"T-002,F2,{self.fibra_1.codigo_fibra},Ocupado",
-            f"T-002,F2,{self.fibra_1.codigo_fibra},Disponible",
+            f"T-002,F2,{self.fibra_1.codigo_fibra},INVALIDO",
         )
 
         with self.assertRaisesRegex(ValueError, "estado"):
@@ -503,18 +499,18 @@ class ImportacionFibrasFase3Tests(TestCase):
         self.assertEqual(InventarioFibra.objects.count(), 2)
         self.assertFalse(FibraTramo.objects.exists())
 
-    def test_desconocido_se_importa_y_prevalece_sobre_libre(self):
+    def test_sin_informacion_se_importa_y_prevalece_sobre_disponible(self):
         contenido = "\n".join([
             (
                 "Ruta,Codigo Tramo,Fibra,Codigo Fibra,Estado,"
                 "Tipo de Servicio,Origen,Destino,Conector"
             ),
             (
-                f"RUTA-FASE-3,T-001,F3,{self.fibra_3.codigo_fibra},Desconocido,LIBRE,"
+                f"RUTA-FASE-3,T-001,F3,{self.fibra_3.codigo_fibra},Sin información,LIBRE,"
                 "ODF-A,ODF-B,LC"
             ),
             (
-                f"RUTA-FASE-3,T-002,F3,{self.fibra_3.codigo_fibra},Libre,LIBRE,"
+                f"RUTA-FASE-3,T-002,F3,{self.fibra_3.codigo_fibra},Disponible,LIBRE,"
                 "ODF-A,ODF-B,LC"
             ),
         ])
@@ -525,13 +521,13 @@ class ImportacionFibrasFase3Tests(TestCase):
 
         self.assertEqual(resultado["total"], 2)
         fibra = InventarioFibra.objects.get(fibra_numero="F3")
-        self.assertEqual(fibra.estado, "Desconocido")
+        self.assertEqual(fibra.estado, "SIN_INFORMACION")
         self.assertEqual(
             FibraTramo.objects.get(
                 tramo=self.tramo_1,
                 numero_hilo="F3",
             ).estado,
-            "Desconocido",
+            "SIN_INFORMACION",
         )
         resumen = resumen_ruta(self.ruta)
         self.assertEqual(resumen["hilos_libres"], 0)
@@ -543,7 +539,7 @@ class ImportacionFibrasFase3Tests(TestCase):
                 "Ruta,Fibra,Codigo Fibra,Estado,Tipo de Servicio,"
                 "Origen,Destino,Conector"
             ),
-            f"RUTA-FASE-3,F1,{self.fibra_1.codigo_fibra},Libre,LIBRE,ODF-A,ODF-B,LC",
+            f"RUTA-FASE-3,F1,{self.fibra_1.codigo_fibra},Disponible,LIBRE,ODF-A,ODF-B,LC",
         ])
 
         with self.assertRaisesRegex(ValueError, "Codigo Tramo"):
@@ -557,7 +553,7 @@ class ImportacionFibrasFase3Tests(TestCase):
                 "Ruta,Codigo Tramo,Fibra,Codigo Fibra,Estado,Tipo de Servicio,"
                 "Origen,Destino,Conector"
             ),
-            "RUTA-FASE-3,T-001,F5,FGF-CAPACIDAD-0005,Libre,LIBRE,ODF-A,ODF-B,LC",
+            "RUTA-FASE-3,T-001,F5,FGF-CAPACIDAD-0005,Disponible,LIBRE,ODF-A,ODF-B,LC",
         ])
 
         with self.assertRaisesRegex(ValueError, "supera la capacidad"):
@@ -568,7 +564,7 @@ class ImportacionFibrasFase3Tests(TestCase):
     def test_fibra_global_inexistente_se_reporta_y_no_se_crea(self):
         contenido = "\n".join([
             "Ruta,Codigo Tramo,Fibra,Codigo Fibra,Estado",
-            "RUTA-FASE-3,T-001,F4,FGF-INEXISTENTE-0004,Libre",
+            "RUTA-FASE-3,T-001,F4,FGF-INEXISTENTE-0004,Disponible",
         ])
 
         with self.assertRaisesRegex(ValueError, "cárguela previamente"):
@@ -590,7 +586,7 @@ class ImportacionFibrasFase3Tests(TestCase):
                 "Tipo de Servicio,Origen,Destino,Conector"
             ),
             (
-                f"RUTA-FASE-3,T-001,F3,{self.fibra_3.codigo_fibra},Libre,LIBRE,"
+                f"RUTA-FASE-3,T-001,F3,{self.fibra_3.codigo_fibra},Disponible,LIBRE,"
                 "ODF-A,ODF-B,LC"
             ),
         ])
@@ -680,7 +676,7 @@ class ApiFibrasFase3Tests(TestCase):
             data=json.dumps({
                 "ruta_nombre": self.ruta.nombre,
                 "fibra_numero": "F1",
-                "estado": "Libre",
+                "estado": "DISPONIBLE",
                 "tramo_ids": [self.tramo_1.pk],
             }),
             content_type="application/json",
@@ -713,7 +709,7 @@ class ApiFibrasFase3Tests(TestCase):
 
         filtro_libres = self.client.get(
             reverse("api_fibras_paginadas"),
-            {"ruta": self.ruta.nombre, "estado": "Libre"},
+            {"ruta": self.ruta.nombre, "estado": "DISPONIBLE"},
         ).json()
         self.assertEqual(filtro_libres["pagination"]["total"], 1)
 
@@ -728,7 +724,7 @@ class ApiFibrasFase3Tests(TestCase):
             data=json.dumps({
                 "ruta_nombre": self.ruta.nombre,
                 "fibra_numero": "F1",
-                "estado": "Libre",
+                "estado": "DISPONIBLE",
                 "tramo_ids": [self.tramo_1.pk, 999999],
             }),
             content_type="application/json",
@@ -759,7 +755,7 @@ class ApiFibrasFase3Tests(TestCase):
                     "fibras.csv",
                     (
                         "Ruta,Codigo Tramo,Fibra,Estado\n"
-                        "RUTA-API-FASE-3,T-API-001,F1,Libre\n"
+                        "RUTA-API-FASE-3,T-API-001,F1,Disponible\n"
                     ),
                 ),
             },
@@ -810,7 +806,7 @@ class CompatibilidadCapacidadLegacyTests(TestCase):
         InventarioFibra.objects.create(
             ruta=ruta,
             fibra_numero="F1",
-            estado="Libre",
+            estado="DISPONIBLE",
             origen_estado="INFORMADO",
         )
 

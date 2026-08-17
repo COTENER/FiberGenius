@@ -25,6 +25,7 @@ from .puertos import (
     desconectar_puerto,
     reservar_puerto,
 )
+from .ubicacion import nombre_site
 
 
 ACCIONES = {
@@ -279,7 +280,7 @@ def preparar_operaciones(filas):
             operacion = OperacionPuerto(
                 fila=numero_fila,
                 accion=accion,
-                site=odfs[0].hub_site,
+                site=nombre_site(odfs[0]),
                 odf=odfs[0].odf,
                 puerto=puerto.puerto_odf,
                 puerto_id=puerto.pk,
@@ -334,7 +335,7 @@ def _ejecutar_operacion(
     ).first()
 
     if operacion.accion == "reservar":
-        if puerto.estado_puerto == "Reservado" and terminacion_puerto is None:
+        if puerto.estado_puerto == "RESERVADO" and terminacion_puerto is None:
             return "SIN_CAMBIOS", "El puerto ya estaba reservado."
         reservar_puerto(
             puerto_id=puerto.pk,
@@ -345,7 +346,7 @@ def _ejecutar_operacion(
         return "APLICADA", "Puerto reservado."
 
     if operacion.accion == "cancelar_reserva":
-        if puerto.estado_puerto == "Libre" and terminacion_puerto is None:
+        if puerto.estado_puerto == "LIBRE" and terminacion_puerto is None:
             return "SIN_CAMBIOS", "El puerto ya estaba libre."
         cancelar_reserva_puerto(
             puerto_id=puerto.pk,
@@ -356,7 +357,7 @@ def _ejecutar_operacion(
         return "APLICADA", "Reserva cancelada."
 
     if operacion.accion == "desconectar":
-        if puerto.estado_puerto == "Libre" and terminacion_puerto is None:
+        if puerto.estado_puerto == "LIBRE" and terminacion_puerto is None:
             return "SIN_CAMBIOS", "El puerto ya estaba libre y sin terminación."
         desconectar_puerto(
             puerto_id=puerto.pk,
@@ -376,11 +377,11 @@ def _ejecutar_operacion(
     ).first()
     misma_conexion = bool(
         existente and existente.puerto_odf_id == puerto.pk
-        and puerto.estado_puerto == "Ocupado"
+        and puerto.estado_puerto == "OCUPADO"
     )
     sincronizacion_pendiente = bool(
         operacion.sincronizar_fibra
-        and not _fibra_ya_en_estado(operacion.fibra_id, "Ocupado")
+        and not _fibra_ya_en_estado(operacion.fibra_id, "OCUPADO")
     )
     if misma_conexion and not sincronizacion_pendiente:
         return "SIN_CAMBIOS", "La conexión ya estaba registrada."

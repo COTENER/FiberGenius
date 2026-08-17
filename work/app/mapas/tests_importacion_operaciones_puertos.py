@@ -52,7 +52,7 @@ class ImportacionOperacionesPuertosTests(TestCase):
             DetallePuertoODF.objects.create(
                 odf_obj=cls.odf_a,
                 puerto_odf=str(indice),
-                estado_puerto='Libre',
+                estado_puerto='LIBRE',
             )
             for indice in range(1, 6)
         ]
@@ -79,7 +79,7 @@ class ImportacionOperacionesPuertosTests(TestCase):
         cls.fibra = InventarioFibra.objects.create(
             ruta=ruta,
             fibra_numero='F12',
-            estado='Libre',
+            estado='DISPONIBLE',
             origen_estado='INFORMADO',
         )
         for tramo in cls.tramos:
@@ -87,7 +87,7 @@ class ImportacionOperacionesPuertosTests(TestCase):
                 tramo=tramo,
                 fibra=cls.fibra,
                 numero_hilo='F12',
-                estado='Libre',
+                estado='DISPONIBLE',
             )
 
     @classmethod
@@ -167,9 +167,9 @@ class ImportacionOperacionesPuertosTests(TestCase):
         self.puertos[0].refresh_from_db()
         self.puertos[1].refresh_from_db()
         self.fibra.refresh_from_db()
-        self.assertEqual(self.puertos[0].estado_puerto, 'Libre')
-        self.assertEqual(self.puertos[1].estado_puerto, 'Libre')
-        self.assertEqual(self.fibra.estado, 'Libre')
+        self.assertEqual(self.puertos[0].estado_puerto, 'LIBRE')
+        self.assertEqual(self.puertos[1].estado_puerto, 'LIBRE')
+        self.assertEqual(self.fibra.estado, 'DISPONIBLE')
         self.assertFalse(TerminacionFibra.objects.exists())
         self.assertFalse(AuditoriaPuertoODF.objects.exists())
 
@@ -181,13 +181,13 @@ class ImportacionOperacionesPuertosTests(TestCase):
         self.puertos[0].refresh_from_db()
         self.puertos[1].refresh_from_db()
         self.fibra.refresh_from_db()
-        self.assertEqual(self.puertos[0].estado_puerto, 'Reservado')
-        self.assertEqual(self.puertos[1].estado_puerto, 'Ocupado')
-        self.assertEqual(self.fibra.estado, 'Ocupado')
+        self.assertEqual(self.puertos[0].estado_puerto, 'RESERVADO')
+        self.assertEqual(self.puertos[1].estado_puerto, 'OCUPADO')
+        self.assertEqual(self.fibra.estado, 'OCUPADO')
         self.assertEqual(self.fibra.origen_estado, 'INFORMADO')
         self.assertEqual(
             set(self.fibra.asignaciones_tramo.values_list('estado', flat=True)),
-            {'Libre'},
+            {'DISPONIBLE'},
         )
         self.assertTrue(
             TerminacionFibra.objects.filter(
@@ -220,7 +220,7 @@ class ImportacionOperacionesPuertosTests(TestCase):
         self.assertEqual(respuesta.status_code, 409)
         self.assertEqual(respuesta.json()['status'], 'invalid')
         self.puertos[0].refresh_from_db()
-        self.assertEqual(self.puertos[0].estado_puerto, 'Libre')
+        self.assertEqual(self.puertos[0].estado_puerto, 'LIBRE')
         self.assertFalse(TerminacionFibra.objects.exists())
 
     def test_reimportar_una_reserva_es_idempotente(self):
@@ -250,18 +250,18 @@ class ImportacionOperacionesPuertosTests(TestCase):
         self.puertos[0].refresh_from_db()
         self.puertos[1].refresh_from_db()
         self.fibra.refresh_from_db()
-        self.assertEqual(self.puertos[0].estado_puerto, 'Libre')
-        self.assertEqual(self.puertos[1].estado_puerto, 'Libre')
-        self.assertEqual(self.fibra.estado, 'Libre')
+        self.assertEqual(self.puertos[0].estado_puerto, 'LIBRE')
+        self.assertEqual(self.puertos[1].estado_puerto, 'LIBRE')
+        self.assertEqual(self.fibra.estado, 'DISPONIBLE')
         self.assertEqual(
             set(self.fibra.asignaciones_tramo.values_list('estado', flat=True)),
-            {'Libre'},
+            {'DISPONIBLE'},
         )
         self.assertFalse(TerminacionFibra.objects.exists())
 
     def test_error_de_regla_operativa_revierte_la_simulacion_completa(self):
         DetallePuertoODF.objects.filter(pk=self.puertos[1].pk).update(
-            estado_puerto='Ocupado'
+            estado_puerto='OCUPADO'
         )
         filas = [
             self._fila('1', 'Reservar'),
@@ -270,12 +270,12 @@ class ImportacionOperacionesPuertosTests(TestCase):
         validacion = self._post(filas, 'validar')
         self.assertFalse(validacion.json()['can_apply'])
         self.puertos[0].refresh_from_db()
-        self.assertEqual(self.puertos[0].estado_puerto, 'Libre')
+        self.assertEqual(self.puertos[0].estado_puerto, 'LIBRE')
 
         aplicacion = self._post(filas, 'aplicar')
         self.assertEqual(aplicacion.status_code, 409)
         self.puertos[0].refresh_from_db()
-        self.assertEqual(self.puertos[0].estado_puerto, 'Libre')
+        self.assertEqual(self.puertos[0].estado_puerto, 'LIBRE')
 
     def test_mover_terminacion_exige_autorizacion_explicita(self):
         TerminacionFibra.objects.create(

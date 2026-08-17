@@ -12,6 +12,7 @@ from .models import (
     TerminacionFibra,
 )
 from .services.trazabilidad import obtener_extremo_fibra, obtener_trazabilidad_fibra
+from .services.ubicacion import resolver_site
 
 
 class TrazabilidadOficialTests(TestCase):
@@ -21,8 +22,6 @@ class TrazabilidadOficialTests(TestCase):
         cls.fibra = InventarioFibra.objects.create(
             ruta=cls.ruta,
             fibra_numero="F12",
-            origen_odf="ODF-LEGACY-A",
-            destino="ODF-LEGACY-B",
         )
         cls.puerto_a = cls._puerto("CP4", "ODF-01", "12")
         cls.puerto_b = cls._puerto("ER314", "ODF-02", "08")
@@ -40,10 +39,10 @@ class TrazabilidadOficialTests(TestCase):
         return DetallePuertoODF.objects.create(
             odf_obj=odf,
             puerto_odf=numero,
-            estado_puerto="Libre",
+            estado_puerto="LIBRE",
         )
 
-    def test_relaciones_oficiales_prevalecen_sobre_legacy(self):
+    def test_relaciones_oficiales_definen_ambos_extremos(self):
         TerminacionFibra.objects.create(
             fibra=self.fibra, extremo="A", puerto_odf=self.puerto_a
         )
@@ -61,16 +60,14 @@ class TrazabilidadOficialTests(TestCase):
         self.assertEqual(resultado["extremo_b"]["odf"], "ODF-02")
         self.assertEqual(resultado["extremo_b"]["puerto"], "08")
         self.assertEqual(resultado["extremo_a"]["fuente"], "TERMINACION_FIBRA")
-        self.assertEqual(
-            resultado["extremo_a"]["referencia_legacy"], "ODF-LEGACY-A"
-        )
+        self.assertNotIn("referencia_legacy", resultado["extremo_a"])
 
-    def test_legacy_es_referencia_no_confirmada(self):
+    def test_sin_terminacion_no_inventa_una_referencia(self):
         extremo = obtener_extremo_fibra(self.fibra, "A")
 
         self.assertFalse(extremo.confirmado)
-        self.assertEqual(extremo.fuente, "LEGACY")
-        self.assertIn("referencia histórica", extremo.etiqueta)
+        self.assertEqual(extremo.fuente, "SIN_DATO")
+        self.assertEqual(extremo.etiqueta, "Sin terminación confirmada")
 
     def test_no_permite_dos_terminaciones_del_mismo_extremo(self):
         TerminacionFibra.objects.create(
@@ -110,7 +107,23 @@ class TrazabilidadOficialTests(TestCase):
             fibra=self.fibra, extremo="A", puerto_odf=self.puerto_a
         )
         self.puerto_a.refresh_from_db()
-        self.assertEqual(self.puerto_a.estado_puerto, "Ocupado")
+        self.assertEqual(self.puerto_a.estado_puerto, "OCUPADO")
         obtener_trazabilidad_fibra(self.fibra)
         self.puerto_a.refresh_from_db()
-        self.assertEqual(self.puerto_a.estado_puerto, "Ocupado")
+        self.assertEqual(self.puerto_a.estado_puerto, "OCUPADO")
+
+    def test_renombrar_site_se_refleja_en_resolucion_y_trazabilidad(self):
+        TerminacionFibra.objects.create(
+            fibra=self.fibra,
+            extremo="A",
+            puerto_odf=self.puerto_a,
+        )
+        site = self.puerto_a.odf_obj.rack_obj.sala.hub_site
+        site.nombre = "CP4-RENOMBRADO"
+        site.save(update_fields=["nombre"])
+
+        self.assertEqual(resolver_site(self.puerto_a.odf_obj), site)
+        self.assertEqual(
+            obtener_trazabilidad_fibra(self.fibra)["extremo_a"]["site"],
+            "CP4-RENOMBRADO",
+        )

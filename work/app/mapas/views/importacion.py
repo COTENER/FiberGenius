@@ -37,6 +37,7 @@ from ..services.topologia import (
     normalizar_tipo_nodo,
     resolver_nodo,
 )
+from ..services.ubicacion import nombre_site
 
 logger = logging.getLogger('fibergenius.import')
 
@@ -47,20 +48,18 @@ TIPOS_NODO_CSV = {
 }
 
 ESTADOS_FIBRA_CSV = {
-    'libre': 'Libre',
-    'ocupado': 'Ocupado',
-    'ocupada': 'Ocupado',
-    'reservado': 'Reservado',
-    'reservada': 'Reservado',
-    'desconocido': 'Desconocido',
+    'disponible': 'DISPONIBLE',
+    'ocupado': 'OCUPADO',
+    'ocupada': 'OCUPADO',
+    'reservado': 'RESERVADO',
+    'reservada': 'RESERVADO',
+    'sin informacion': 'SIN_INFORMACION',
+    'sin información': 'SIN_INFORMACION',
 }
 
 ESTADOS_FIBRA_GLOBAL_CSV = {
     **ESTADOS_FIBRA_CSV,
-    'disponible': 'Libre',
-    'disponibles': 'Libre',
-    'sin informacion': 'Desconocido',
-    'sin información': 'Desconocido',
+    'disponibles': 'DISPONIBLE',
 }
 
 
@@ -433,14 +432,11 @@ def descargar_plantilla_terminaciones_fibra(request):
         'ID Fibra',
         'Fibra',
         'Codigo Fibra',
-        'Nodo A',
-        'ODF Extremo A',
-        'Puerto Extremo A',
-        'Conector A',
-        'Nodo B',
-        'ODF Extremo B',
-        'Puerto Extremo B',
-        'Conector B',
+        'Extremo',
+        'Site',
+        'ODF',
+        'Puerto',
+        'Conector',
         'Estado Global',
         'Condicion Fisica',
         'Servicio',
@@ -449,47 +445,35 @@ def descargar_plantilla_terminaciones_fibra(request):
 
     fibras = (
         InventarioFibra.objects
-        .select_related('ruta', 'origen_nodo', 'destino_nodo')
-        .prefetch_related('terminaciones__puerto_odf__odf_obj')
+        .select_related('ruta')
+        .prefetch_related(
+            'terminaciones__puerto_odf__odf_obj__rack_obj__sala__hub_site'
+        )
         .order_by('ruta__nombre', 'fibra_numero', 'pk')
     )
     for fibra in fibras:
-        terminaciones = {
-            item.extremo: item
-            for item in fibra.terminaciones.all()
-        }
-        extremo_a = terminaciones.get('A')
-        extremo_b = terminaciones.get('B')
-        writer.writerow([
-            fibra.ruta.nombre if fibra.ruta_id else '',
-            fibra.pk,
-            fibra.fibra_numero,
-            fibra.codigo_fibra,
-            (
-                fibra.origen_nodo.codigo
-                if fibra.origen_nodo_id
-                else (fibra.origen_odf or '')
-            ),
-            extremo_a.puerto_odf.odf_obj.odf if extremo_a else '',
-            extremo_a.puerto_odf.puerto_odf if extremo_a else '',
-            extremo_a.tipo_conector if extremo_a else '',
-            (
-                fibra.destino_nodo.codigo
-                if fibra.destino_nodo_id
-                else (fibra.destino or '')
-            ),
-            extremo_b.puerto_odf.odf_obj.odf if extremo_b else '',
-            extremo_b.puerto_odf.puerto_odf if extremo_b else '',
-            extremo_b.tipo_conector if extremo_b else '',
-            (
-                ('Disponible' if fibra.estado == 'Libre' else fibra.estado)
-                if fibra.origen_estado == 'INFORMADO'
-                else ''
-            ),
-            fibra.get_condicion_fisica_display(),
-            fibra.nombre_fibra or '',
-            fibra.observaciones or '',
-        ])
+        terminaciones = list(fibra.terminaciones.all()) or [None]
+        for terminacion in terminaciones:
+            odf = terminacion.puerto_odf.odf_obj if terminacion else None
+            writer.writerow([
+                fibra.ruta.nombre if fibra.ruta_id else '',
+                fibra.pk,
+                fibra.fibra_numero,
+                fibra.codigo_fibra,
+                terminacion.extremo if terminacion else '',
+                nombre_site(odf, '') if odf else '',
+                odf.odf if odf else '',
+                terminacion.puerto_odf.puerto_odf if terminacion else '',
+                terminacion.tipo_conector if terminacion else '',
+                (
+                    fibra.get_estado_display()
+                    if fibra.origen_estado == 'INFORMADO'
+                    else ''
+                ),
+                fibra.get_condicion_fisica_display(),
+                fibra.nombre_fibra or '',
+                fibra.observaciones or '',
+            ])
     return response
 
 
@@ -643,24 +627,28 @@ def _procesar_fibras_globales(file, lote=None):
         fibra_numero = _texto(row.get('fibra')).upper()
         ruta_nombre = _texto(row.get('ruta')) if 'ruta' in df.columns else ''
         try:
-            if not codigo:
-                raise ValueError('Codigo Fibra es obligatorio')
-            if re.fullmatch(r'F[1-9]\d*', codigo):
+            if codigo and re.fullmatch(r'F[1-9]\d*', codigo):
                 raise ValueError(
                     'Codigo Fibra debe ser global y estable; no use '
                     f'{codigo}, que representa una posición física'
                 )
-            if len(codigo) > 64:
+            if codigo and len(codigo) > 64:
                 raise ValueError('Codigo Fibra no puede superar 64 caracteres')
             if not fibra_numero:
                 raise ValueError('Fibra es obligatoria')
-            if codigo.casefold() in codigos_archivo:
+            if codigo and codigo.casefold() in codigos_archivo:
                 raise ValueError(f"Codigo Fibra '{codigo}' está repetido")
-            codigos_archivo.add(codigo.casefold())
+            if codigo:
+                codigos_archivo.add(codigo.casefold())
 
             ruta = rutas.get(ruta_nombre.casefold()) if ruta_nombre else None
             if ruta_nombre and ruta is None:
                 raise ValueError(f"la troncal '{ruta_nombre}' no existe")
+            if not codigo and ruta is None:
+                raise ValueError(
+                    'sin Codigo Fibra debe informar una Ruta para identificar '
+                    'inequívocamente Ruta + Fibra'
+                )
             if ruta is not None:
                 clave_posicion = (ruta.pk, fibra_numero.casefold())
                 if clave_posicion in posiciones_archivo:
@@ -670,7 +658,12 @@ def _procesar_fibras_globales(file, lote=None):
                 posiciones_archivo.add(clave_posicion)
 
             estado_texto = _texto(row.get('estado')).casefold()
-            estado = ESTADOS_FIBRA_GLOBAL_CSV.get(estado_texto)
+            condicion_por_estado = None
+            if estado_texto in {'malo', 'mala'}:
+                estado = 'SIN_INFORMACION'
+                condicion_por_estado = 'CON_FALLA'
+            else:
+                estado = ESTADOS_FIBRA_GLOBAL_CSV.get(estado_texto)
             if estado is None:
                 raise ValueError(
                     f"Estado '{_texto(row.get('estado'))}' no válido; use "
@@ -680,7 +673,10 @@ def _procesar_fibras_globales(file, lote=None):
                 _texto(row.get('condicion')).casefold()
                 if 'condicion' in df.columns else ''
             )
-            condicion = condiciones.get(condicion_texto) if condicion_texto else None
+            condicion = (
+                condiciones.get(condicion_texto)
+                if condicion_texto else condicion_por_estado
+            )
             if condicion_texto and condicion_texto not in condiciones:
                 raise ValueError(
                     f"Condición '{_texto(row.get('condicion'))}' no válida"
@@ -693,15 +689,16 @@ def _procesar_fibras_globales(file, lote=None):
                 'ruta': ruta,
                 'estado': estado,
                 'origen_estado': (
-                    'NO_INFORMADO' if estado == 'Desconocido' else 'INFORMADO'
+                    'NO_INFORMADO'
+                    if estado == 'SIN_INFORMACION' else 'INFORMADO'
                 ),
                 'condicion_fisica': condicion,
                 'servicio': (
-                    _texto(row.get('servicio')) or None
+                    _texto(row.get('servicio'))
                     if 'servicio' in df.columns else None
                 ),
                 'conector': (
-                    _texto(row.get('conector')) or None
+                    _texto(row.get('conector'))
                     if 'conector' in df.columns else None
                 ),
                 'observaciones': (
@@ -725,7 +722,12 @@ def _procesar_fibras_globales(file, lote=None):
     }
     conflictos = []
     for item in preparadas:
-        fibra = existentes.get(item['codigo'].casefold())
+        fibra = (
+            existentes.get(item['codigo'].casefold())
+            if item['codigo'] else por_ruta_numero.get(
+                (item['ruta'].pk, item['fibra_numero'].casefold())
+            )
+        )
         if (
             fibra is not None
             and fibra.ruta_id
@@ -740,35 +742,92 @@ def _procesar_fibras_globales(file, lote=None):
             ocupante = por_ruta_numero.get(
                 (item['ruta'].pk, item['fibra_numero'].casefold())
             )
-            if ocupante is not None and ocupante.codigo_fibra.casefold() != item['codigo'].casefold():
+            if (
+                ocupante is not None
+                and item['codigo']
+                and ocupante.codigo_fibra.casefold() != item['codigo'].casefold()
+            ):
                 conflictos.append(
                     f"fila {item['fila']}: {item['fibra_numero']} ya está "
                     f"identificada como {ocupante.codigo_fibra}"
                 )
     _errores_csv(conflictos, 'Fibras globales')
 
+    from ..services.fibras import (
+        actualizar_metadatos_fibra,
+        asignar_ruta_fibra,
+        crear_fibra,
+        establecer_estado_fibra_informado,
+        restablecer_estado_fibra,
+    )
+
+    usuario = getattr(lote, 'usuario', None) if lote else None
     creadas = actualizadas = 0
     for item in preparadas:
-        fibra = existentes.get(item['codigo'].casefold())
+        fibra = (
+            existentes.get(item['codigo'].casefold())
+            if item['codigo'] else por_ruta_numero.get(
+                (item['ruta'].pk, item['fibra_numero'].casefold())
+            )
+        )
         creada = fibra is None
         if creada:
-            fibra = InventarioFibra(codigo_fibra=item['codigo'])
-        if item['ruta'] is not None:
-            fibra.ruta = item['ruta']
-        fibra.fibra_numero = item['fibra_numero']
-        fibra.estado = item['estado']
-        fibra.origen_estado = item['origen_estado']
-        if item['condicion_fisica'] is not None:
-            fibra.condicion_fisica = item['condicion_fisica']
-        if item['servicio'] is not None:
-            fibra.nombre_fibra = item['servicio']
-        if item['conector'] is not None:
-            fibra.tipo_conector = item['conector']
-        if item['observaciones']:
-            fibra.observaciones = item['observaciones']
-        fibra.lote_importacion = lote
-        fibra.save()
-        existentes[item['codigo'].casefold()] = fibra
+            fibra = crear_fibra(
+                fibra_numero=item['fibra_numero'],
+                codigo_fibra=item['codigo'],
+                ruta=item['ruta'],
+                estado=item['estado'],
+                condicion_fisica=(
+                    item['condicion_fisica'] or 'SIN_VERIFICAR'
+                ),
+                nombre_fibra=item['servicio'] or '',
+                tipo_conector=item['conector'] or '',
+                observaciones=item['observaciones'],
+                usuario=usuario,
+                origen='EXCEL',
+                lote_importacion=lote,
+            )
+        else:
+            cambios = {'fibra_numero': item['fibra_numero']}
+            if item['condicion_fisica'] is not None:
+                cambios['condicion_fisica'] = item['condicion_fisica']
+            if item['servicio'] is not None:
+                cambios['nombre_fibra'] = item['servicio']
+            if item['conector'] is not None:
+                cambios['tipo_conector'] = item['conector']
+            if 'observaciones' in df.columns:
+                cambios['observaciones'] = item['observaciones']
+            actualizar_metadatos_fibra(
+                fibra=fibra,
+                usuario=usuario,
+                origen='EXCEL',
+                lote_importacion=lote,
+                **cambios,
+            )
+            if item['estado'] == 'SIN_INFORMACION':
+                restablecer_estado_fibra(
+                    fibra=fibra,
+                    usuario=usuario,
+                    origen='EXCEL',
+                    lote_importacion=lote,
+                )
+            else:
+                establecer_estado_fibra_informado(
+                    fibra=fibra,
+                    estado=item['estado'],
+                    usuario=usuario,
+                    origen='EXCEL',
+                    lote_importacion=lote,
+                )
+            if item['ruta'] is not None and fibra.ruta_id is None:
+                fibra, _, _ = asignar_ruta_fibra(
+                    fibra=fibra,
+                    ruta=item['ruta'],
+                    usuario=usuario,
+                    origen='EXCEL',
+                    lote_importacion=lote,
+                )
+        existentes[fibra.codigo_fibra.casefold()] = fibra
         if fibra.ruta_id:
             por_ruta_numero[(fibra.ruta_id, fibra.fibra_numero.casefold())] = fibra
         creadas += int(creada)
@@ -776,8 +835,8 @@ def _procesar_fibras_globales(file, lote=None):
 
     resultado = _resultado(len(df), creadas, actualizadas)
     resultado['informaciones'] = [
-        'Se actualizó la identidad y el estado global. Esta carga no crea '
-        'posiciones por tramo ni terminaciones ODF.'
+        'La identidad, metadatos, estado y Ruta se aplicaron mediante los '
+        'servicios oficiales. Las Rutas de un tramo materializan su FibraTramo.'
     ]
     return resultado
 
@@ -1660,7 +1719,7 @@ def _procesar_tramos_inventario(file, lote=None):
             }
             suma_final = sum(
                 conteos_finales.get(estado, 0)
-                for estado in ('Ocupado', 'Reservado', 'Libre')
+                for estado in ('OCUPADO', 'RESERVADO', 'DISPONIBLE')
             )
         else:
             suma_final = 0
@@ -1858,7 +1917,7 @@ def _procesar_fibras_inventario(file, lote=None):
             if not estado:
                 raise ValueError(
                     f"estado '{_texto(row.get('estado'))}' no válido; "
-                    'use Libre, Ocupado, Reservado o Desconocido'
+                    'use Disponible, Ocupado, Reservado o Sin información'
                 )
 
             codigo_tramo = _texto(row.get('codigo_tramo')).upper()
@@ -2052,7 +2111,7 @@ def _procesar_fibras_inventario(file, lote=None):
             and asignacion_logica.pk != asignacion.pk
         ):
             asignacion_logica.fibra = None
-            asignacion_logica.estado = 'Desconocido'
+            asignacion_logica.estado = 'SIN_INFORMACION'
             asignacion_logica._omitir_sincronizacion_estado = True
             asignacion_logica.save(
                 update_fields=['fibra', 'estado']
@@ -2089,9 +2148,9 @@ def _procesar_fibras_inventario(file, lote=None):
             .annotate(total=Count('pk'))
         }
         InventarioTramo.objects.filter(pk=tramo_id).update(
-            hilos_ocupados=conteos.get('Ocupado', 0),
-            hilos_reservados=conteos.get('Reservado', 0),
-            hilos_libres=conteos.get('Libre', 0),
+            hilos_ocupados=conteos.get('OCUPADO', 0),
+            hilos_reservados=conteos.get('RESERVADO', 0),
+            hilos_libres=conteos.get('DISPONIBLE', 0),
         )
 
     resultado = _resultado(
@@ -2113,16 +2172,6 @@ TERMINACIONES_ALIASES_CSV = {
     'hilo': 'fibra',
     'numero_hilo': 'fibra',
     'fibra_logica': 'codigo_fibra',
-    'odf_origen': 'odf_a',
-    'odf_extremo_a': 'odf_a',
-    'puerto_origen': 'puerto_a',
-    'puerto_extremo_a': 'puerto_a',
-    'tipo_conector_a': 'conector_a',
-    'odf_destino': 'odf_b',
-    'odf_extremo_b': 'odf_b',
-    'puerto_destino': 'puerto_b',
-    'puerto_extremo_b': 'puerto_b',
-    'tipo_conector_b': 'conector_b',
     'tipo_conector': 'conector',
     'tipo_de_conector': 'conector',
     'id_fibra': 'fibra_id',
@@ -2136,21 +2185,7 @@ TERMINACIONES_ALIASES_CSV = {
     'puerto_odf': 'puerto',
     'sitio': 'site',
     'hub_site': 'site',
-    'site_extremo_a': 'site_a',
-    'sitio_extremo_a': 'site_a',
-    'site_extremo_b': 'site_b',
-    'sitio_extremo_b': 'site_b',
 }
-
-
-def _site_id_de_nodo(nodo):
-    if not nodo:
-        return None
-    if nodo.hub_site_obj_id:
-        return nodo.hub_site_obj_id
-    if nodo.odf_obj_id:
-        return nodo.odf_obj.rack_obj.sala.hub_site_id
-    return None
 
 
 @transaction.atomic
@@ -2170,14 +2205,16 @@ def _procesar_terminaciones_fibra(file, lote=None):
     from ..services.puertos import conectar_puerto
 
     df = _leer_csv_normalizado(file, aliases=TERMINACIONES_ALIASES_CSV)
-    faltantes = sorted({'fibra', 'codigo_fibra'} - set(df.columns))
+    faltantes = sorted(
+        {'fibra', 'codigo_fibra', 'extremo', 'odf', 'puerto'}
+        - set(df.columns)
+    )
     if faltantes:
         raise ValueError(
             'Terminaciones de fibra: faltan columnas obligatorias: '
             + ', '.join(faltantes)
         )
 
-    formato_largo = {'odf', 'puerto'}.issubset(df.columns)
     rutas = {ruta.nombre.casefold(): ruta for ruta in Ruta.objects.all()}
     fibras_por_id = {
         fibra.pk: fibra
@@ -2216,9 +2253,7 @@ def _procesar_terminaciones_fibra(file, lote=None):
             codigo_fibra = _texto(row.get('codigo_fibra')).upper()
             if not numero_fibra:
                 raise ValueError('Fibra es obligatoria')
-            if not codigo_fibra:
-                raise ValueError('Codigo Fibra es obligatorio')
-            if re.fullmatch(r'F[1-9]\d*', codigo_fibra):
+            if codigo_fibra and re.fullmatch(r'F[1-9]\d*', codigo_fibra):
                 raise ValueError(
                     'Codigo Fibra debe ser una identidad global estable; '
                     f'no use la posición física {codigo_fibra}'
@@ -2229,26 +2264,16 @@ def _procesar_terminaciones_fibra(file, lote=None):
                 raise ValueError('Codigo Fibra no puede superar 64 caracteres')
 
             extremos = []
-            extremos_fuente = ('A', 'B')
-            if formato_largo:
-                extremo_informado = _texto(row.get('extremo')).upper() or 'A'
-                if extremo_informado not in {'A', 'B'}:
-                    raise ValueError('Extremo debe ser A o B')
-                extremos_fuente = (extremo_informado,)
-            for extremo in extremos_fuente:
-                sufijo = extremo.casefold()
-                odf_nombre = _texto(
-                    row.get('odf') if formato_largo else row.get(f'odf_{sufijo}')
-                )
-                puerto_numero = _texto(
-                    row.get('puerto') if formato_largo else row.get(f'puerto_{sufijo}')
-                ).upper()
-                conector = _texto(
-                    row.get('conector') if formato_largo else row.get(f'conector_{sufijo}')
-                )
-                site_informado = _texto(
-                    row.get('site') if formato_largo else row.get(f'site_{sufijo}')
-                )
+            extremo_informado = _texto(row.get('extremo')).upper()
+            if not extremo_informado:
+                raise ValueError('Extremo es obligatorio')
+            if extremo_informado not in {'A', 'B'}:
+                raise ValueError('Extremo debe ser A o B')
+            for extremo in (extremo_informado,):
+                odf_nombre = _texto(row.get('odf'))
+                puerto_numero = _texto(row.get('puerto')).upper()
+                conector = _texto(row.get('conector'))
+                site_informado = _texto(row.get('site'))
                 if bool(odf_nombre) != bool(puerto_numero):
                     raise ValueError(
                         f'el extremo {extremo} debe declarar juntos ODF y puerto'
@@ -2260,7 +2285,7 @@ def _procesar_terminaciones_fibra(file, lote=None):
                     raise ValueError(
                         f"el ODF del extremo {extremo} '{odf_nombre}' no existe"
                     )
-                site_real = odf.rack_obj.sala.hub_site.nombre
+                site_real = nombre_site(odf)
                 if (
                     site_informado
                     and site_informado.casefold() != site_real.casefold()
@@ -2323,10 +2348,7 @@ def _procesar_terminaciones_fibra(file, lote=None):
                 if normalizado in {'malo', 'mala'}:
                     condicion_informada = 'CON_FALLA'
                     restablecer_estado = True
-                elif normalizado in {
-                    'sin informacion', 'sin información', 'desconocido',
-                    'desconocida',
-                }:
+                elif normalizado in {'sin informacion', 'sin información'}:
                     restablecer_estado = True
                 else:
                     estado_informado = normalizar_estado_fibra(estado_texto)
@@ -2347,8 +2369,14 @@ def _procesar_terminaciones_fibra(file, lote=None):
                 'estado_informado': estado_informado,
                 'restablecer_estado': restablecer_estado,
                 'condicion_informada': condicion_informada,
-                'servicio': _texto(row.get('servicio')) if 'servicio' in df.columns else '',
-                'observaciones': _texto(row.get('observaciones')) if 'observaciones' in df.columns else '',
+                'servicio': (
+                    _texto(row.get('servicio'))
+                    if 'servicio' in df.columns else None
+                ),
+                'observaciones': (
+                    _texto(row.get('observaciones'))
+                    if 'observaciones' in df.columns else None
+                ),
             })
         except Exception as exc:
             errores.append(f'fila {numero_fila}: {exc}')
@@ -2470,12 +2498,10 @@ def _procesar_terminaciones_fibra(file, lote=None):
         elif item['ruta']:
             grupo = ('ruta', item['ruta'].pk, item['numero'].casefold())
         else:
-            errores.append(
-                f"fila {item['fila']}: sin Ruta, Codigo Fibra, ID Fibra o "
-                'terminación existente no existe identidad suficiente; no se '
-                f"permite crear una fibra provisional usando solo {item['numero']}"
+            grupo = (
+                'puertos',
+                tuple(sorted(extremo['clave'] for extremo in item['extremos'])),
             )
-            continue
         item['grupo'] = grupo
 
         identidad = (
@@ -2496,7 +2522,7 @@ def _procesar_terminaciones_fibra(file, lote=None):
         if item['estado_informado']:
             estado_operacion = ('INFORMADO', item['estado_informado'])
         elif item['restablecer_estado']:
-            estado_operacion = ('RESTABLECER', 'Desconocido')
+            estado_operacion = ('RESTABLECER', 'SIN_INFORMACION')
         valores_globales = {
             'estado_operacion': estado_operacion,
             'condicion_informada': item['condicion_informada'],
@@ -2504,12 +2530,11 @@ def _procesar_terminaciones_fibra(file, lote=None):
             'observaciones': item['observaciones'],
         }
         for campo, valor in valores_globales.items():
-            if valor in (None, ''):
+            if valor is None:
                 continue
-            anterior = globales.get(campo)
             if (
-                anterior not in (None, '')
-                and str(anterior).casefold() != str(valor).casefold()
+                campo in globales
+                and str(globales[campo]).casefold() != str(valor).casefold()
             ):
                 errores.append(
                     f"fila {item['fila']}: {campo.replace('_', ' ')} "
@@ -2556,7 +2581,7 @@ def _procesar_terminaciones_fibra(file, lote=None):
                 )
                 continue
             if (
-                extremo['puerto'].estado_puerto == 'Reservado'
+                extremo['puerto'].estado_puerto == 'RESERVADO'
                 and existente_extremo is None
             ):
                 errores.append(
@@ -2578,9 +2603,13 @@ def _procesar_terminaciones_fibra(file, lote=None):
             estado_operacion and estado_operacion[0] == 'RESTABLECER'
         )
         for campo in ('condicion_informada', 'servicio', 'observaciones'):
-            item[campo] = globales.get(campo) or ''
+            item[campo] = globales.get(campo)
 
-    from ..services.fibras import asignar_ruta_fibra
+    from ..services.fibras import (
+        actualizar_metadatos_fibra,
+        asignar_ruta_fibra,
+        crear_fibra,
+    )
 
     creadas = actualizadas = 0
     fibras_por_grupo = {
@@ -2592,36 +2621,43 @@ def _procesar_terminaciones_fibra(file, lote=None):
     for item in preparadas:
         fibra = fibras_por_grupo.get(item['grupo'])
         if fibra is None:
-            fibra = InventarioFibra.objects.create(
+            fibra = crear_fibra(
                 ruta=None,
                 fibra_numero=item['numero'],
-                **({'codigo_fibra': item['codigo']} if item['codigo'] else {}),
-                estado='Desconocido',
-                origen_estado='NO_INFORMADO',
+                codigo_fibra=item['codigo'],
+                condicion_fisica=(
+                    item['condicion_informada'] or 'SIN_VERIFICAR'
+                ),
+                nombre_fibra=item['servicio'] or '',
+                observaciones=item['observaciones'] or '',
+                usuario=getattr(lote, 'usuario', None) if lote else None,
+                origen='EXCEL',
                 lote_importacion=lote,
             )
             fibras_por_grupo[item['grupo']] = fibra
             fibras_por_codigo[fibra.codigo_fibra.casefold()] = fibra
+            if item['ruta'] is None:
+                grupos_pendientes.add(item['grupo'])
             if item['ruta']:
                 clave_ruta = (item['ruta'].pk, item['numero'].casefold())
                 fibras_por_ruta[clave_ruta] = fibra
 
         if item['grupo'] not in grupos_aplicados:
-            cambios_fibra = []
+            cambios_metadatos = {}
             if item['condicion_informada']:
-                fibra.condicion_fisica = item['condicion_informada']
-                cambios_fibra.append('condicion_fisica')
-            if item['servicio']:
-                fibra.nombre_fibra = item['servicio']
-                cambios_fibra.append('nombre_fibra')
-            if item['observaciones']:
-                fibra.observaciones = item['observaciones']
-                cambios_fibra.append('observaciones')
-            if getattr(lote, 'pk', None) and fibra.lote_importacion_id != lote.pk:
-                fibra.lote_importacion = lote
-                cambios_fibra.append('lote_importacion')
-            if cambios_fibra:
-                fibra.save(update_fields=sorted(set(cambios_fibra)))
+                cambios_metadatos['condicion_fisica'] = item['condicion_informada']
+            if item['servicio'] is not None:
+                cambios_metadatos['nombre_fibra'] = item['servicio']
+            if item['observaciones'] is not None:
+                cambios_metadatos['observaciones'] = item['observaciones']
+            if cambios_metadatos:
+                actualizar_metadatos_fibra(
+                    fibra=fibra,
+                    usuario=getattr(lote, 'usuario', None) if lote else None,
+                    origen='EXCEL',
+                    lote_importacion=lote,
+                    **cambios_metadatos,
+                )
             if item['estado_informado']:
                 establecer_estado_fibra_informado(
                     fibra=fibra,
@@ -2701,7 +2737,8 @@ def _procesar_terminaciones_fibra(file, lote=None):
     if pendientes_nuevas:
         resultado['informaciones'].append(
             f'{pendientes_nuevas} hilo(s) se crearon con troncal pendiente. '
-            'Se reconciliaron mediante su Codigo Fibra estable y requieren '
+            'Se reconciliaron mediante su identidad física o Codigo Fibra '
+            'estable y requieren '
             'asociar su troncal cuando esa información esté disponible.'
         )
     return resultado
@@ -2795,7 +2832,7 @@ def _procesar_puertos_odf_inventario(file, lote=None):
             raise ValueError(f'Fila {numero_fila}: puerto duplicado {odf_nombre} / {puerto_num}.')
         claves_archivo.add(clave)
         odf_ids.add(odf_obj.pk)
-        estado_original = limpio(row.get('estado_puerto'), 'Libre')
+        estado_original = limpio(row.get('estado_puerto'), 'LIBRE')
         destino = limpio(row.get('destino'))
         estado = normalizar_estado_puerto_odf_con_destino(
             estado_original,
@@ -2804,7 +2841,7 @@ def _procesar_puertos_odf_inventario(file, lote=None):
         )
         if not estado:
             raise ValueError(f'Fila {numero_fila}: estado de puerto inválido: {estado_original}.')
-        if estado == 'Ocupado':
+        if estado == 'OCUPADO':
             raise ValueError(
                 f'Fila {numero_fila}: un puerto no se importa como Ocupado. '
                 'Cárguelo como Libre y cree la ocupación mediante la '
@@ -2813,7 +2850,6 @@ def _procesar_puertos_odf_inventario(file, lote=None):
         filas.append((odf_obj, puerto_num, {
             # La relación es la fuente oficial; no conserve variantes de
             # mayúsculas o alias procedentes del CSV.
-            'odf': odf_obj.odf,
             'bandeja': limpio(row.get('bandeja')),
             'estado_puerto': estado,
             'tipo_conector': limpio(row.get('tipo_conector')),
@@ -2841,7 +2877,7 @@ def _procesar_puertos_odf_inventario(file, lote=None):
     crear = []
     actualizar = []
     campos = [
-        'odf', 'bandeja', 'estado_puerto', 'tipo_conector',
+        'bandeja', 'estado_puerto', 'tipo_conector',
         'patchcord', 'destino', 'observaciones', 'lote_importacion',
     ]
     for odf_obj, puerto_num, valores in filas:
@@ -2877,11 +2913,11 @@ def _procesar_puertos_odf_inventario(file, lote=None):
     }
     odfs_actualizar = list(InventarioODF.objects.filter(pk__in=odf_ids))
     for odf_obj in odfs_actualizar:
-        ocupados = conteos.get((odf_obj.pk, 'Ocupado'), 0)
-        reservados = conteos.get((odf_obj.pk, 'Reservado'), 0)
+        ocupados = conteos.get((odf_obj.pk, 'OCUPADO'), 0)
+        reservados = conteos.get((odf_obj.pk, 'RESERVADO'), 0)
         total_detalle = sum(
             conteos.get((odf_obj.pk, estado), 0)
-            for estado in ('Libre', 'Ocupado', 'Reservado')
+            for estado in ('LIBRE', 'OCUPADO', 'RESERVADO')
         )
         capacidad = max(odf_obj.capacidad_puertos or 0, total_detalle)
         odf_obj.capacidad_puertos = capacidad

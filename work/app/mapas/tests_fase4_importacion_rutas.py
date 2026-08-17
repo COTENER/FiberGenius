@@ -147,7 +147,7 @@ class PresentacionImportacionesFase4Tests(TestCase):
         )
         self.assertGreater(
             html.index(titulo_troncales),
-            html.index(">Mapa de Inventario</h2>"),
+            html.index(">Importación guiada del inventario</h2>"),
         )
         self.assertIn(
             "class=\"card\" style=\"text-decoration:none; cursor:pointer;\"",

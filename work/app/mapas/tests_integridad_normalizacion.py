@@ -32,13 +32,13 @@ class RestriccionesFuertesTests(TestCase):
         cls.fibra_a = InventarioFibra.objects.create(
             ruta=cls.ruta_a,
             fibra_numero='F1',
-            estado='Libre',
+            estado='DISPONIBLE',
             origen_estado='INFORMADO',
         )
         cls.fibra_b = InventarioFibra.objects.create(
             ruta=cls.ruta_b,
             fibra_numero='F1',
-            estado='Libre',
+            estado='DISPONIBLE',
             origen_estado='INFORMADO',
         )
 
@@ -70,7 +70,7 @@ class RestriccionesFuertesTests(TestCase):
                             FibraTramo(
                                 tramo=self.tramo_a,
                                 numero_hilo=numero,
-                                estado='Libre',
+                                estado='DISPONIBLE',
                             )
                         ])
 
@@ -82,7 +82,7 @@ class RestriccionesFuertesTests(TestCase):
                         tramo=self.tramo_a,
                         fibra=self.fibra_b,
                         numero_hilo='F1',
-                        estado='Libre',
+                        estado='DISPONIBLE',
                     )
                 ])
 
@@ -162,24 +162,10 @@ class NormalizacionCanonicaTests(TestCase):
         self.assertEqual(tramo.origen, 'CAN-A')
         self.assertEqual(tramo.destino, 'CAN-B')
 
-    def test_fibra_sincroniza_textos_desde_nodos_canonicos(self):
-        ruta = Ruta.objects.create(nombre='NORMALIZACION-FIBRA')
-        origen = NodoRed.objects.create(
-            tipo='SITE',
-            codigo='F-CAN-A',
-            nombre='Extremo A',
-        )
-        destino = NodoRed.objects.create(
-            tipo='SITE',
-            codigo='F-CAN-B',
-            nombre='Extremo B',
-        )
-        fibra = InventarioFibra.objects.create(
-            ruta=ruta,
-            fibra_numero='F1',
-            origen_nodo=origen,
-            destino_nodo=destino,
-        )
+    def test_fibra_no_conserva_extremos_textuales_legacy(self):
+        campos = {campo.name for campo in InventarioFibra._meta.get_fields()}
 
-        self.assertEqual(fibra.origen_odf, 'Extremo A')
-        self.assertEqual(fibra.destino, 'Extremo B')
+        self.assertNotIn('origen_nodo', campos)
+        self.assertNotIn('destino_nodo', campos)
+        self.assertNotIn('origen_odf', campos)
+        self.assertNotIn('destino', campos)

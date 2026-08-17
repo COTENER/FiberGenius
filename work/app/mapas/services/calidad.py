@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections import Counter
 
+from .ubicacion import nombre_site
+
 
 ESTADOS_COMPLETITUD = {
     "SIN_RECORRIDO": "Sin recorrido",
@@ -40,28 +42,11 @@ def _hallazgo(codigo, severidad, mensaje, **detalle):
 
 
 def _site_de_nodo(nodo):
-    """Resuelve un Site esperado solo desde una identidad topológica confiable."""
-    if nodo is None:
-        return None
-    if nodo.hub_site_obj_id:
-        return _texto(nodo.hub_site_obj.nombre)
-    if nodo.odf_obj_id:
-        odf = nodo.odf_obj
-        rack = getattr(odf, "rack_obj", None)
-        sala = getattr(rack, "sala", None)
-        site = getattr(sala, "hub_site", None)
-        return _texto(getattr(site, "nombre", None)) or _texto(odf.hub_site)
-    if nodo.tipo == "SITE":
-        return _texto(nodo.nombre) or _texto(nodo.codigo)
-    return None
+    return nombre_site(nodo)
 
 
 def _site_de_terminacion(terminacion):
-    puerto = terminacion.puerto_odf
-    odf = puerto.odf_obj
-    rack = odf.rack_obj
-    sala = rack.sala
-    return _texto(sala.hub_site.nombre)
+    return nombre_site(terminacion.puerto_odf.odf_obj)
 
 
 def _relacion_precargada(objeto, nombre, atributo_precargado=None):
@@ -165,7 +150,7 @@ def evaluar_completitud_fibra(fibra):
             continue
 
         puerto = terminacion.puerto_odf
-        if puerto.estado_puerto != "Ocupado":
+        if puerto.estado_puerto != "OCUPADO":
             hallazgos.append(_hallazgo(
                 "PUERTO_FIBRA_INCONSISTENTE",
                 "ERROR",
@@ -189,11 +174,13 @@ def evaluar_completitud_fibra(fibra):
         for extremo in ('A', 'B')
         if extremo in por_extremo and _site_de_terminacion(por_extremo[extremo])
     ]
-    if (
-        len(sites_esperados) == 2
-        and len(sites_reales) == 2
-        and Counter(sites_reales) != Counter(sites_esperados)
-    ):
+    site_incorrecto = False
+    if len(sites_esperados) == 2:
+        if len(sites_reales) == 1:
+            site_incorrecto = sites_reales[0] not in sites_esperados
+        elif len(sites_reales) == 2:
+            site_incorrecto = Counter(sites_reales) != Counter(sites_esperados)
+    if site_incorrecto:
         hallazgos.append(_hallazgo(
             "ODF_EN_SITE_INCORRECTO",
             "ERROR",
@@ -215,9 +202,9 @@ def evaluar_completitud_fibra(fibra):
         ))
 
     estados_conocidos = [
-        item.estado for item in asignaciones if item.estado != "Desconocido"
+        item.estado for item in asignaciones if item.estado != "SIN_INFORMACION"
     ]
-    if any(item.estado == "Desconocido" for item in asignaciones):
+    if any(item.estado == "SIN_INFORMACION" for item in asignaciones):
         hallazgos.append(_hallazgo(
             "DETALLE_TRAMO_PENDIENTE",
             "INFORMACION",
@@ -229,12 +216,12 @@ def evaluar_completitud_fibra(fibra):
     )
     estado_desde_tramos = None
     if detalle_completo:
-        if "Ocupado" in estados_conocidos:
-            estado_desde_tramos = "Ocupado"
-        elif "Reservado" in estados_conocidos:
-            estado_desde_tramos = "Reservado"
-        elif set(estados_conocidos) == {"Libre"}:
-            estado_desde_tramos = "Libre"
+        if "OCUPADO" in estados_conocidos:
+            estado_desde_tramos = "OCUPADO"
+        elif "RESERVADO" in estados_conocidos:
+            estado_desde_tramos = "RESERVADO"
+        elif set(estados_conocidos) == {"DISPONIBLE"}:
+            estado_desde_tramos = "DISPONIBLE"
     if (
         fibra.origen_estado == "INFORMADO"
         and estado_desde_tramos
@@ -255,7 +242,7 @@ def evaluar_completitud_fibra(fibra):
             "ADVERTENCIA",
             "La fibra tiene una falla física informada.",
         ))
-    if _texto(fibra.nombre_fibra) and fibra.estado in {"Libre", "Desconocido"}:
+    if _texto(fibra.nombre_fibra) and fibra.estado in {"DISPONIBLE", "SIN_INFORMACION"}:
         hallazgos.append(_hallazgo(
             "SERVICIO_ESTADO_POR_REVISAR",
             "ADVERTENCIA",
