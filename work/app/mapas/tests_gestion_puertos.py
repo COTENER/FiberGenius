@@ -404,13 +404,36 @@ class GestionPuertosApiTests(TestCase):
         self.puerto.refresh_from_db()
         self.assertEqual(self.puerto.estado_puerto, 'Libre')
 
-    def test_pantalla_expone_gestion_separada_del_editor_tecnico(self):
+    def test_edicion_generica_no_permite_renumerar_el_puerto(self):
+        respuesta = self.client.post(
+            reverse('api_update_puerto'),
+            data=json.dumps({
+                'id': self.puerto.pk,
+                'puerto_odf': '99',
+                'bandeja': 'B-99',
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(respuesta.status_code, 400)
+        self.assertIn('identidad fija', respuesta.json()['message'])
+        self.puerto.refresh_from_db()
+        self.assertEqual(self.puerto.puerto_odf, '1')
+        self.assertNotEqual(self.puerto.bandeja, 'B-99')
+
+    def test_pantalla_expone_gestion_unificada_del_puerto(self):
         respuesta = self.client.get(reverse('planta_interna'))
         self.assertEqual(respuesta.status_code, 200)
         self.assertContains(respuesta, 'id="port-management"')
         self.assertContains(respuesta, reverse('api_gestionar_conexion_puerto'))
+        self.assertContains(respuesta, 'Datos del puerto')
+        self.assertContains(respuesta, 'Conexión y reserva')
+        self.assertContains(
+            respuesta,
+            'id="port-management-data-number" maxlength="50" readonly',
+        )
         self.assertContains(respuesta, 'Conectar fibra')
-        self.assertContains(respuesta, 'Desconectar y liberar')
+        self.assertContains(respuesta, 'Desconectar fibra')
+        self.assertContains(respuesta, 'Troncal (opcional)')
         self.assertNotContains(respuesta, 'id="port-management-free-fiber"')
         script = (
             Path(__file__).resolve().parent
@@ -418,8 +441,9 @@ class GestionPuertosApiTests(TestCase):
             / 'js'
             / 'planta-interna-paginada.js'
         ).read_text(encoding='utf-8')
-        self.assertIn('estado global como Ocupado', script)
-        self.assertIn('estado global de ${fiberNumber} como Disponible', script)
+        self.assertNotIn('estado global como Ocupado', script)
+        self.assertNotIn('estado global de ${fiberNumber} como Disponible', script)
+        self.assertIn('sincronizar_fibra: false', script)
         self.assertNotIn('todos sus tramos como Ocupado', script)
 
     def test_api_paginada_expone_la_conexion_oficial(self):
@@ -435,7 +459,6 @@ class GestionPuertosApiTests(TestCase):
         self.assertEqual(puerto['conexion']['ruta'], self.ruta.nombre)
         self.assertEqual(puerto['conexion']['fibra'], 'F1')
         self.assertEqual(puerto['conexion']['extremo'], 'A')
-        self.assertFalse(puerto['requiere_regularizacion'])
 
     def test_api_crea_hilo_provisional_y_ocupa_el_puerto(self):
         respuesta = self._post({

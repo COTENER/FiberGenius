@@ -25,6 +25,9 @@
         newOdf: document.getElementById('odf-new'),
         editor: document.getElementById('odf-editor'),
         editorForm: document.getElementById('odf-editor-form'),
+        rankingContext: document.getElementById('odf-ranking-context'),
+        rankingContextLabel: document.getElementById('odf-ranking-context-label'),
+        rankingContextClear: document.getElementById('odf-ranking-context-clear'),
     };
     const stats = {
         total: document.getElementById('odf-stat-total'),
@@ -41,6 +44,8 @@
     let debounceTimer = null;
     let exportObjectUrl = null;
     let pendingOdfId = null;
+    let rankingOdfId = '';
+    let rankingOdf = '';
     const inspectorSummary = document.getElementById('odf-inspector-summary');
     const inspectorEmpty = document.getElementById('odf-inspector-empty');
     const inspectorDetail = document.getElementById('odf-inspector-detail');
@@ -76,23 +81,30 @@
             rankingItem.tabIndex = 0;
             rankingItem.setAttribute('role', 'button');
             rankingItem.setAttribute('aria-label', `Filtrar ${item.odf}`);
+            const selected = rankingOdfId === String(item.id);
+            rankingItem.classList.toggle('is-selected', selected);
+            rankingItem.setAttribute('aria-pressed', String(selected));
             const description = document.createElement('div');
             description.className = 'network-ranking__label';
             const name = document.createElement('em');
             name.textContent = item.odf;
             name.title = item.odf;
             const percent = document.createElement('b');
-            percent.textContent = `${percentFormat.format(item.porcentaje || 0)}%`;
+            percent.textContent = `${numberFormat.format(item.ocupados || 0)} en uso de ${numberFormat.format(item.capacidad || 0)}`;
             description.append(name, percent);
             const bar = document.createElement('div');
             bar.className = 'network-ranking__bar';
             const fill = document.createElement('i');
             fill.style.width = `${Math.max(0, Math.min(100, Number(item.porcentaje || 0)))}%`;
             bar.appendChild(fill);
-            rankingItem.append(description, bar);
+            const detail = document.createElement('small');
+            detail.textContent = `${percentFormat.format(item.porcentaje || 0)}% de ocupación · Site ${item.site || 'sin información'}`;
+            rankingItem.append(description, bar, detail);
             const select = () => {
-                pendingOdfId = Number(item.id);
-                elements.query.value = item.odf;
+                rankingOdfId = selected ? '' : String(item.id);
+                rankingOdf = selected ? '' : item.odf;
+                pendingOdfId = selected ? null : Number(item.id);
+                syncRankingContext();
                 page = 1;
                 load();
             };
@@ -107,14 +119,33 @@
         });
     }
 
+    function syncRankingContext() {
+        if (!elements.rankingContext) return;
+        const active = Boolean(rankingOdfId);
+        elements.rankingContext.hidden = !active;
+        if (elements.rankingContextLabel) elements.rankingContextLabel.textContent = active ? rankingOdf : '';
+    }
+
+    function clearRankingContext({ reload = true } = {}) {
+        rankingOdf = '';
+        rankingOdfId = '';
+        pendingOdfId = null;
+        syncRankingContext();
+        page = 1;
+        if (reload) load();
+    }
+
     function stateSummary(summary) {
         if (!inspectorSummary) return;
         const capacity = Number(summary?.capacidad || 0);
         const used = Number(summary?.ocupados || 0);
         const free = Number(summary?.libres || 0);
         const reserved = Number(summary?.reservados || 0);
-        const usedPercent = capacity ? Math.min(100, (used / capacity) * 100) : 0;
-        const reservedPercent = capacity ? Math.min(100 - usedPercent, (reserved / capacity) * 100) : 0;
+        const unknown = Math.max(0, capacity - used - free - reserved);
+        const percentage = (value) => capacity ? Math.max(0, Math.min(100, (value / capacity) * 100)) : 0;
+        const usedPercent = percentage(used);
+        const freePercent = percentage(free);
+        const reservedPercent = percentage(reserved);
         putText('odf-utilization-percent', `${percentFormat.format(usedPercent)}%`);
         putText('odf-utilization-used-label', `${numberFormat.format(used)} · ${percentFormat.format(usedPercent)}%`);
         putText('odf-utilization-reserved-label', `${numberFormat.format(reserved)} · ${percentFormat.format(reservedPercent)}%`);
@@ -126,26 +157,48 @@
         renderRanking(summary?.top_ocupacion || []);
         const donut = document.createElement('div');
         donut.className = 'network-donut';
-        donut.style.background = `conic-gradient(#16a85f 0 ${usedPercent}%, #e88a08 ${usedPercent}% ${usedPercent + reservedPercent}%, #09a6b4 ${usedPercent + reservedPercent}% 100%)`;
-        const percent = document.createElement('span');
-        percent.textContent = `${percentFormat.format(usedPercent)}%`;
+        const usedEnd = freePercent + usedPercent;
+        const reservedEnd = usedEnd + reservedPercent;
+        donut.style.background = capacity
+            ? `conic-gradient(#18b777 0 ${freePercent}%, #2f74ee ${freePercent}% ${usedEnd}%, #f59e0b ${usedEnd}% ${reservedEnd}%, #94a3b8 ${reservedEnd}% 100%)`
+            : 'conic-gradient(#e8edf5 0 100%)';
+        const totalNode = document.createElement('span');
+        totalNode.textContent = numberFormat.format(capacity);
         const caption = document.createElement('small');
-        caption.textContent = 'ocupados';
-        donut.append(percent, caption);
+        caption.textContent = 'puertos';
+        donut.append(totalNode, caption);
         const list = document.createElement('ul');
-        [['is-used', 'Ocupados', used], ['is-free', 'Libres', free], ['is-reserved', 'Reservados', reserved]]
+        const states = [['is-free', 'Libres', free], ['is-used', 'Ocupados', used], ['is-reserved', 'Reservados', reserved]];
+        if (unknown) states.push(['is-unknown', 'Sin información', unknown]);
+        states
             .forEach(([className, label, value]) => {
                 const item = document.createElement('li');
+                const row = document.createElement('div');
+                row.className = 'network-state-line';
                 const dot = document.createElement('i');
                 dot.className = className;
                 const text = document.createElement('span');
                 text.textContent = label;
                 const amount = document.createElement('b');
-                amount.textContent = numberFormat.format(value);
-                item.append(dot, text, amount);
+                const count = document.createElement('span');
+                count.textContent = numberFormat.format(value);
+                const ratio = document.createElement('small');
+                ratio.textContent = `${percentFormat.format(percentage(value))}%`;
+                amount.append(count, ratio);
+                row.append(dot, text, amount);
+                item.appendChild(row);
                 list.appendChild(item);
             });
         inspectorSummary.replaceChildren(donut, list);
+        const source = document.getElementById('odf-inspector-source');
+        if (source) {
+            source.replaceChildren();
+            const odfs = document.createElement('span');
+            odfs.textContent = numberFormat.format(summary?.total || 0);
+            const documented = document.createElement('span');
+            documented.textContent = numberFormat.format(capacity - unknown);
+            source.append(odfs, ' ODF · ', documented, ' puertos con estado');
+        }
     }
 
     function detailField(label, value) {
@@ -211,6 +264,7 @@
         const params = new URLSearchParams();
         [
             ['q', elements.query.value.trim()],
+            ['odf_id', rankingOdfId],
             ['site', elements.site.value],
             ['sala', elements.room.value],
             ['rack', elements.rack.value],
@@ -554,10 +608,15 @@
     elements.clear.addEventListener('click', () => {
         elements.form.reset();
         elements.pageSize.value = '25';
+        rankingOdf = '';
+        rankingOdfId = '';
+        pendingOdfId = null;
+        syncRankingContext();
         page = 1;
         elements.query.focus();
         load();
     });
+    elements.rankingContextClear?.addEventListener('click', () => clearRankingContext());
     elements.previous.addEventListener('click', () => { page = Math.max(1, page - 1); load(); });
     elements.next.addEventListener('click', () => { page += 1; load(); });
     elements.newOdf?.addEventListener('click', () => openEditor());

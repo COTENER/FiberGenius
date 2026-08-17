@@ -68,6 +68,7 @@
 .odf-kpi--cyan { --kpi-color: var(--odf-cyan); }
 .odf-kpi--amber { --kpi-color: var(--odf-amber); }
 .odf-kpi--orange { --kpi-color: var(--odf-orange); }
+.odf-kpi--neutral { --kpi-color: #64748b; }
 
 .odf-analysis-layout {
     display: grid;

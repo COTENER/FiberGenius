@@ -28,6 +28,7 @@ import math
 from ..models import (
     OTU, Ruta, PuertoOTU, CoordenadaRuta, Reserva, IDRuta,
     InventarioTramo, InventarioFibra, InventarioODF, LoteImportacion, NodoRed,
+    HubSite,
     FibraTramo, TerminacionFibra, DetallePuertoODF,
 )
 from ..services.topologia import (
@@ -52,6 +53,14 @@ ESTADOS_FIBRA_CSV = {
     'reservado': 'Reservado',
     'reservada': 'Reservado',
     'desconocido': 'Desconocido',
+}
+
+ESTADOS_FIBRA_GLOBAL_CSV = {
+    **ESTADOS_FIBRA_CSV,
+    'disponible': 'Libre',
+    'disponibles': 'Libre',
+    'sin informacion': 'Desconocido',
+    'sin información': 'Desconocido',
 }
 
 
@@ -455,7 +464,7 @@ def descargar_plantilla_terminaciones_fibra(request):
             fibra.ruta.nombre if fibra.ruta_id else '',
             fibra.pk,
             fibra.fibra_numero,
-            fibra.fibra_numero,
+            fibra.codigo_fibra,
             (
                 fibra.origen_nodo.codigo
                 if fibra.origen_nodo_id
@@ -516,6 +525,261 @@ def eliminar_ruta_config(request):
         messages.error(request, "Acción no permitida o permisos insuficientes.")
         
     return redirect('configuracion')
+
+
+@transaction.atomic
+def _procesar_sites_inventario(file, lote=None):
+    """Crea o actualiza Sites con validación completa antes de escribir."""
+    df = _leer_csv_normalizado(file, aliases={
+        'site': 'nombre',
+        'hub': 'nombre',
+        'hub_site': 'nombre',
+        'direccion_site': 'direccion',
+    })
+    if 'nombre' not in df.columns:
+        raise ValueError('Sites: falta la columna obligatoria Nombre.')
+
+    preparadas = []
+    errores = []
+    nombres_archivo = set()
+    for numero_fila, row in enumerate(df.to_dict('records'), start=2):
+        nombre = _texto(row.get('nombre'))
+        try:
+            if not nombre:
+                raise ValueError('Nombre es obligatorio')
+            clave = nombre.casefold()
+            if clave in nombres_archivo:
+                raise ValueError(f"el Site '{nombre}' está repetido")
+            nombres_archivo.add(clave)
+
+            latitud = _decimal(row.get('latitud')) if 'latitud' in df.columns else None
+            longitud = _decimal(row.get('longitud')) if 'longitud' in df.columns else None
+            if (latitud is None) != (longitud is None):
+                raise ValueError('Latitud y Longitud deben informarse juntas')
+            if latitud is not None and not Decimal('-90') <= latitud <= Decimal('90'):
+                raise ValueError(f'Latitud fuera de rango ({latitud})')
+            if longitud is not None and not Decimal('-180') <= longitud <= Decimal('180'):
+                raise ValueError(f'Longitud fuera de rango ({longitud})')
+
+            preparadas.append({
+                'nombre': nombre,
+                'latitud': latitud,
+                'longitud': longitud,
+                'direccion': (
+                    _texto(row.get('direccion')) or None
+                    if 'direccion' in df.columns else None
+                ),
+            })
+        except (ValueError, ValidationError) as exc:
+            errores.append(f'fila {numero_fila}: {exc}')
+    _errores_csv(errores, 'Sites')
+
+    existentes = {
+        site.nombre.casefold(): site
+        for site in HubSite.objects.select_for_update().all()
+    }
+    creadas = actualizadas = 0
+    for item in preparadas:
+        site = existentes.get(item['nombre'].casefold())
+        creada = site is None
+        if creada:
+            site = HubSite(nombre=item['nombre'])
+        if creada or item['latitud'] is not None:
+            site.latitud = item['latitud']
+            site.longitud = item['longitud']
+        if creada or item['direccion'] is not None:
+            site.direccion = item['direccion']
+        site.lote_importacion = lote
+        site.full_clean()
+        site.save()
+        existentes[item['nombre'].casefold()] = site
+        creadas += int(creada)
+        actualizadas += int(not creada)
+    return _resultado(len(df), creadas, actualizadas)
+
+
+@transaction.atomic
+def _procesar_fibras_globales(file, lote=None):
+    """Crea o actualiza la identidad y el estado global de cada fibra."""
+    df = _leer_csv_normalizado(file, aliases={
+        'codigo_de_fibra': 'codigo_fibra',
+        'fibra_logica': 'codigo_fibra',
+        'numero_de_fibra': 'fibra',
+        'n_de_fibra': 'fibra',
+        'hilo': 'fibra',
+        'troncal': 'ruta',
+        'estado_global': 'estado',
+        'condicion_fisica': 'condicion',
+        'tipo_de_servicio': 'servicio',
+        'nombre_servicio': 'servicio',
+        'tipo_de_conector': 'conector',
+        'notas': 'observaciones',
+    })
+    requeridas = {'codigo_fibra', 'fibra', 'estado'}
+    faltantes = sorted(requeridas - set(df.columns))
+    if faltantes:
+        raise ValueError(
+            'Fibras globales: faltan columnas obligatorias: '
+            + ', '.join(faltantes)
+        )
+
+    condiciones = {
+        'operativa': 'OPERATIVA',
+        'con falla': 'CON_FALLA',
+        'con_falla': 'CON_FALLA',
+        'sin verificar': 'SIN_VERIFICAR',
+        'sin_verificar': 'SIN_VERIFICAR',
+    }
+    rutas = {
+        ruta.nombre.casefold(): ruta
+        for ruta in Ruta.objects.all().only('pk', 'nombre')
+    }
+    preparadas = []
+    errores = []
+    codigos_archivo = set()
+    posiciones_archivo = set()
+    for numero_fila, row in enumerate(df.to_dict('records'), start=2):
+        codigo = _texto(row.get('codigo_fibra')).upper()
+        fibra_numero = _texto(row.get('fibra')).upper()
+        ruta_nombre = _texto(row.get('ruta')) if 'ruta' in df.columns else ''
+        try:
+            if not codigo:
+                raise ValueError('Codigo Fibra es obligatorio')
+            if re.fullmatch(r'F[1-9]\d*', codigo):
+                raise ValueError(
+                    'Codigo Fibra debe ser global y estable; no use '
+                    f'{codigo}, que representa una posición física'
+                )
+            if len(codigo) > 64:
+                raise ValueError('Codigo Fibra no puede superar 64 caracteres')
+            if not fibra_numero:
+                raise ValueError('Fibra es obligatoria')
+            if codigo.casefold() in codigos_archivo:
+                raise ValueError(f"Codigo Fibra '{codigo}' está repetido")
+            codigos_archivo.add(codigo.casefold())
+
+            ruta = rutas.get(ruta_nombre.casefold()) if ruta_nombre else None
+            if ruta_nombre and ruta is None:
+                raise ValueError(f"la troncal '{ruta_nombre}' no existe")
+            if ruta is not None:
+                clave_posicion = (ruta.pk, fibra_numero.casefold())
+                if clave_posicion in posiciones_archivo:
+                    raise ValueError(
+                        f'{fibra_numero} está repetida dentro de la troncal'
+                    )
+                posiciones_archivo.add(clave_posicion)
+
+            estado_texto = _texto(row.get('estado')).casefold()
+            estado = ESTADOS_FIBRA_GLOBAL_CSV.get(estado_texto)
+            if estado is None:
+                raise ValueError(
+                    f"Estado '{_texto(row.get('estado'))}' no válido; use "
+                    'Disponible, Ocupado, Reservado o Sin información'
+                )
+            condicion_texto = (
+                _texto(row.get('condicion')).casefold()
+                if 'condicion' in df.columns else ''
+            )
+            condicion = condiciones.get(condicion_texto) if condicion_texto else None
+            if condicion_texto and condicion_texto not in condiciones:
+                raise ValueError(
+                    f"Condición '{_texto(row.get('condicion'))}' no válida"
+                )
+
+            preparadas.append({
+                'fila': numero_fila,
+                'codigo': codigo,
+                'fibra_numero': fibra_numero,
+                'ruta': ruta,
+                'estado': estado,
+                'origen_estado': (
+                    'NO_INFORMADO' if estado == 'Desconocido' else 'INFORMADO'
+                ),
+                'condicion_fisica': condicion,
+                'servicio': (
+                    _texto(row.get('servicio')) or None
+                    if 'servicio' in df.columns else None
+                ),
+                'conector': (
+                    _texto(row.get('conector')) or None
+                    if 'conector' in df.columns else None
+                ),
+                'observaciones': (
+                    _texto(row.get('observaciones'))
+                    if 'observaciones' in df.columns else ''
+                ),
+            })
+        except (ValueError, ValidationError) as exc:
+            errores.append(f'fila {numero_fila}: {exc}')
+    _errores_csv(errores, 'Fibras globales')
+
+    existentes = {
+        fibra.codigo_fibra.casefold(): fibra
+        for fibra in InventarioFibra.objects.select_for_update()
+        .select_related('ruta').all()
+    }
+    por_ruta_numero = {
+        (fibra.ruta_id, fibra.fibra_numero.casefold()): fibra
+        for fibra in existentes.values()
+        if fibra.ruta_id
+    }
+    conflictos = []
+    for item in preparadas:
+        fibra = existentes.get(item['codigo'].casefold())
+        if (
+            fibra is not None
+            and fibra.ruta_id
+            and item['ruta'] is not None
+            and fibra.ruta_id != item['ruta'].pk
+        ):
+            conflictos.append(
+                f"fila {item['fila']}: {item['codigo']} ya pertenece a "
+                f"la troncal {fibra.ruta.nombre}"
+            )
+        if item['ruta'] is not None:
+            ocupante = por_ruta_numero.get(
+                (item['ruta'].pk, item['fibra_numero'].casefold())
+            )
+            if ocupante is not None and ocupante.codigo_fibra.casefold() != item['codigo'].casefold():
+                conflictos.append(
+                    f"fila {item['fila']}: {item['fibra_numero']} ya está "
+                    f"identificada como {ocupante.codigo_fibra}"
+                )
+    _errores_csv(conflictos, 'Fibras globales')
+
+    creadas = actualizadas = 0
+    for item in preparadas:
+        fibra = existentes.get(item['codigo'].casefold())
+        creada = fibra is None
+        if creada:
+            fibra = InventarioFibra(codigo_fibra=item['codigo'])
+        if item['ruta'] is not None:
+            fibra.ruta = item['ruta']
+        fibra.fibra_numero = item['fibra_numero']
+        fibra.estado = item['estado']
+        fibra.origen_estado = item['origen_estado']
+        if item['condicion_fisica'] is not None:
+            fibra.condicion_fisica = item['condicion_fisica']
+        if item['servicio'] is not None:
+            fibra.nombre_fibra = item['servicio']
+        if item['conector'] is not None:
+            fibra.tipo_conector = item['conector']
+        if item['observaciones']:
+            fibra.observaciones = item['observaciones']
+        fibra.lote_importacion = lote
+        fibra.save()
+        existentes[item['codigo'].casefold()] = fibra
+        if fibra.ruta_id:
+            por_ruta_numero[(fibra.ruta_id, fibra.fibra_numero.casefold())] = fibra
+        creadas += int(creada)
+        actualizadas += int(not creada)
+
+    resultado = _resultado(len(df), creadas, actualizadas)
+    resultado['informaciones'] = [
+        'Se actualizó la identidad y el estado global. Esta carga no crea '
+        'posiciones por tramo ni terminaciones ODF.'
+    ]
+    return resultado
 
 
 @transaction.atomic
@@ -1528,7 +1792,7 @@ def _procesar_fibras_inventario(file, lote=None):
         'numero_de_fibra': 'fibra',
         'n_de_fibra': 'fibra',
     })
-    requeridas = {'ruta', 'fibra', 'estado'}
+    requeridas = {'ruta', 'fibra', 'codigo_fibra', 'estado'}
     faltantes = sorted(requeridas - set(df.columns))
     if faltantes:
         raise ValueError(
@@ -1567,11 +1831,7 @@ def _procesar_fibras_inventario(file, lote=None):
     for indice, row in enumerate(df.to_dict('records'), start=2):
         ruta_nombre = _texto(row.get('ruta'))
         numero_hilo = _texto(row.get('fibra')).upper()
-        codigo_logico = (
-            _texto(row.get('codigo_fibra')).upper()
-            if 'codigo_fibra' in df.columns
-            else numero_hilo
-        ) or numero_hilo
+        codigo_estable = _texto(row.get('codigo_fibra')).upper()
         try:
             ruta = rutas.get(ruta_nombre.casefold()) if ruta_nombre else None
             if not ruta_nombre:
@@ -1582,10 +1842,15 @@ def _procesar_fibras_inventario(file, lote=None):
                 raise ValueError(
                     f"Fibra '{numero_hilo or '[vacía]'}' debe usar F<n>"
                 )
-            if not re.fullmatch(r'F[1-9]\d*', codigo_logico):
+            if not codigo_estable:
+                raise ValueError('Codigo Fibra es obligatorio')
+            if re.fullmatch(r'F[1-9]\d*', codigo_estable):
                 raise ValueError(
-                    f"Codigo Fibra '{codigo_logico}' debe usar F<n>"
+                    'Codigo Fibra debe ser una identidad global estable; '
+                    f"no use la posición física {codigo_estable}"
                 )
+            if len(codigo_estable) > 64:
+                raise ValueError('Codigo Fibra no puede superar 64 caracteres')
 
             estado = ESTADOS_FIBRA_CSV.get(
                 _texto(row.get('estado')).casefold()
@@ -1637,10 +1902,10 @@ def _procesar_fibras_inventario(file, lote=None):
                     f'{numero_hilo} está repetida en el mismo tramo'
                 )
             claves_fisicas.add(clave_fisica)
-            clave_logica_tramo = (tramo.pk, codigo_logico.casefold())
+            clave_logica_tramo = (tramo.pk, codigo_estable.casefold())
             if clave_logica_tramo in claves_logicas_tramo:
                 raise ValueError(
-                    f"Codigo Fibra '{codigo_logico}' está repetido "
+                    f"Codigo Fibra '{codigo_estable}' está repetido "
                     'en el mismo tramo'
                 )
             claves_logicas_tramo.add(clave_logica_tramo)
@@ -1649,7 +1914,7 @@ def _procesar_fibras_inventario(file, lote=None):
                 'ruta': ruta,
                 'tramo': tramo,
                 'numero_hilo': numero_hilo,
-                'codigo_logico': codigo_logico,
+                'codigo_estable': codigo_estable,
                 'estado': estado,
                 'observaciones': (
                     _texto(row.get('observaciones'))
@@ -1660,28 +1925,39 @@ def _procesar_fibras_inventario(file, lote=None):
             errores.append(f'fila {indice}: {exc}')
     _errores_csv(errores, 'Detalle de fibras por tramo')
 
-    ids_ruta = sorted({item['ruta'].pk for item in preparadas})
     ids_tramo = sorted({item['tramo'].pk for item in preparadas})
-    fibras_consultadas = {
-        (fibra.ruta_id, fibra.fibra_numero.casefold()): fibra
-        for fibra in InventarioFibra.objects.filter(ruta_id__in=ids_ruta)
+    fibras_consultadas_por_codigo = {
+        fibra.codigo_fibra.casefold(): fibra
+        for fibra in InventarioFibra.objects.filter(
+            codigo_fibra__in=[
+                item['codigo_estable']
+                for item in preparadas
+                if item['codigo_estable']
+            ]
+        )
     }
     faltan_fibras = []
     for item in preparadas:
-        clave = (item['ruta'].pk, item['codigo_logico'].casefold())
-        if clave not in fibras_consultadas:
+        fibra = fibras_consultadas_por_codigo.get(
+            item['codigo_estable'].casefold()
+        )
+        if fibra and fibra.ruta_id != item['ruta'].pk:
+            faltan_fibras.append(
+                f"fila {item['fila']}: el Codigo Fibra "
+                f"{item['codigo_estable']} pertenece a otra ruta"
+            )
+            continue
+        item['fibra_consultada'] = fibra
+        if fibra is None:
             faltan_fibras.append(
                 f"fila {item['fila']}: la fibra global "
-                f"{item['ruta'].nombre} / {item['codigo_logico']} no existe; "
+                f"{item['ruta'].nombre} / {item['codigo_estable']} no existe; "
                 'cárguela previamente en el inventario de fibras'
             )
     _errores_csv(faltan_fibras, 'Detalle de fibras por tramo')
 
     ids_fibra = sorted({
-        fibras_consultadas[
-            (item['ruta'].pk, item['codigo_logico'].casefold())
-        ].pk
-        for item in preparadas
+        item['fibra_consultada'].pk for item in preparadas
     })
     fibras_bloqueadas = {
         fibra.pk: fibra
@@ -1695,8 +1971,8 @@ def _procesar_fibras_inventario(file, lote=None):
             pk__in=ids_tramo
         ).order_by('pk')
     }
-    fibras_existentes = {
-        (fibra.ruta_id, fibra.fibra_numero.casefold()): fibra
+    fibras_existentes_por_codigo = {
+        fibra.codigo_fibra.casefold(): fibra
         for fibra in fibras_bloqueadas.values()
     }
     asignaciones = list(
@@ -1710,15 +1986,15 @@ def _procesar_fibras_inventario(file, lote=None):
         for item in asignaciones
     }
     asignaciones_por_logica = {
-        (item.tramo_id, item.fibra.fibra_numero.casefold()): item
+        (item.tramo_id, item.fibra_id): item
         for item in asignaciones
         if item.fibra_id
     }
 
     conflictos = []
     for item in preparadas:
-        fibra = fibras_existentes.get(
-            (item['ruta'].pk, item['codigo_logico'].casefold())
+        fibra = fibras_existentes_por_codigo.get(
+            item['codigo_estable'].casefold()
         )
         posicion = asignaciones_por_posicion.get(
             (item['tramo'].pk, item['numero_hilo'].casefold())
@@ -1741,10 +2017,9 @@ def _procesar_fibras_inventario(file, lote=None):
     fibras_tocadas = {}
     for item in preparadas:
         tramo = tramos_bloqueados[item['tramo'].pk]
-        clave_logica = (
-            item['ruta'].pk, item['codigo_logico'].casefold()
+        fibra = fibras_existentes_por_codigo.get(
+            item['codigo_estable'].casefold()
         )
-        fibra = fibras_existentes.get(clave_logica)
         fibras_tocadas[fibra.pk] = fibra
 
         clave_posicion = (
@@ -1753,7 +2028,7 @@ def _procesar_fibras_inventario(file, lote=None):
         asignacion = asignaciones_por_posicion.get(clave_posicion)
         clave_asignacion_logica = (
             tramo.pk,
-            item['codigo_logico'].casefold(),
+            fibra.pk,
         )
         asignacion_logica = asignaciones_por_logica.get(
             clave_asignacion_logica
@@ -1882,9 +2157,9 @@ def _site_id_de_nodo(nodo):
 def _procesar_terminaciones_fibra(file, lote=None):
     """Registra terminaciones oficiales con la troncal informada o pendiente.
 
-    Cuando Ruta viene vacía se crea una fibra con troncal pendiente. Como el
-    número de hilo puede repetirse, una recarga la identifica por su ID interno
-    o por sus puertos ya terminados, nunca solo por el texto F1/F2/etc.
+    Codigo Fibra aporta siempre la identidad estable para crear o reconciliar
+    la fibra. Ruta puede quedar pendiente. F1/F2 representa solo la posición
+    física y nunca identifica por sí sola una fibra global.
     """
     from ..services.fibras import (
         establecer_estado_fibra_informado,
@@ -1895,9 +2170,11 @@ def _procesar_terminaciones_fibra(file, lote=None):
     from ..services.puertos import conectar_puerto
 
     df = _leer_csv_normalizado(file, aliases=TERMINACIONES_ALIASES_CSV)
-    if not {'fibra', 'codigo_fibra'}.intersection(df.columns):
+    faltantes = sorted({'fibra', 'codigo_fibra'} - set(df.columns))
+    if faltantes:
         raise ValueError(
-            'Terminaciones de fibra: falta la columna Fibra o Codigo Fibra.'
+            'Terminaciones de fibra: faltan columnas obligatorias: '
+            + ', '.join(faltantes)
         )
 
     formato_largo = {'odf', 'puerto'}.issubset(df.columns)
@@ -1905,6 +2182,10 @@ def _procesar_terminaciones_fibra(file, lote=None):
     fibras_por_id = {
         fibra.pk: fibra
         for fibra in InventarioFibra.objects.select_related('ruta').all()
+    }
+    fibras_por_codigo = {
+        fibra.codigo_fibra.casefold(): fibra
+        for fibra in fibras_por_id.values()
     }
     fibras_por_ruta = {
         (fibra.ruta_id, fibra.fibra_numero.casefold()): fibra
@@ -1933,15 +2214,19 @@ def _procesar_terminaciones_fibra(file, lote=None):
 
             numero_fibra = _texto(row.get('fibra')).upper()
             codigo_fibra = _texto(row.get('codigo_fibra')).upper()
-            if numero_fibra and codigo_fibra and numero_fibra != codigo_fibra:
-                raise ValueError(
-                    'Fibra y Codigo Fibra deben identificar el mismo hilo lógico'
-                )
-            numero_logico = codigo_fibra or numero_fibra
-            if not numero_logico:
+            if not numero_fibra:
                 raise ValueError('Fibra es obligatoria')
-            if len(numero_logico) > 50:
+            if not codigo_fibra:
+                raise ValueError('Codigo Fibra es obligatorio')
+            if re.fullmatch(r'F[1-9]\d*', codigo_fibra):
+                raise ValueError(
+                    'Codigo Fibra debe ser una identidad global estable; '
+                    f'no use la posición física {codigo_fibra}'
+                )
+            if len(numero_fibra) > 50:
                 raise ValueError('Fibra no puede superar 50 caracteres')
+            if len(codigo_fibra) > 64:
+                raise ValueError('Codigo Fibra no puede superar 64 caracteres')
 
             extremos = []
             extremos_fuente = ('A', 'B')
@@ -2013,9 +2298,18 @@ def _procesar_terminaciones_fibra(file, lote=None):
                 fibra_id_obj = fibras_por_id.get(fibra_id)
                 if not fibra_id_obj:
                     raise ValueError(f'la fibra ID {fibra_id} no existe')
-                if fibra_id_obj.fibra_numero.casefold() != numero_logico.casefold():
+                if fibra_id_obj.fibra_numero.casefold() != numero_fibra.casefold():
                     raise ValueError(
                         f'el ID {fibra_id} pertenece a {fibra_id_obj.fibra_numero}'
+                    )
+                if (
+                    codigo_fibra
+                    and fibra_id_obj.codigo_fibra.casefold()
+                    != codigo_fibra.casefold()
+                ):
+                    raise ValueError(
+                        f'el ID {fibra_id} pertenece al código estable '
+                        f'{fibra_id_obj.codigo_fibra}'
                     )
                 if ruta and fibra_id_obj.ruta_id not in {None, ruta.pk}:
                     raise ValueError('el ID Fibra pertenece a otra troncal')
@@ -2046,7 +2340,8 @@ def _procesar_terminaciones_fibra(file, lote=None):
                 'fila': numero_fila,
                 'ruta': ruta,
                 'ruta_nombre': ruta_nombre,
-                'numero': numero_logico,
+                'numero': numero_fibra,
+                'codigo': codigo_fibra,
                 'extremos': extremos,
                 'fibra_id': fibra_id,
                 'estado_informado': estado_informado,
@@ -2095,14 +2390,45 @@ def _procesar_terminaciones_fibra(file, lote=None):
     errores = []
     extremos_archivo = set()
     grupos_globales = {}
+    identidades_grupo = {}
     grupos_pendientes = set()
     for item in preparadas:
         fibra = fibras_por_id.get(item['fibra_id']) if item['fibra_id'] else None
+        if fibra is None and item['codigo']:
+            fibra = fibras_por_codigo.get(item['codigo'].casefold())
+            if fibra and fibra.fibra_numero.casefold() != item['numero'].casefold():
+                errores.append(
+                    f"fila {item['fila']}: el código estable "
+                    f"{item['codigo']} pertenece al hilo {fibra.fibra_numero}, "
+                    f"no a {item['numero']}"
+                )
+                continue
+            if (
+                fibra
+                and item['ruta']
+                and fibra.ruta_id not in {None, item['ruta'].pk}
+            ):
+                errores.append(
+                    f"fila {item['fila']}: el código estable "
+                    f"{item['codigo']} pertenece a otra troncal"
+                )
+                continue
         if fibra is None and item['ruta'] is not None:
             fibra = fibras_por_ruta.get(
                 (item['ruta'].pk, item['numero'].casefold())
             )
-        elif fibra is None:
+            if (
+                fibra
+                and item['codigo']
+                and fibra.codigo_fibra.casefold() != item['codigo'].casefold()
+            ):
+                errores.append(
+                    f"fila {item['fila']}: {item['ruta'].nombre} / "
+                    f"{item['numero']} ya existe con el código estable "
+                    f"{fibra.codigo_fibra}, no {item['codigo']}"
+                )
+                continue
+        if fibra is None and item['ruta'] is None:
             candidatas = {
                 por_puerto[extremo['puerto'].pk].fibra
                 for extremo in item['extremos']
@@ -2122,21 +2448,48 @@ def _procesar_terminaciones_fibra(file, lote=None):
                         f"{fibra.fibra_numero}, no a {item['numero']}"
                     )
                     continue
+        if (
+            fibra
+            and item['codigo']
+            and fibra.codigo_fibra.casefold() != item['codigo'].casefold()
+        ):
+            errores.append(
+                f"fila {item['fila']}: la terminación existente pertenece al "
+                f"código estable {fibra.codigo_fibra}, no {item['codigo']}"
+            )
+            continue
         item['fibra'] = fibra
         if fibra:
             grupo = ('fibra', fibra.pk)
         elif item['fibra_id']:
             grupo = ('fibra', item['fibra_id'])
+        elif item['codigo']:
+            grupo = ('codigo', item['codigo'].casefold())
+            if item['ruta'] is None:
+                grupos_pendientes.add(grupo)
         elif item['ruta']:
             grupo = ('ruta', item['ruta'].pk, item['numero'].casefold())
         else:
-            # Sin Ruta, ID o terminación existente no existe identidad
-            # suficiente para reconciliar dos F2/F12 iguales. Una fila ancha
-            # conserva sus extremos A/B; filas separadas quedan como fibras
-            # provisionales independientes hasta revisión de campo.
-            grupo = ('pendiente_fila', item['fila'])
-            grupos_pendientes.add(grupo)
+            errores.append(
+                f"fila {item['fila']}: sin Ruta, Codigo Fibra, ID Fibra o "
+                'terminación existente no existe identidad suficiente; no se '
+                f"permite crear una fibra provisional usando solo {item['numero']}"
+            )
+            continue
         item['grupo'] = grupo
+
+        identidad = (
+            item['numero'].casefold(),
+            item['ruta'].pk if item['ruta'] else None,
+        )
+        identidad_anterior = identidades_grupo.get(grupo)
+        if identidad_anterior is not None and identidad_anterior != identidad:
+            errores.append(
+                f"fila {item['fila']}: el mismo Codigo Fibra no puede declarar "
+                'otro número de hilo o una troncal diferente'
+            )
+            continue
+        identidades_grupo[grupo] = identidad
 
         globales = grupos_globales.setdefault(grupo, {})
         estado_operacion = None
@@ -2242,11 +2595,13 @@ def _procesar_terminaciones_fibra(file, lote=None):
             fibra = InventarioFibra.objects.create(
                 ruta=None,
                 fibra_numero=item['numero'],
+                **({'codigo_fibra': item['codigo']} if item['codigo'] else {}),
                 estado='Desconocido',
                 origen_estado='NO_INFORMADO',
                 lote_importacion=lote,
             )
             fibras_por_grupo[item['grupo']] = fibra
+            fibras_por_codigo[fibra.codigo_fibra.casefold()] = fibra
             if item['ruta']:
                 clave_ruta = (item['ruta'].pk, item['numero'].casefold())
                 fibras_por_ruta[clave_ruta] = fibra
@@ -2346,8 +2701,8 @@ def _procesar_terminaciones_fibra(file, lote=None):
     if pendientes_nuevas:
         resultado['informaciones'].append(
             f'{pendientes_nuevas} hilo(s) se crearon con troncal pendiente. '
-            'Cada fila sin ID, Ruta o terminación previa se mantuvo '
-            'independiente y requiere revisión antes de asociar su troncal.'
+            'Se reconciliaron mediante su Codigo Fibra estable y requieren '
+            'asociar su troncal cuando esa información esté disponible.'
         )
     return resultado
 
@@ -2624,6 +2979,7 @@ def _procesar_coordenadas_csv(file, lote=None):
 def cargar_csv(request, tipo_csv):
     """Vista que maneja la carga de diferentes archivos y los procesa."""
     PROCESADORES = {
+        'sites_inventario': (_procesar_sites_inventario, "Sites (.csv)"),
         'reservas': (_procesar_reservas, "Reservas"),
         'ruta_otu': (_procesar_ruta_otu, "Troncales y Datos Generales"),
         'equipos_otu': (_procesar_equipos_otu, "Equipos OTU"),
@@ -2632,8 +2988,9 @@ def cargar_csv(request, tipo_csv):
         'asociar_puertos': (_asociar_puertos_a_rutas, "Asociar Puertos a Rutas"),
         'id_rutas': (_procesar_id_rutas, "Cargar IDs de Rutas (ONMSI)"),
         'coordenadas_inventario': (_procesar_coordenadas_inventario_zip, "Trazado Geográfico Segmentado (.zip)"),
-        'coordenadas_csv': (_procesar_coordenadas_csv, "Coordenadas y Tipo de Trazado (.csv)"),
+        'coordenadas_csv': (_procesar_coordenadas_csv, "Recorridos en el mapa (.csv)"),
         'tramos_inventario': (_procesar_tramos_inventario, "Inventario Técnico de Tramos (.csv)"),
+        'fibras_globales': (_procesar_fibras_globales, "Inventario global de fibras (.csv)"),
         'fibras_inventario': (_procesar_fibras_inventario, "Fibras por Tramo (.csv)"),
         'terminaciones_fibra': (
             _procesar_terminaciones_fibra,
@@ -2648,6 +3005,7 @@ def cargar_csv(request, tipo_csv):
         return redirect('configuracion')
 
     permisos_por_tipo = {
+        'sites_inventario': ('mapas.add_hubsite', 'mapas.change_hubsite'),
         'reservas': ('mapas.add_reserva', 'mapas.change_reserva'),
         'ruta_otu': ('mapas.add_ruta', 'mapas.change_ruta', 'mapas.add_otu'),
         'equipos_otu': ('mapas.add_otu', 'mapas.change_otu', 'mapas.add_puertootu'),
@@ -2657,6 +3015,7 @@ def cargar_csv(request, tipo_csv):
         'coordenadas_inventario': ('mapas.add_coordenadaruta', 'mapas.change_coordenadaruta'),
         'coordenadas_csv': ('mapas.add_coordenadaruta', 'mapas.change_coordenadaruta'),
         'tramos_inventario': ('mapas.add_inventariotramo', 'mapas.change_inventariotramo'),
+        'fibras_globales': ('mapas.add_inventariofibra', 'mapas.change_inventariofibra'),
         'fibras_inventario': ('mapas.add_inventariofibra', 'mapas.change_inventariofibra'),
         'terminaciones_fibra': (
             'mapas.add_terminacionfibra',

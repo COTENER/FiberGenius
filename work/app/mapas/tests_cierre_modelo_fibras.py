@@ -344,12 +344,19 @@ class ImportacionBhpEndurecidaTests(TestCase):
 
     def _fila_larga(self, ruta, fibra, puerto, estado='', extremo='A',
                     site='SITE-BHP-A', odf='ODF-BHP-A', extras=''):
+        codigo_fibra = (
+            InventarioFibra.objects.filter(
+                ruta__nombre=ruta,
+                fibra_numero=fibra,
+            ).values_list('codigo_fibra', flat=True).first()
+            or f'FGF-{ruta}-{fibra}'
+        )
         cabecera = (
-            'Ruta,Fibra,Site,ODF,Puerto,Extremo,Estado,'
+            'Ruta,Fibra,Codigo Fibra,Site,ODF,Puerto,Extremo,Estado,'
             'Condicion Fisica,Servicio,Observaciones'
         )
         fila = (
-            f'{ruta},{fibra},{site},{odf},{puerto},{extremo},{estado},'
+            f'{ruta},{fibra},{codigo_fibra},{site},{odf},{puerto},{extremo},{estado},'
             f'{extras}'
         )
         return '\n'.join((cabecera, fila))
@@ -408,11 +415,11 @@ class ImportacionBhpEndurecidaTests(TestCase):
         ruta, tramo = self._ruta_un_tramo('BHP-CON-FALLA')
         contenido = '\n'.join((
             (
-                'Ruta,Fibra,Site,ODF,Puerto,Extremo,Estado,'
+                'Ruta,Fibra,Codigo Fibra,Site,ODF,Puerto,Extremo,Estado,'
                 'Condicion Fisica,Servicio,Observaciones'
             ),
             (
-                f'{ruta.nombre},F10,SITE-BHP-A,ODF-BHP-A,8,A,'
+                f'{ruta.nombre},F10,FGF-{ruta.nombre}-F10,SITE-BHP-A,ODF-BHP-A,8,A,'
                 'Ocupado,Con falla,Telemetria,Falla confirmada'
             ),
         ))
@@ -447,14 +454,14 @@ class ImportacionBhpEndurecidaTests(TestCase):
 
     def test_filas_a_b_coherentes_se_unifican_y_conflictos_se_rechazan(self):
         cabecera = (
-            'Ruta,Fibra,Site,ODF,Puerto,Extremo,Estado,'
+            'Ruta,Fibra,Codigo Fibra,Site,ODF,Puerto,Extremo,Estado,'
             'Condicion Fisica,Servicio,Observaciones'
         )
         ruta = Ruta.objects.create(nombre='BHP-AB-OK')
         contenido = '\n'.join((
             cabecera,
-            f'{ruta.nombre},F30,SITE-BHP-A,ODF-BHP-A,1,A,Ocupado,,CCTV,Operativa',
-            f'{ruta.nombre},F30,SITE-BHP-B,ODF-BHP-B,1,B,Ocupado,,CCTV,Operativa',
+            f'{ruta.nombre},F30,FGF-BHP-AB-0030,SITE-BHP-A,ODF-BHP-A,1,A,Ocupado,,CCTV,Operativa',
+            f'{ruta.nombre},F30,FGF-BHP-AB-0030,SITE-BHP-B,ODF-BHP-B,1,B,Ocupado,,CCTV,Operativa',
         ))
         _procesar_terminaciones_fibra(_csv('ab-ok.csv', contenido))
         fibra = InventarioFibra.objects.get(ruta=ruta, fibra_numero='F30')
@@ -464,8 +471,8 @@ class ImportacionBhpEndurecidaTests(TestCase):
         ruta_conflicto = Ruta.objects.create(nombre='BHP-AB-CONFLICTO')
         conflicto = '\n'.join((
             cabecera,
-            f'{ruta_conflicto.nombre},F31,SITE-BHP-A,ODF-BHP-A,2,A,Ocupado,,CCTV,',
-            f'{ruta_conflicto.nombre},F31,SITE-BHP-B,ODF-BHP-B,2,B,Disponible,,Datos,',
+            f'{ruta_conflicto.nombre},F31,FGF-BHP-AB-0031,SITE-BHP-A,ODF-BHP-A,2,A,Ocupado,,CCTV,',
+            f'{ruta_conflicto.nombre},F31,FGF-BHP-AB-0031,SITE-BHP-B,ODF-BHP-B,2,B,Disponible,,Datos,',
         ))
         with self.assertRaises(ValueError):
             _procesar_terminaciones_fibra(

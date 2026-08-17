@@ -436,7 +436,7 @@ class AdministracionIdentidadesTests(TestCase):
         )
         self.assertEqual(
             set(fibra_admin.get_readonly_fields(None, self.fibra)),
-            {'ruta', 'origen_estado'},
+            {'ruta', 'origen_estado', 'codigo_fibra'},
         )
 
 

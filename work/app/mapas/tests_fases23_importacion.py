@@ -375,17 +375,18 @@ class ImportacionFibrasFase3Tests(TestCase):
         )
 
     def _contenido_fibra_completa(self):
+        codigo = self.fibra_1.codigo_fibra
         return "\n".join([
             (
                 "Ruta,Codigo Tramo,Fibra,Codigo Fibra,Estado,"
                 "Tipo de Servicio,Origen,Destino,Conector,Observaciones"
             ),
             (
-                "RUTA-FASE-3,T-001,F1,F1,Ocupado,TRANSPORTE,"
+                f"RUTA-FASE-3,T-001,F1,{codigo},Ocupado,TRANSPORTE,"
                 "ODF-A,ODF-B,LC,Primer tramo"
             ),
             (
-                "RUTA-FASE-3,T-002,F2,F1,Ocupado,TRANSPORTE,"
+                f"RUTA-FASE-3,T-002,F2,{codigo},Ocupado,TRANSPORTE,"
                 "ODF-A,ODF-B,LC,Segundo tramo"
             ),
         ])
@@ -418,6 +419,47 @@ class ImportacionFibrasFase3Tests(TestCase):
         self.assertEqual(resumen["fibras_cobertura_completa"], 1)
         self.assertFalse(resumen["detalle_fibras_completo"])
 
+    def test_codigo_estable_identifica_la_fibra_en_todos_sus_tramos(self):
+        codigo = self.fibra_1.codigo_fibra
+        contenido = "\n".join([
+            "Ruta,Codigo Tramo,Fibra,Codigo Fibra,Estado",
+            f"RUTA-FASE-3,T-001,F1,{codigo},Ocupado",
+            f"RUTA-FASE-3,T-002,F2,{codigo},Ocupado",
+        ])
+
+        resultado = _procesar_fibras_inventario(
+            _csv("fibras-codigo-estable.csv", contenido)
+        )
+
+        self.assertEqual(resultado["total"], 2)
+        self.assertEqual(
+            list(
+                self.fibra_1.asignaciones_tramo.order_by(
+                    "tramo__tramo_secuencia"
+                ).values_list("numero_hilo", flat=True)
+            ),
+            ["F1", "F2"],
+        )
+
+    def test_codigo_fibra_es_obligatorio_y_no_admite_una_posicion_fisica(self):
+        sin_columna = "\n".join([
+            "Ruta,Codigo Tramo,Fibra,Estado",
+            "RUTA-FASE-3,T-001,F1,Ocupado",
+        ])
+        with self.assertRaisesRegex(ValueError, "codigo_fibra"):
+            _procesar_fibras_inventario(
+                _csv("fibras-sin-codigo.csv", sin_columna)
+            )
+
+        codigo_fisico = "\n".join([
+            "Ruta,Codigo Tramo,Fibra,Codigo Fibra,Estado",
+            "RUTA-FASE-3,T-001,F1,F1,Ocupado",
+        ])
+        with self.assertRaisesRegex(ValueError, "identidad global estable"):
+            _procesar_fibras_inventario(
+                _csv("fibras-codigo-fisico.csv", codigo_fisico)
+            )
+
     def test_fibra_parcial_no_se_considera_libre_extremo_a_extremo(self):
         _procesar_fibras_inventario(
             _csv("fibras.csv", self._contenido_fibra_completa())
@@ -428,7 +470,7 @@ class ImportacionFibrasFase3Tests(TestCase):
                 "Tipo de Servicio,Origen,Destino,Conector"
             ),
             (
-                "RUTA-FASE-3,T-001,F3,F3,Libre,LIBRE,"
+                f"RUTA-FASE-3,T-001,F3,{self.fibra_3.codigo_fibra},Libre,LIBRE,"
                 "ODF-A,ODF-B,LC"
             ),
         ])
@@ -451,8 +493,8 @@ class ImportacionFibrasFase3Tests(TestCase):
 
     def test_estado_invalido_revierte_todas_las_filas(self):
         contenido = self._contenido_fibra_completa().replace(
-            "T-002,F2,F1,Ocupado",
-            "T-002,F2,F1,Disponible",
+            f"T-002,F2,{self.fibra_1.codigo_fibra},Ocupado",
+            f"T-002,F2,{self.fibra_1.codigo_fibra},Disponible",
         )
 
         with self.assertRaisesRegex(ValueError, "estado"):
@@ -468,11 +510,11 @@ class ImportacionFibrasFase3Tests(TestCase):
                 "Tipo de Servicio,Origen,Destino,Conector"
             ),
             (
-                "RUTA-FASE-3,T-001,F3,F3,Desconocido,LIBRE,"
+                f"RUTA-FASE-3,T-001,F3,{self.fibra_3.codigo_fibra},Desconocido,LIBRE,"
                 "ODF-A,ODF-B,LC"
             ),
             (
-                "RUTA-FASE-3,T-002,F3,F3,Libre,LIBRE,"
+                f"RUTA-FASE-3,T-002,F3,{self.fibra_3.codigo_fibra},Libre,LIBRE,"
                 "ODF-A,ODF-B,LC"
             ),
         ])
@@ -498,10 +540,10 @@ class ImportacionFibrasFase3Tests(TestCase):
     def test_codigo_tramo_es_obligatorio_si_hay_varios_tramos(self):
         contenido = "\n".join([
             (
-                "Ruta,Fibra,Estado,Tipo de Servicio,"
+                "Ruta,Fibra,Codigo Fibra,Estado,Tipo de Servicio,"
                 "Origen,Destino,Conector"
             ),
-            "RUTA-FASE-3,F1,Libre,LIBRE,ODF-A,ODF-B,LC",
+            f"RUTA-FASE-3,F1,{self.fibra_1.codigo_fibra},Libre,LIBRE,ODF-A,ODF-B,LC",
         ])
 
         with self.assertRaisesRegex(ValueError, "Codigo Tramo"):
@@ -512,10 +554,10 @@ class ImportacionFibrasFase3Tests(TestCase):
     def test_numero_fisico_no_puede_superar_capacidad_del_tramo(self):
         contenido = "\n".join([
             (
-                "Ruta,Codigo Tramo,Fibra,Estado,Tipo de Servicio,"
+                "Ruta,Codigo Tramo,Fibra,Codigo Fibra,Estado,Tipo de Servicio,"
                 "Origen,Destino,Conector"
             ),
-            "RUTA-FASE-3,T-001,F5,Libre,LIBRE,ODF-A,ODF-B,LC",
+            "RUTA-FASE-3,T-001,F5,FGF-CAPACIDAD-0005,Libre,LIBRE,ODF-A,ODF-B,LC",
         ])
 
         with self.assertRaisesRegex(ValueError, "supera la capacidad"):
@@ -525,8 +567,8 @@ class ImportacionFibrasFase3Tests(TestCase):
 
     def test_fibra_global_inexistente_se_reporta_y_no_se_crea(self):
         contenido = "\n".join([
-            "Ruta,Codigo Tramo,Fibra,Estado",
-            "RUTA-FASE-3,T-001,F4,Libre",
+            "Ruta,Codigo Tramo,Fibra,Codigo Fibra,Estado",
+            "RUTA-FASE-3,T-001,F4,FGF-INEXISTENTE-0004,Libre",
         ])
 
         with self.assertRaisesRegex(ValueError, "cárguela previamente"):
@@ -548,7 +590,7 @@ class ImportacionFibrasFase3Tests(TestCase):
                 "Tipo de Servicio,Origen,Destino,Conector"
             ),
             (
-                "RUTA-FASE-3,T-001,F3,F3,Libre,LIBRE,"
+                f"RUTA-FASE-3,T-001,F3,{self.fibra_3.codigo_fibra},Libre,LIBRE,"
                 "ODF-A,ODF-B,LC"
             ),
         ])
@@ -576,7 +618,7 @@ class ImportacionFibrasFase3Tests(TestCase):
                 "Tipo de Servicio,Origen,Destino,Conector"
             ),
             (
-                "RUTA-FASE-3,T-001,F4,F1,Ocupado,TRANSPORTE,"
+                f"RUTA-FASE-3,T-001,F4,{self.fibra_1.codigo_fibra},Ocupado,TRANSPORTE,"
                 "ODF-A,ODF-B,LC"
             ),
         ])
@@ -663,7 +705,9 @@ class ApiFibrasFase3Tests(TestCase):
             reverse("api_fibras_paginadas"),
             {"ruta": self.ruta.nombre},
         ).json()
-        self.assertEqual(inventario["summary"]["libres"], 0)
+        # El estado global informado conserva prioridad; la cobertura parcial
+        # se comunica como indicador independiente.
+        self.assertEqual(inventario["summary"]["libres"], 1)
         self.assertEqual(inventario["summary"]["sin_cobertura"], 1)
         self.assertFalse(inventario["data"][0]["cobertura_completa"])
 

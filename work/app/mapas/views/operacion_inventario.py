@@ -19,9 +19,11 @@ from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
 from django.db.models import (
     Case,
+    CharField,
     Count,
     DecimalField,
     ExpressionWrapper,
+    Exists,
     F,
     FloatField,
     IntegerField,
@@ -258,10 +260,6 @@ def _serializar_puertos(puertos):
             "destino": _texto(puerto.destino),
             "observaciones": _texto(puerto.observaciones, ""),
             "conexion": conexion,
-            "requiere_regularizacion": bool(
-                (puerto.estado_puerto == "Ocupado" and not conexion)
-                or (puerto.estado_puerto != "Ocupado" and conexion)
-            ),
             "detail_url": reverse("asset_360", args=["puerto", puerto.pk]),
         })
     return resultado
@@ -270,11 +268,14 @@ def _serializar_puertos(puertos):
 def _filtro_odfs(request):
     queryset = InventarioODF.objects.all()
     termino = request.GET.get("q", "").strip()[:150]
+    odf_id = request.GET.get("odf_id", "").strip()
     site = request.GET.get("site", "").strip()[:150]
     sala = request.GET.get("sala", "").strip()[:100]
     rack = request.GET.get("rack", "").strip()[:100]
     estado = request.GET.get("estado", "").strip()[:50]
     capacidad = request.GET.get("capacidad", "").strip().lower()
+    if odf_id.isdigit():
+        queryset = queryset.filter(pk=int(odf_id))
     if termino:
         queryset = queryset.filter(
             Q(odf__icontains=termino)
@@ -421,11 +422,14 @@ def _estadisticas_capacidad_rutas(ids_ruta):
 
 def _filtro_troncales(request):
     queryset = Ruta.objects.filter(tramos_inventario__isnull=False)
+    ranking_id = request.GET.get("ranking_id", "").strip()
     termino = request.GET.get("q", "").strip()[:150]
     tipo = request.GET.get("tipo", "").strip()[:50]
     estado = request.GET.get("estado", "").strip()[:50]
     site = request.GET.get("site", "").strip()[:150]
     capacidad = request.GET.get("capacidad", "").strip().lower()
+    if ranking_id.isdigit():
+        queryset = queryset.filter(pk=int(ranking_id))
     if termino:
         queryset = queryset.filter(
             Q(nombre__icontains=termino)
@@ -695,6 +699,9 @@ def _filtro_tramos(request):
     estado = request.GET.get("estado", "").strip()[:50]
     ruta = request.GET.get("ruta", "").strip()[:150]
     site = request.GET.get("site", "").strip()[:150]
+    ranking_id = request.GET.get("ranking_id", "").strip()
+    if ranking_id.isdigit():
+        queryset = queryset.filter(pk=int(ranking_id))
     if termino:
         queryset = queryset.filter(
             Q(ruta__nombre__icontains=termino)
@@ -830,7 +837,8 @@ def _resumen_tramos(queryset):
         if not total:
             continue
         ranking.append({
-            "id": tramo.ruta_id,
+            "id": tramo.pk,
+            "ruta_id": tramo.ruta_id,
             "nombre": "{} · {}".format(
                 tramo.ruta.nombre,
                 getattr(tramo, "codigo_tramo", None)
@@ -873,6 +881,7 @@ def _anotar_cobertura_fibras(queryset):
         .annotate(total=Count("pk"))
         .values("total")[:1]
     )
+    asignaciones = FibraTramo.objects.filter(fibra_id=OuterRef("pk"))
     return queryset.annotate(
         _tramos_ruta=Coalesce(
             Subquery(tramos_ruta, output_field=IntegerField()),
@@ -886,6 +895,25 @@ def _anotar_cobertura_fibras(queryset):
             Subquery(detalle_ruta, output_field=IntegerField()),
             Value(0),
         ),
+        _tramo_ocupado=Exists(asignaciones.filter(estado="Ocupado")),
+        _tramo_reservado=Exists(asignaciones.filter(estado="Reservado")),
+        _tramo_desconocido=Exists(
+            asignaciones.filter(estado="Desconocido")
+        ),
+    ).annotate(
+        _estado_efectivo=Case(
+            When(origen_estado="INFORMADO", then=F("estado")),
+            When(_tramo_ocupado=True, then=Value("Ocupado")),
+            When(_tramo_reservado=True, then=Value("Reservado")),
+            When(
+                Q(_tramos_ruta__gt=0)
+                & Q(_tramos_asignados=F("_tramos_ruta"))
+                & Q(_tramo_desconocido=False),
+                then=Value("Libre"),
+            ),
+            default=Value("Desconocido"),
+            output_field=CharField(),
+        )
     )
 
 
@@ -896,7 +924,7 @@ def _filtro_cobertura_completa():
     )
 
 
-def _filtro_fibras(request):
+def _filtro_fibras(request, *, aplicar_en_uso=True):
     queryset = _anotar_cobertura_fibras(
         InventarioFibra.objects.select_related("ruta").prefetch_related(
             Prefetch(
@@ -923,6 +951,8 @@ def _filtro_fibras(request):
     ruta = request.GET.get("ruta", "").strip()[:150]
     ruta_pendiente = request.GET.get("ruta_pendiente", "").strip().casefold()
     site = request.GET.get("site", "").strip()[:150]
+    destino = request.GET.get("destino", "").strip()[:150]
+    en_uso = request.GET.get("en_uso", "").strip().casefold()
     if termino:
         queryset = queryset.filter(
             Q(ruta__nombre__icontains=termino)
@@ -942,7 +972,13 @@ def _filtro_fibras(request):
             | Q(ruta__tramos_inventario__destino_nodo__codigo__icontains=termino)
         ).distinct()
     if estado in {"Libre", "Ocupado", "Reservado", "Desconocido"}:
-        queryset = queryset.filter(estado=estado)
+        queryset = queryset.filter(_estado_efectivo=estado)
+    if destino:
+        queryset = queryset.filter(destino__iexact=destino)
+    if aplicar_en_uso and en_uso in {"1", "true", "si", "sí"}:
+        queryset = queryset.filter(
+            _estado_efectivo__in=("Ocupado", "Reservado")
+        )
     if ruta:
         queryset = queryset.filter(ruta__nombre=ruta)
     elif ruta_pendiente in {"1", "true", "si", "sí"}:
@@ -1111,6 +1147,14 @@ def _serializar_fibras(fibras):
         presentacion = obtener_presentacion_orientada_fibra(fibra)
         origen = presentacion["origen"]
         destino = presentacion["destino"]
+        estado_efectivo = getattr(fibra, "_estado_efectivo", fibra.estado)
+        origen_estado_efectivo = fibra.origen_estado
+        if fibra.origen_estado != "INFORMADO":
+            origen_estado_efectivo = (
+                "INFERIDO_TRAMOS"
+                if estado_efectivo != "Desconocido"
+                else "NO_INFORMADO"
+            )
 
         def etiqueta(item):
             if item is None:
@@ -1123,8 +1167,9 @@ def _serializar_fibras(fibras):
             "troncal": fibra.nombre_troncal,
             "troncal_pendiente": fibra.es_provisional,
             "numero": _texto(fibra.fibra_numero),
-            "estado": _texto(fibra.estado),
-            "origen_estado": _texto(fibra.origen_estado),
+            "estado": _texto(estado_efectivo),
+            "estado_persistido": _texto(fibra.estado),
+            "origen_estado": _texto(origen_estado_efectivo),
             "condicion_fisica": _texto(fibra.condicion_fisica),
             "servicio": _texto(fibra.nombre_fibra),
             "observaciones": _texto(fibra.observaciones),
@@ -1143,7 +1188,7 @@ def _serializar_fibras(fibras):
             "codigos_tramo": codigos,
             "cobertura_completa": cobertura_completa,
             "disponibilidad_confirmada": bool(
-                (fibra.estado or "").strip().casefold() != "libre"
+                (estado_efectivo or "").strip().casefold() != "libre"
                 or cobertura_completa
             ),
             "detail_url": reverse("asset_360", args=["fibra", fibra.pk]),
@@ -1151,7 +1196,7 @@ def _serializar_fibras(fibras):
     return resultado
 
 
-def _resumen_fibras(queryset):
+def _resumen_fibras(queryset, *, total_destino_asociado=None):
     filas = list(
         _anotar_cobertura_fibras(queryset)
         .order_by()
@@ -1159,7 +1204,9 @@ def _resumen_fibras(queryset):
             "pk",
             "ruta_id",
             "ruta__nombre",
-            "estado",
+            "_estado_efectivo",
+            "origen_estado",
+            "destino",
             "_tramos_ruta",
             "_tramos_asignados",
             "_detalle_ruta",
@@ -1174,8 +1221,14 @@ def _resumen_fibras(queryset):
         "sin_cobertura": 0,
         "troncales": len({fila["ruta_id"] for fila in filas if fila["ruta_id"]}),
         "pendientes_troncal": sum(fila["ruta_id"] is None for fila in filas),
+        "sin_destino_uso": 0,
+        "estados_informados": 0,
+        "estados_inferidos": 0,
+        "estados_sin_fuente": 0,
     }
     por_ruta = {}
+    por_destino = {}
+    por_destino_asociado = {}
     for fila in filas:
         cobertura_completa = bool(
             (
@@ -1187,10 +1240,19 @@ def _resumen_fibras(queryset):
                 and fila["_detalle_ruta"] == 0
             )
         )
-        estado = str(fila["estado"] or "").strip().casefold()
+        estado = str(fila["_estado_efectivo"] or "").strip().casefold()
+        if fila["origen_estado"] == "INFORMADO":
+            resumen["estados_informados"] += 1
+        elif estado in {"libre", "ocupado", "ocupada", "reservado", "reservada"}:
+            resumen["estados_inferidos"] += 1
+        else:
+            resumen["estados_sin_fuente"] += 1
         if not cobertura_completa:
             resumen["sin_cobertura"] += 1
-        if estado == "libre" and cobertura_completa:
+        # Las tarjetas representan el estado global oficial de InventarioFibra.
+        # La cobertura del recorrido es un indicador de calidad independiente y
+        # no debe reclasificar un estado informado por el inventario.
+        if estado == "libre":
             resumen["libres"] += 1
         elif estado in {"ocupado", "ocupada"}:
             resumen["ocupadas"] += 1
@@ -1198,6 +1260,40 @@ def _resumen_fibras(queryset):
             resumen["reservadas"] += 1
         else:
             resumen["sin_estado"] += 1
+
+        destino = str(fila["destino"] or "").strip()
+        destino_valido = destino.casefold() not in {
+            "",
+            "—",
+            "n/a",
+            "sin dato",
+            "sin información",
+            "por levantar",
+        }
+        if destino_valido:
+            clave_destino = destino.casefold()
+            por_destino_asociado[clave_destino] = (
+                por_destino_asociado.get(clave_destino, 0) + 1
+            )
+
+        if estado in {"ocupado", "ocupada", "reservado", "reservada"}:
+            if not destino_valido:
+                resumen["sin_destino_uso"] += 1
+            else:
+                item_destino = por_destino.setdefault(
+                    clave_destino,
+                    {
+                        "destino": destino,
+                        "total": 0,
+                        "ocupadas": 0,
+                        "reservadas": 0,
+                    },
+                )
+                item_destino["total"] += 1
+                if estado in {"ocupado", "ocupada"}:
+                    item_destino["ocupadas"] += 1
+                else:
+                    item_destino["reservadas"] += 1
 
         if fila["ruta_id"] is None:
             continue
@@ -1216,7 +1312,7 @@ def _resumen_fibras(queryset):
         ruta["total"] += 1
         if not cobertura_completa:
             ruta["sin_cobertura"] += 1
-        if estado == "libre" and cobertura_completa:
+        if estado == "libre":
             ruta["libres"] += 1
         elif estado in {"ocupado", "ocupada"}:
             ruta["ocupadas"] += 1
@@ -1226,14 +1322,15 @@ def _resumen_fibras(queryset):
     ranking = list(por_ruta.values())
     for fila in ranking:
         utilizados = fila["ocupadas"] + fila["reservadas"]
+        conocidos = utilizados + fila["libres"]
         fila["utilizacion"] = (
-            round(utilizados / fila["total"] * 100, 1)
-            if fila["total"]
-            else 0
+            round(utilizados / conocidos * 100, 1)
+            if conocidos
+            else None
         )
     ranking.sort(
         key=lambda fila: (
-            fila["utilizacion"],
+            fila["utilizacion"] if fila["utilizacion"] is not None else -1,
             fila["ocupadas"],
             fila["reservadas"],
             fila["nombre"],
@@ -1241,6 +1338,36 @@ def _resumen_fibras(queryset):
         reverse=True,
     )
     resumen["top_troncales"] = ranking[:5]
+    fibras_en_uso = resumen["ocupadas"] + resumen["reservadas"]
+    destinos = list(por_destino.values())
+    for item in destinos:
+        total_asociadas = por_destino_asociado.get(
+            item["destino"].casefold(),
+            item["total"],
+        )
+        if total_destino_asociado is not None and len(destinos) == 1:
+            total_asociadas = total_destino_asociado
+        item["total_asociadas"] = total_asociadas
+        item["porcentaje_uso"] = (
+            round(item["total"] / total_asociadas * 100, 1)
+            if total_asociadas
+            else 0
+        )
+        item["porcentaje"] = (
+            round(item["total"] / fibras_en_uso * 100, 1)
+            if fibras_en_uso
+            else 0
+        )
+    destinos.sort(
+        key=lambda item: (
+            item["total"],
+            item["ocupadas"],
+            item["reservadas"],
+            item["destino"],
+        ),
+        reverse=True,
+    )
+    resumen["destinos_mayor_uso"] = destinos[:5]
     return resumen
 
 
@@ -1420,7 +1547,18 @@ def api_fibras_paginadas(request):
     queryset = _filtro_fibras(request)
     response = _pagina(request, queryset, _serializar_fibras)
     payload = json.loads(response.content)
-    payload["summary"] = _resumen_fibras(queryset)
+    destino = request.GET.get("destino", "").strip()[:150]
+    en_uso = request.GET.get("en_uso", "").strip().casefold()
+    total_destino_asociado = None
+    if destino and en_uso in {"1", "true", "si", "sí"}:
+        total_destino_asociado = _filtro_fibras(
+            request,
+            aplicar_en_uso=False,
+        ).count()
+    payload["summary"] = _resumen_fibras(
+        queryset,
+        total_destino_asociado=total_destino_asociado,
+    )
     return JsonResponse(payload)
 
 
@@ -2181,6 +2319,14 @@ def _accion(etiqueta, url):
     return {"label": etiqueta, "url": url}
 
 
+def _clave_orden_natural(valor):
+    return tuple(
+        (0, int(parte)) if parte.isdigit() else (1, parte.casefold())
+        for parte in re.split(r"(\d+)", str(valor or ""))
+        if parte
+    )
+
+
 def _url_con_query(nombre_ruta, **parametros):
     return reverse(nombre_ruta) + "?" + urlencode(parametros)
 
@@ -2289,6 +2435,25 @@ def _ficha_odf(pk):
             tramos_inventario__destino_nodo__nombre__iexact=odf.odf,
         )
     ).distinct()
+    troncales_nombres = list(
+        troncales.order_by("nombre").values_list("nombre", flat=True)
+    )
+    puertos = sorted(
+        odf.puertos_detalle.only("pk", "puerto_odf", "estado_puerto"),
+        key=lambda puerto: _clave_orden_natural(puerto.puerto_odf),
+    )
+    capacidad = max(odf.capacidad_puertos or 0, len(puertos))
+    ocupados = odf.puertos_ocupados or 0
+    libres = odf.puertos_libres or 0
+    reservados = odf.puertos_reservados or 0
+    utilizacion = round((ocupados / capacidad) * 100, 1) if capacidad else 0
+    observaciones = (odf.observaciones or "").strip()
+    capacidad_derivada = observaciones.casefold().startswith("capacidad derivada")
+    procedencia_capacidad = (
+        observaciones.rstrip(".")
+        if capacidad_derivada
+        else "Capacidad registrada en el inventario de ODF"
+    )
     return {
         "type": "odf",
         "title": odf.odf,
@@ -2301,19 +2466,41 @@ def _ficha_odf(pk):
             _item("ODF", odf.odf),
         ],
         "summary": [
-            _item("Capacidad", odf.capacidad_puertos),
-            _item("Puertos ocupados", odf.puertos_ocupados),
-            _item("Puertos libres", odf.puertos_libres),
-            _item("Puertos reservados", odf.puertos_reservados),
-            _item("Troncales relacionadas", troncales.count()),
+            _item("Capacidad", capacidad),
+            _item("Puertos ocupados", ocupados),
+            _item("Puertos libres", libres),
+            _item("Puertos reservados", reservados),
+            _item("Troncales relacionadas", len(troncales_nombres)),
         ],
+        "odf_operational": {
+            "capacity": capacidad,
+            "occupied": ocupados,
+            "free": libres,
+            "reserved": reservados,
+            "utilization": utilizacion,
+            "connector": _texto(odf.tipo_conector),
+            "capacity_source": procedencia_capacidad,
+            "notes": "" if capacidad_derivada else observaciones,
+            "related_trunks": troncales_nombres,
+            "ports": [
+                {
+                    "id": puerto.pk,
+                    "label": puerto.puerto_odf,
+                    "status": puerto.estado_puerto,
+                    "detail_url": reverse(
+                        "asset_360", args=["puerto", puerto.pk]
+                    ),
+                }
+                for puerto in puertos
+            ],
+        },
         "sections": [
             {
                 "title": "Ubicación y conexión",
                 "items": [
                     _item("Tipo de conector", odf.tipo_conector),
-                    _item("Observaciones", odf.observaciones),
-                    _item("Troncales", ", ".join(troncales.values_list("nombre", flat=True)[:8])),
+                    _item("Observaciones", "" if capacidad_derivada else observaciones),
+                    _item("Troncales", ", ".join(troncales_nombres[:8])),
                 ],
             }
         ],
@@ -2325,11 +2512,26 @@ def _ficha_odf(pk):
 
 
 def _ficha_puerto(pk):
+    def dato_visible(valor, *, vacante=False):
+        texto = str(valor or "").strip()
+        marcadores = {"", "-", "—", "sin dato", "sin datos", "sin_dato", "por levantar"}
+        if vacante:
+            marcadores.add("vacante")
+        return None if texto.casefold() in marcadores else texto
+
     puerto = get_object_or_404(
         DetallePuertoODF.objects.select_related("odf_obj__rack_obj__sala__hub_site"), pk=pk
     )
     terminacion = puerto.terminaciones_fibra.select_related("fibra__ruta").first()
     fibra = terminacion.fibra if terminacion else None
+    conectado = terminacion is not None
+    reservado = puerto.estado_puerto == "Reservado"
+    libre = puerto.estado_puerto == "Libre"
+    destino_visible = dato_visible(puerto.destino, vacante=True)
+    conector = dato_visible(
+        terminacion.tipo_conector
+        if terminacion else ""
+    ) or dato_visible(puerto.tipo_conector)
     return {
         "type": "puerto",
         "title": f"{puerto.odf_obj.odf} · Puerto {puerto.puerto_odf}",
@@ -2353,6 +2555,31 @@ def _ficha_puerto(pk):
         "sections": [
             {"title": "Observaciones", "items": [_item("Detalle", puerto.observaciones)]}
         ],
+        "port_operational": {
+            "port": puerto.puerto_odf,
+            "state": puerto.estado_puerto,
+            "is_connected": conectado,
+            "is_reserved": reservado,
+            "is_free": libre,
+            "tray": dato_visible(puerto.bandeja),
+            "connector": conector,
+            "patchcord": puerto.patchcord,
+            "destination": destino_visible,
+            "notes": puerto.observaciones,
+            "odf": puerto.odf_obj.odf,
+            "odf_detail_url": reverse("asset_360", args=["odf", puerto.odf_obj_id]),
+            "fiber": (
+                {
+                    "id": fibra.pk,
+                    "number": fibra.fibra_numero,
+                    "service": fibra.nombre_fibra,
+                    "route": fibra.nombre_troncal,
+                    "endpoint": terminacion.get_extremo_display(),
+                    "detail_url": reverse("asset_360", args=["fibra", fibra.pk]),
+                }
+                if fibra else None
+            ),
+        },
         "actions": [
             _accion(
                 "Ver puertos del ODF",
@@ -2388,7 +2615,18 @@ def _ficha_fibra(pk):
         pk=pk,
     )
     cobertura_completa = _cobertura_completa_fibra(fibra)
-    estado = fibra.estado
+    estado_efectivo = getattr(fibra, "_estado_efectivo", fibra.estado)
+    estado = {
+        "Libre": "Disponible",
+        "Desconocido": "Sin información",
+    }.get(estado_efectivo, estado_efectivo)
+    origen_estado = fibra.get_origen_estado_display()
+    if fibra.origen_estado != "INFORMADO":
+        origen_estado = (
+            "Inferido desde tramos"
+            if estado_efectivo != "Desconocido"
+            else "No informado"
+        )
     trazabilidad = obtener_trazabilidad_fibra(fibra)
     calidad = evaluar_completitud_fibra(fibra)
     extremo_a = obtener_extremo_fibra(fibra, "A")
@@ -2405,8 +2643,8 @@ def _ficha_fibra(pk):
             _item("ODF / puerto B", extremo_b.etiqueta),
         ],
         "summary": [
-            _item("Servicio", fibra.nombre_fibra),
-            _item("Origen del estado", fibra.get_origen_estado_display()),
+            _item("Servicio / uso", fibra.nombre_fibra),
+            _item("Origen del estado", origen_estado),
             _item("Condición física", fibra.get_condicion_fisica_display()),
             _item("Conector", fibra.tipo_conector),
             _item("Terminaciones confirmadas", trazabilidad["terminaciones_confirmadas"]),

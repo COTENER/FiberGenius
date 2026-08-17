@@ -308,6 +308,7 @@ class CalidadFibraApiTests(CalidadFixtureMixin, TestCase):
         ficha = self.client.get(reverse('asset_360', args=['fibra', fibra.pk]))
         self.assertEqual(ficha.status_code, 200)
         data = ficha.json()['data']
+        self.assertEqual(data['status'], 'Disponible')
         self.assertIn(
             {'label': 'Completitud', 'value': 'Terminación parcial'},
             data['summary'],
@@ -318,4 +319,121 @@ class CalidadFibraApiTests(CalidadFixtureMixin, TestCase):
         respuesta = self.client.get(reverse('planta_externa'))
         self.assertEqual(respuesta.status_code, 200)
         self.assertContains(respuesta, '<th scope="col">Completitud</th>', html=True)
-        self.assertContains(respuesta, 'fiber-quality-1')
+        self.assertContains(respuesta, 'fiber-operations-8')
+        self.assertContains(respuesta, 'data-fiber-destination-context')
+        self.assertContains(respuesta, 'data-clear-fiber-destination')
+        self.assertContains(respuesta, 'data-fiber-state="Libre"')
+        self.assertContains(respuesta, 'Estado efectivo de fibras')
+
+    def test_resumen_usa_estado_global_aunque_falte_cobertura_fisica(self):
+        fibra, _ = self._recorrido(
+            'CALIDAD-RESUMEN-GLOBAL',
+            2,
+            asignados=1,
+        )
+
+        respuesta = self.client.get(
+            reverse('api_fibras_paginadas'),
+            {'ruta': fibra.ruta.nombre},
+        )
+
+        self.assertEqual(respuesta.status_code, 200)
+        resumen = respuesta.json()['summary']
+        self.assertEqual(resumen['total'], 1)
+        self.assertEqual(resumen['libres'], 1)
+        self.assertEqual(resumen['sin_estado'], 0)
+        self.assertEqual(resumen['sin_cobertura'], 1)
+        self.assertEqual(resumen['estados_informados'], 1)
+        self.assertEqual(resumen['estados_inferidos'], 0)
+
+    def test_resumen_infiere_estado_desde_tramos_si_global_no_esta_informado(self):
+        fibra, _ = self._recorrido('CALIDAD-RESUMEN-INFERIDO', 2)
+        InventarioFibra.objects.filter(pk=fibra.pk).update(
+            estado='Desconocido',
+            origen_estado='NO_INFORMADO',
+            destino='DESTINO-INFERIDO',
+        )
+        FibraTramo.objects.filter(fibra=fibra).update(estado='Ocupado')
+
+        respuesta = self.client.get(
+            reverse('api_fibras_paginadas'),
+            {'ruta': fibra.ruta.nombre},
+        )
+
+        self.assertEqual(respuesta.status_code, 200)
+        payload = respuesta.json()
+        self.assertEqual(payload['summary']['ocupadas'], 1)
+        self.assertEqual(payload['summary']['sin_estado'], 0)
+        self.assertEqual(payload['summary']['estados_informados'], 0)
+        self.assertEqual(payload['summary']['estados_inferidos'], 1)
+        self.assertEqual(payload['data'][0]['estado'], 'Ocupado')
+        self.assertEqual(
+            payload['data'][0]['origen_estado'],
+            'INFERIDO_TRAMOS',
+        )
+        self.assertEqual(
+            payload['summary']['destinos_mayor_uso'][0]['destino'],
+            'DESTINO-INFERIDO',
+        )
+        filtrada = self.client.get(
+            reverse('api_fibras_paginadas'),
+            {'ruta': fibra.ruta.nombre, 'estado': 'Ocupado'},
+        ).json()
+        self.assertEqual(filtrada['pagination']['total'], 1)
+        ficha = self.client.get(
+            reverse('asset_360', args=['fibra', fibra.pk]),
+        ).json()['data']
+        self.assertEqual(ficha['status'], 'Ocupado')
+        self.assertIn(
+            {'label': 'Origen del estado', 'value': 'Inferido desde tramos'},
+            ficha['summary'],
+        )
+
+    def test_destino_mayor_uso_filtra_solo_ocupadas_y_reservadas(self):
+        ocupada, _ = self._recorrido('CALIDAD-DESTINO-OCUPADA', 1)
+        disponible, _ = self._recorrido('CALIDAD-DESTINO-DISPONIBLE', 1)
+        InventarioFibra.objects.filter(pk=ocupada.pk).update(
+            estado='Ocupado',
+            origen_estado='INFORMADO',
+            destino='DESTINO-COMPARTIDO',
+        )
+        InventarioFibra.objects.filter(pk=disponible.pk).update(
+            estado='Libre',
+            origen_estado='INFORMADO',
+            destino='DESTINO-COMPARTIDO',
+        )
+
+        resumen = self.client.get(reverse('api_fibras_paginadas')).json()[
+            'summary'
+        ]
+        destino = next(
+            item
+            for item in resumen['destinos_mayor_uso']
+            if item['destino'] == 'DESTINO-COMPARTIDO'
+        )
+        self.assertEqual(destino['total'], 1)
+        self.assertEqual(destino['total_asociadas'], 2)
+        self.assertEqual(destino['porcentaje_uso'], 50.0)
+
+        filtrada = self.client.get(
+            reverse('api_fibras_paginadas'),
+            {
+                'destino': 'DESTINO-COMPARTIDO',
+                'en_uso': '1',
+            },
+        ).json()
+        self.assertEqual(filtrada['pagination']['total'], 1)
+        self.assertEqual(filtrada['data'][0]['estado'], 'Ocupado')
+        destino_filtrado = filtrada['summary']['destinos_mayor_uso'][0]
+        self.assertEqual(destino_filtrado['total'], 1)
+        self.assertEqual(destino_filtrado['total_asociadas'], 2)
+
+    def test_pantalla_muestra_los_cuatro_estados_globales(self):
+        respuesta = self.client.get(reverse('planta_externa'))
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, 'Disponibles')
+        self.assertContains(respuesta, 'Sin información')
+        self.assertContains(respuesta, 'fibras-stat-unknown')
+        self.assertContains(respuesta, 'fiber-summary-unknown')
+        self.assertContains(respuesta, 'value="Desconocido"')

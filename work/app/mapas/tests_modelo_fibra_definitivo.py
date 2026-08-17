@@ -281,8 +281,8 @@ class ImportacionModeloFibraDefinitivoTests(TestCase):
 
     def test_malo_informa_falla_sin_inventar_estado_de_uso(self):
         contenido = '\n'.join([
-            'Ruta,Fibra,ODF,Puerto,Extremo,Estado,Servicio,Observaciones',
-            ',F8,ODF-MODELO,1,A,Malo,Servicio BHP,Falla reportada',
+            'Ruta,Fibra,Codigo Fibra,ODF,Puerto,Extremo,Estado,Servicio,Observaciones',
+            ',F8,FGF-BHP-0008,ODF-MODELO,1,A,Malo,Servicio BHP,Falla reportada',
         ])
 
         _procesar_terminaciones_fibra(_csv('bhp-malo.csv', contenido))
@@ -304,8 +304,8 @@ class ImportacionModeloFibraDefinitivoTests(TestCase):
             fibra_numero='F9',
         )
         contenido = '\n'.join([
-            'Ruta,ID Fibra,Fibra,ODF,Puerto,Extremo,Estado,Condicion Fisica',
-            f'{ruta.nombre},{fibra.pk},F9,ODF-MODELO,2,A,Ocupado,Con falla',
+            'Ruta,ID Fibra,Fibra,Codigo Fibra,ODF,Puerto,Extremo,Estado,Condicion Fisica',
+            f'{ruta.nombre},{fibra.pk},F9,{fibra.codigo_fibra},ODF-MODELO,2,A,Ocupado,Con falla',
         ])
 
         _procesar_terminaciones_fibra(_csv('bhp-estado.csv', contenido))
@@ -324,8 +324,8 @@ class ImportacionModeloFibraDefinitivoTests(TestCase):
             capacidad_hilos=12,
         )
         contenido = '\n'.join([
-            'Ruta,Fibra,ODF,Puerto,Extremo,Estado',
-            f'{ruta.nombre},F11,ODF-MODELO,3,A,Sin información',
+            'Ruta,Fibra,Codigo Fibra,ODF,Puerto,Extremo,Estado',
+            f'{ruta.nombre},F11,FGF-BHP-0011,ODF-MODELO,3,A,Sin información',
         ])
 
         _procesar_terminaciones_fibra(_csv('bhp-sin-info.csv', contenido))
@@ -359,9 +359,9 @@ class ImportacionModeloFibraDefinitivoTests(TestCase):
             estado_puerto='Libre',
         )
         contenido = '\n'.join([
-            'Ruta,Fibra,Site,ODF,Puerto,Extremo,Estado',
-            ',F2,SITE-MODELO,ODF-MODELO,4,A,Sin información',
-            ',F2,SITE-MODELO-2,ODF-MODELO-2,2,A,Sin información',
+            'Ruta,Fibra,Codigo Fibra,Site,ODF,Puerto,Extremo,Estado',
+            ',F2,FGF-SITE-MODELO-0002,SITE-MODELO,ODF-MODELO,4,A,Sin información',
+            ',F2,FGF-SITE-MODELO-2-0002,SITE-MODELO-2,ODF-MODELO-2,2,A,Sin información',
         ])
 
         _procesar_terminaciones_fibra(_csv('dos-f2.csv', contenido))

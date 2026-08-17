@@ -6,7 +6,7 @@
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/odf-inventory.css' %}?v=20260721-1">
 <link rel="stylesheet" href="{% static 'vendor/leaflet/leaflet-1.9.4.css' %}">
-<link rel="stylesheet" href="{% static 'css/network-inventory.css' %}?v=20260727-panel-fixes-1">
+<link rel="stylesheet" href="{% static 'css/network-inventory.css' %}?v=20260816-ranking-toggle-1">
 <link rel="stylesheet" href="{% static 'css/inventory-filters.css' %}?v=20260723-1">
 {% endblock %}
 
@@ -50,7 +50,7 @@
             <label class="odf-filter-field"><span>Site origen</span><select data-filter="site"><option value="">Todos</option>{% for value in sites_troncal %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
             <label class="odf-filter-field"><span>Disponibilidad</span><select data-filter="capacidad"><option value="">Todas</option><option value="disponible">Con fibras disponibles</option><option value="atencion">Entre 80% y 99,9%</option></select></label>
             <label class="odf-filter-field"><span>Filas</span><select data-filter="page_size"><option>10</option><option selected>25</option><option>50</option><option>100</option><option>200</option></select></label>
-            <div class="odf-filter-actions"><button class="odf-btn odf-btn--primary" type="submit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16l-6 7v5l-4 2v-7Z"/></svg>Aplicar filtros</button><button class="odf-btn" type="button" data-clear><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 1 0 2-5.3L4 9M4 4v5h5"/></svg>Limpiar</button><button class="odf-btn" type="button" data-export><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>Exportar Excel</button></div><p class="odf-export-status" data-export-status role="status"></p>
+            <div class="odf-filter-actions"><button class="odf-btn odf-btn--primary" type="submit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16l-6 7v5l-4 2v-7Z"/></svg>Aplicar filtros</button><button class="odf-btn" type="button" data-clear><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 1 0 2-5.3L4 9M4 4v5h5"/></svg>Limpiar</button><button class="odf-btn" type="button" data-export><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>Exportar Excel</button><div class="network-context-filter" data-ranking-context hidden><span>Troncal: <strong data-ranking-context-label></strong></span><button type="button" data-ranking-context-clear aria-label="Quitar filtro de troncal">×</button></div></div><p class="odf-export-status" data-export-status role="status"></p>
         </form></section>
         <section class="odf-table-card"><div class="odf-message" data-message role="status"></div><div class="odf-table-wrap"><table class="odf-table"><caption class="sr-only">Troncales filtradas</caption><thead><tr><th scope="col">Troncal</th><th scope="col">Origen</th><th scope="col">Destino</th><th scope="col">Tipo</th><th scope="col">Distancia</th><th scope="col">Tramos</th><th scope="col">Capacidad</th><th scope="col">Fibras</th><th scope="col">Reservas</th><th scope="col">Estado</th><th scope="col">Acciones</th></tr></thead><tbody data-body></tbody></table></div><footer class="odf-footer"><p data-page-info>Mostrando 0 a 0 de 0 resultados</p><nav class="odf-pagination" data-pagination></nav><div class="odf-footer__fallback"><button class="odf-page-arrow" type="button" data-previous>‹</button><button class="odf-page-arrow" type="button" data-next>›</button></div></footer></section>
     </section>
@@ -69,7 +69,7 @@
             <label class="odf-filter-field"><span>Trazado</span><select data-filter="tipo"><option value="">Todos</option>{% for value in tipos_trazado %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
             <label class="odf-filter-field"><span>Estado</span><select data-filter="estado"><option value="">Todos</option>{% for value in estados_tramo %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
             <label class="odf-filter-field"><span>Filas</span><select data-filter="page_size"><option>10</option><option selected>25</option><option>50</option><option>100</option><option>200</option></select></label>
-            <div class="odf-filter-actions"><button class="odf-btn odf-btn--primary" type="submit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16l-6 7v5l-4 2v-7Z"/></svg>Aplicar filtros</button><button class="odf-btn" type="button" data-clear><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 1 0 2-5.3L4 9M4 4v5h5"/></svg>Limpiar</button><button class="odf-btn" type="button" data-export><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>Exportar Excel</button></div><p class="odf-export-status" data-export-status role="status"></p>
+            <div class="odf-filter-actions"><button class="odf-btn odf-btn--primary" type="submit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16l-6 7v5l-4 2v-7Z"/></svg>Aplicar filtros</button><button class="odf-btn" type="button" data-clear><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 1 0 2-5.3L4 9M4 4v5h5"/></svg>Limpiar</button><button class="odf-btn" type="button" data-export><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>Exportar Excel</button><div class="network-context-filter" data-ranking-context hidden><span>Tramo: <strong data-ranking-context-label></strong></span><button type="button" data-ranking-context-clear aria-label="Quitar filtro de tramo">×</button></div></div><p class="odf-export-status" data-export-status role="status"></p>
         </form></section>
         <section class="odf-table-card"><div class="odf-message" data-message role="status"></div><div class="odf-table-wrap"><table class="odf-table"><caption class="sr-only">Tramos filtrados</caption><thead><tr><th scope="col">Troncal</th><th scope="col">Tramo</th><th scope="col">Origen</th><th scope="col">Destino</th><th scope="col">Trazado</th><th scope="col">Distancia</th><th scope="col">Capacidad</th><th scope="col">Ocupados</th><th scope="col">Libres</th><th scope="col">Reserva</th><th scope="col">Estado</th><th scope="col">Acciones</th></tr></thead><tbody data-body></tbody></table></div><footer class="odf-footer"><p data-page-info>Mostrando 0 a 0 de 0 resultados</p><nav class="odf-pagination" data-pagination></nav><div class="odf-footer__fallback"><button class="odf-page-arrow" type="button" data-previous>‹</button><button class="odf-page-arrow" type="button" data-next>›</button></div></footer></section>
     </section>
@@ -83,13 +83,14 @@
             <section class="network-inspector-card network-inspector-card--summary">
                 <header><div><strong id="routes-context-title">Capacidad consolidada</strong><span id="routes-context-caption">Según los filtros activos</span></div></header>
                 <div id="routes-context-summary" class="network-state-summary"></div>
+                <p id="routes-context-source" class="network-state-source"></p>
             </section>
             <section class="network-inspector-card network-inspector-card--ranking">
                 <header><div><strong id="routes-ranking-title">Troncales con mayor ocupación</strong><span>Top 5 del inventario filtrado</span></div></header>
                 <div id="routes-occupancy-ranking" class="network-ranking"></div>
             </section>
             <section class="network-inspector-card network-inspector-card--detail">
-                <header><div><strong>Ruta seleccionada</strong><span>Geometría y capacidad técnica</span></div></header>
+                <header><div><strong>Ruta seleccionada</strong><span>Recorrido y capacidad técnica</span></div></header>
                 <div id="network-route-empty" class="network-route-empty"><span>⌁</span><strong>Ninguna ruta seleccionada</strong><p>Haz clic en una troncal o tramo para verla sin abandonar el inventario.</p></div>
                 <div id="network-route-detail" hidden>
                     <h3 id="network-route-name"></h3>
@@ -108,5 +109,5 @@
 {% endblock %}
 {% block extra_js %}
 <script src="{% static 'vendor/leaflet/leaflet-1.9.4.js' %}"></script>
-<script src="{% static 'js/routes-inventory.js' %}?v=20260727-route-map-1"></script>
+<script src="{% static 'js/routes-inventory.js' %}?v=20260816-ranking-toggle-1"></script>
 {% endblock %}

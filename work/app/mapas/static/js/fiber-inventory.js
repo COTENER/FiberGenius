@@ -5,6 +5,7 @@
     const formatter = new Intl.NumberFormat('es-PE', { maximumFractionDigits: 2 });
     const csrf = () => (document.cookie.match(/(?:^|; )csrftoken=([^;]+)/) || [])[1] || '';
     const put = (id, value) => { const node = document.getElementById(id); if (node) node.textContent = formatter.format(value || 0); };
+    const putText = (id, value) => { const node = document.getElementById(id); if (node) node.textContent = String(value ?? ''); };
     const inspector = document.getElementById('network-inspector');
     const inspectorToggle = document.getElementById('network-inspector-toggle');
     let routeMap = null;
@@ -65,10 +66,29 @@
         const free = Number(summary.libres || 0);
         const used = Number(summary.ocupadas || 0);
         const reserved = Number(summary.reservadas || 0);
+        const unknown = Number(summary.sin_estado || 0);
         put('fiber-summary-total', total);
         put('fiber-summary-free', free);
         put('fiber-summary-used', used);
         put('fiber-summary-reserved', reserved);
+        put('fiber-summary-unknown', unknown);
+        put('fiber-summary-informed', summary.estados_informados || 0);
+        put('fiber-summary-inferred', summary.estados_inferidos || 0);
+        const pct = (value) => total
+            ? `${new Intl.NumberFormat('es-PE', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format((value / total) * 100)}%`
+            : '0%';
+        putText('fiber-summary-free-pct', pct(free));
+        putText('fiber-summary-used-pct', pct(used));
+        putText('fiber-summary-reserved-pct', pct(reserved));
+        putText('fiber-summary-unknown-pct', pct(unknown));
+        const selectedState = root.querySelector('[data-resource="fibras"] [data-filter="estado"]')?.value || '';
+        const stateCounts = { Libre: free, Ocupado: used, Reservado: reserved, Desconocido: unknown };
+        root.querySelectorAll('[data-fiber-state]').forEach((button) => {
+            const selected = button.dataset.fiberState === selectedState;
+            button.classList.toggle('is-selected', selected);
+            button.classList.toggle('is-zero', Number(stateCounts[button.dataset.fiberState] || 0) === 0);
+            button.setAttribute('aria-pressed', String(selected));
+        });
         const donut = document.getElementById('fiber-summary-chart');
         if (donut) {
             const freePct = total ? (free / total) * 100 : 0;
@@ -80,38 +100,62 @@
                 ? `conic-gradient(#18b777 0 ${freePct}%, #2f74ee ${freePct}% ${usedEnd}%, #f59e0b ${usedEnd}% ${reservedEnd}%, #94a3b8 ${reservedEnd}% 100%)`
                 : 'conic-gradient(#e8edf5 0 100%)';
         }
-        const ranking = document.getElementById('fiber-top-routes');
+        const ranking = document.getElementById('fiber-top-destinations');
         if (!ranking) return;
         ranking.replaceChildren();
-        const routes = Array.isArray(summary.top_troncales) ? summary.top_troncales : [];
-        if (!routes.length) {
+        const destinations = Array.isArray(summary.destinos_mayor_uso) ? summary.destinos_mayor_uso : [];
+        if (!destinations.length) {
             const empty = document.createElement('p');
             empty.className = 'network-inspector-empty';
-            empty.textContent = 'No hay troncales con los filtros actuales.';
+            empty.textContent = Number(summary.ocupadas || 0) + Number(summary.reservadas || 0)
+                ? 'Las fibras en uso no tienen un destino documentado.'
+                : 'No hay fibras ocupadas o reservadas con los filtros actuales.';
             ranking.appendChild(empty);
             return;
         }
-        routes.forEach((route) => {
+        destinations.forEach((destination) => {
             const item = document.createElement('div');
             item.className = 'network-ranking__item';
+            const activeDestination = root.querySelector('[data-resource="fibras"] [data-filter="destino"]')?.value || '';
+            const activeInUse = root.querySelector('[data-resource="fibras"] [data-filter="en_uso"]')?.value || '';
+            const isSelected = activeDestination === destination.destino && activeInUse === '1';
+            item.classList.toggle('is-selected', isSelected);
             item.tabIndex = 0;
             item.setAttribute('role', 'button');
-            item.setAttribute('aria-label', `Ver ${route.nombre}`);
+            item.setAttribute('aria-pressed', String(isSelected));
+            item.setAttribute('aria-label', isSelected
+                ? `Quitar filtro de destino ${destination.destino}`
+                : `Filtrar fibras en uso con destino ${destination.destino}`);
             const label = document.createElement('div');
             label.className = 'network-ranking__label';
             const name = document.createElement('span');
-            name.textContent = route.nombre;
-            name.title = route.nombre;
+            name.textContent = destination.destino;
+            name.title = destination.destino;
             const value = document.createElement('b');
-            value.textContent = `${formatter.format(route.utilizacion)}%`;
+            const associated = Number(destination.total_asociadas ?? destination.total ?? 0);
+            value.textContent = `${formatter.format(destination.total)} en uso de ${formatter.format(associated)}`;
             label.append(name, value);
             const bar = document.createElement('div');
             bar.className = 'network-ranking__bar';
             const fill = document.createElement('i');
-            fill.style.width = `${Math.min(100, Number(route.utilizacion || 0))}%`;
+            fill.style.width = `${Math.min(100, Number(destination.porcentaje_uso || 0))}%`;
             bar.appendChild(fill);
-            item.append(label, bar);
-            const select = () => loadRoutePanel({ ruta_id: route.id, troncal: route.nombre });
+            const detail = document.createElement('small');
+            detail.textContent = `${formatter.format(destination.ocupadas)} ocupadas · ${formatter.format(destination.reservadas)} reservadas · ${formatter.format(associated)} asociadas`;
+            item.append(label, bar, detail);
+            const select = () => {
+                const search = root.querySelector('[data-resource="fibras"] [data-filter="q"]');
+                const destinationFilter = root.querySelector('[data-resource="fibras"] [data-filter="destino"]');
+                const inUseFilter = root.querySelector('[data-resource="fibras"] [data-filter="en_uso"]');
+                if (!search || !destinationFilter || !inUseFilter || !fibers) return;
+                const alreadySelected = destinationFilter.value === destination.destino && inUseFilter.value === '1';
+                destinationFilter.value = alreadySelected ? '' : destination.destino;
+                inUseFilter.value = alreadySelected ? '' : '1';
+                search.value = '';
+                syncFiberDestinationContext();
+                fibers.page = 1;
+                fibers.load();
+            };
             item.addEventListener('click', select);
             item.addEventListener('keydown', (event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
@@ -172,8 +216,8 @@
         target.replaceChildren(empty);
     }
 
-    function drawRouteMap(payload) {
-        const target = document.getElementById('network-route-map');
+    function drawRouteMap(payload, targetId = 'network-route-map') {
+        const target = document.getElementById(targetId);
         if (!target) return;
         if (routeMap) {
             routeMap.remove();
@@ -236,6 +280,90 @@
         setTimeout(() => routeMap && routeMap.invalidateSize(), 80);
     }
 
+    function fiberStateLabel(value) {
+        return value === 'Libre' ? 'Disponible' : value === 'Desconocido' ? 'Sin información' : (value || 'Sin información');
+    }
+
+    function fiberStateSource(value) {
+        return {
+            INFORMADO: 'Informado en el inventario',
+            INFERIDO_TRAMOS: 'Inferido desde sus tramos',
+            NO_INFORMADO: 'No informado',
+        }[value] || 'No informado';
+    }
+
+    function fiberCondition(value) {
+        return {
+            OPERATIVA: 'Operativa',
+            CON_FALLA: 'Con falla',
+            SIN_VERIFICAR: 'Sin verificar',
+        }[value] || 'Sin verificar';
+    }
+
+    function fiberEndpoint(endpoint) {
+        if (endpoint?.confirmado) return `${endpoint.odf || 'ODF'} · Puerto ${endpoint.puerto || '—'}`;
+        if (endpoint?.referencia_legacy) return `${endpoint.referencia_legacy} · referencia histórica`;
+        return 'Sin terminación confirmada';
+    }
+
+    async function loadFiberPanel(item, selectedRow) {
+        if (!item || !item.id) return;
+        root.querySelectorAll('.odf-table tbody tr.is-selected').forEach((row) => row.classList.remove('is-selected'));
+        if (selectedRow) selectedRow.classList.add('is-selected');
+        setInspectorCollapsed(false);
+        const empty = document.getElementById('fiber-selected-empty');
+        const detail = document.getElementById('fiber-selected-detail');
+        const caption = document.getElementById('fiber-selected-caption');
+        const status = document.getElementById('fiber-selected-status');
+        const displayedState = fiberStateLabel(item.estado);
+        if (empty) empty.hidden = true;
+        if (detail) detail.hidden = false;
+        if (caption) caption.textContent = `${displayedState} · ${fiberStateSource(item.origen_estado)}`;
+        document.getElementById('fiber-selected-name').textContent = `${item.troncal} · Fibra ${item.numero}`;
+        status.textContent = displayedState;
+        status.className = 'network-asset-status';
+        if (item.estado === 'Ocupado') status.classList.add('is-used');
+        else if (item.estado === 'Reservado') status.classList.add('is-reserved');
+        else if (item.estado === 'Desconocido') status.classList.add('is-unknown');
+        document.getElementById('fiber-selected-state-source').textContent = fiberStateSource(item.origen_estado);
+        document.getElementById('fiber-selected-condition').textContent = fiberCondition(item.condicion_fisica);
+        document.getElementById('fiber-selected-service').textContent = item.servicio && item.servicio !== '—' && item.servicio !== 'Libre' ? item.servicio : 'Sin servicio asignado';
+        document.getElementById('fiber-selected-end-a').textContent = fiberEndpoint(item.terminacion_a);
+        document.getElementById('fiber-selected-end-b').textContent = fiberEndpoint(item.terminacion_b);
+        document.getElementById('fiber-selected-route').textContent = item.troncal;
+        document.getElementById('fiber-selected-segments').textContent = item.ruta_id ? `${formatter.format(item.tramos_total)} tramos` : 'Troncal pendiente';
+        const detailLink = document.getElementById('fiber-selected-detail-link');
+        detailLink.href = item.detail_url;
+        const mapLink = document.getElementById('fiber-selected-map-link');
+        mapLink.hidden = !item.ruta_id;
+        if (!item.ruta_id || !root.dataset.routePanelApi) {
+            const mapTarget = document.getElementById('fiber-selected-map');
+            if (routeMap) { routeMap.remove(); routeMap = null; }
+            renderMapEmpty(mapTarget, 'Recorrido pendiente', 'La fibra todavía no está asociada a una troncal.');
+            return;
+        }
+        if (routeRequest) routeRequest.abort();
+        routeRequest = new AbortController();
+        const url = new URL(root.dataset.routePanelApi, location.origin);
+        url.searchParams.set('ruta_id', item.ruta_id);
+        try {
+            const response = await fetch(url, {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                signal: routeRequest.signal,
+                cache: 'no-store',
+            });
+            if (!response.ok) throw new Error();
+            const payload = await response.json();
+            mapLink.href = payload.ruta.mapa_url;
+            drawRouteMap(payload, 'fiber-selected-map');
+        } catch (error) {
+            if (error.name === 'AbortError') return;
+            const mapTarget = document.getElementById('fiber-selected-map');
+            if (routeMap) { routeMap.remove(); routeMap = null; }
+            renderMapEmpty(mapTarget, 'No se pudo cargar el recorrido', 'Intenta seleccionar nuevamente la fibra.');
+        }
+    }
+
     async function loadRoutePanel(item, selectedRow) {
         if (!item || !item.ruta_id || !root.dataset.routePanelApi) return;
         root.querySelectorAll('.odf-table tbody tr.is-selected').forEach((row) => row.classList.remove('is-selected'));
@@ -283,7 +411,7 @@
         }
     }
 
-    function selectableRow(row, item) {
+    function selectableRouteRow(row, item) {
         if (!item.ruta_id) return row;
         row.dataset.routeId = item.ruta_id;
         row.tabIndex = 0;
@@ -292,6 +420,21 @@
             if (event.key === 'Enter' || event.key === ' ') {
                 event.preventDefault();
                 loadRoutePanel(item, row);
+            }
+        });
+        return row;
+    }
+
+    function selectableFiberRow(row, item) {
+        if (!item.id) return row;
+        row.dataset.fiberId = item.id;
+        row.tabIndex = 0;
+        row.setAttribute('aria-label', `Ver detalle de la fibra ${item.numero}`);
+        row.addEventListener('click', () => loadFiberPanel(item, row));
+        row.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                loadFiberPanel(item, row);
             }
         });
         return row;
@@ -323,15 +466,55 @@
         bind() {
             this.form.addEventListener('submit', (event) => { event.preventDefault(); this.page = 1; this.load(); }); const search = this.form.querySelector('[data-filter="q"]');
             search.addEventListener('input', () => { clearTimeout(this.timer); this.timer = setTimeout(() => { this.page = 1; this.load(); }, 350); }); this.form.querySelectorAll('select[data-filter]').forEach((select) => select.addEventListener('change', () => { this.page = 1; this.load(); }));
-            this.form.querySelector('[data-clear]').addEventListener('click', () => { this.form.reset(); this.page = 1; search.focus(); this.load(); }); this.form.querySelector('[data-export]').addEventListener('click', () => exportFile(this.options.exportUrl, this.params(false), this.form.querySelector('[data-export-status]'))); this.previous.addEventListener('click', () => { if (this.page > 1) { this.page -= 1; this.load(); } }); this.next.addEventListener('click', () => { this.page += 1; this.load(); });
+            this.form.querySelector('[data-clear]').addEventListener('click', () => { this.form.reset(); if (this.options.clearContext) this.options.clearContext(this.form); this.page = 1; search.focus(); this.load(); }); this.form.querySelector('[data-export]').addEventListener('click', () => exportFile(this.options.exportUrl, this.params(false), this.form.querySelector('[data-export-status]'))); this.previous.addEventListener('click', () => { if (this.page > 1) { this.page -= 1; this.load(); } }); this.next.addEventListener('click', () => { this.page += 1; this.load(); });
         }
     }
 
+    function clearFiberDestinationContext(form) {
+        const destination = form.querySelector('[data-filter="destino"]');
+        const inUse = form.querySelector('[data-filter="en_uso"]');
+        if (destination) destination.value = '';
+        if (inUse) inUse.value = '';
+        syncFiberDestinationContext();
+    }
+
+    function syncFiberDestinationContext() {
+        const panel = root.querySelector('[data-resource="fibras"]');
+        const context = panel?.querySelector('[data-fiber-destination-context]');
+        const label = context?.querySelector('[data-fiber-destination-label]');
+        const destination = panel?.querySelector('[data-filter="destino"]')?.value.trim() || '';
+        const inUse = panel?.querySelector('[data-filter="en_uso"]')?.value.trim() || '';
+        if (!context || !label) return;
+        context.hidden = !(destination && inUse);
+        label.textContent = destination;
+        label.title = destination;
+    }
+
     let fiberEditor;
-    function fiberRow(item) { const row = document.createElement('tr'); row.appendChild(cell(item.troncal)); row.appendChild(cell(item.numero)); const state = document.createElement('td'); const displayedState = item.estado === 'Libre' ? 'Disponible' : item.estado === 'Desconocido' ? 'Sin información' : item.estado; state.appendChild(badge(displayedState)); row.appendChild(state); const condition = { OPERATIVA: 'Operativa', CON_FALLA: 'Con falla', SIN_VERIFICAR: 'Sin verificar' }[item.condicion_fisica] || 'Sin verificar'; const conditionCell = document.createElement('td'); conditionCell.appendChild(badge(condition)); row.appendChild(conditionCell); const quality = document.createElement('td'); const qualityBadge = badge(item.completitud); const findings = item.calidad?.hallazgos || []; if (findings.length) { qualityBadge.textContent += ` · ${findings.length} obs.`; qualityBadge.title = findings.map((finding) => finding.mensaje).join('\n'); } if (item.calidad?.nivel === 'ERROR') qualityBadge.classList.add('is-danger'); else if (item.calidad?.nivel === 'ADVERTENCIA') qualityBadge.classList.add('is-warning'); quality.appendChild(qualityBadge); row.appendChild(quality); [item.servicio, item.site_inicial, item.site_final, item.origen, item.destino, item.conector].forEach((value) => row.appendChild(cell(value))); row.appendChild(actionCell(item, root.dataset.canEditFiber === 'true' ? openFiberEditor : null)); return selectableRow(row, item); }
-    function reserveRow(item) { const row = document.createElement('tr'); [item.troncal, item.nombre, item.tipo, item.reserva_m === null ? '—' : `${formatter.format(item.reserva_m)} m`, item.tramo, item.latitud, item.longitud].forEach((value) => row.appendChild(cell(value))); const state = document.createElement('td'); state.appendChild(badge(item.estado)); row.appendChild(state); row.appendChild(actionCell(item)); return selectableRow(row, item); }
-    const fibers = new InventoryTable('fibras', { api: root.dataset.fibersApi, exportUrl: root.dataset.fibersExport, columns: 12, row: fiberRow, summary: (s) => { put('fibras-stat-total', s.total); put('fibras-stat-free', s.libres); put('fibras-stat-used', s.ocupadas); put('fibras-stat-reserved', s.reservadas); put('fibras-stat-routes', s.troncales); renderFiberSummary(s); } });
+    function fiberRow(item) { const row = document.createElement('tr'); row.appendChild(cell(item.troncal)); row.appendChild(cell(item.numero)); const state = document.createElement('td'); const displayedState = fiberStateLabel(item.estado); state.appendChild(badge(displayedState)); row.appendChild(state); const condition = fiberCondition(item.condicion_fisica); const conditionCell = document.createElement('td'); conditionCell.appendChild(badge(condition)); row.appendChild(conditionCell); const quality = document.createElement('td'); const qualityBadge = badge(item.completitud); const findings = item.calidad?.hallazgos || []; if (findings.length) { qualityBadge.textContent += ` · ${findings.length} obs.`; qualityBadge.title = findings.map((finding) => finding.mensaje).join('\n'); } if (item.calidad?.nivel === 'ERROR') qualityBadge.classList.add('is-danger'); else if (item.calidad?.nivel === 'ADVERTENCIA') qualityBadge.classList.add('is-warning'); quality.appendChild(qualityBadge); row.appendChild(quality); [item.servicio, item.site_inicial, item.site_final, item.origen, item.destino, item.conector].forEach((value) => row.appendChild(cell(value))); row.appendChild(actionCell(item, root.dataset.canEditFiber === 'true' ? openFiberEditor : null)); return selectableFiberRow(row, item); }
+    function reserveRow(item) { const row = document.createElement('tr'); [item.troncal, item.nombre, item.tipo, item.reserva_m === null ? '—' : `${formatter.format(item.reserva_m)} m`, item.tramo, item.latitud, item.longitud].forEach((value) => row.appendChild(cell(value))); const state = document.createElement('td'); state.appendChild(badge(item.estado)); row.appendChild(state); row.appendChild(actionCell(item)); return selectableRouteRow(row, item); }
+    const fibers = new InventoryTable('fibras', { api: root.dataset.fibersApi, exportUrl: root.dataset.fibersExport, columns: 12, row: fiberRow, clearContext: clearFiberDestinationContext, summary: (s) => { put('fibras-stat-total', s.total); put('fibras-stat-free', s.libres); put('fibras-stat-used', s.ocupadas); put('fibras-stat-reserved', s.reservadas); put('fibras-stat-unknown', s.sin_estado); put('fibras-stat-routes', s.troncales); renderFiberSummary(s); syncFiberDestinationContext(); } });
     const reserves = new InventoryTable('reservas', { api: root.dataset.reservesApi, exportUrl: root.dataset.reservesExport, columns: 9, row: reserveRow, summary: (s) => { put('reservas-stat-total', s.total); put('reservas-stat-meters', s.reserva_m); put('reservas-stat-types', s.tipos); put('reservas-stat-routes', s.troncales); put('reservas-stat-pending', s.por_confirmar); renderReserveSummary(s); } });
+
+    const clearFiberDestination = root.querySelector('[data-clear-fiber-destination]');
+    if (clearFiberDestination && fibers?.form) {
+        clearFiberDestination.addEventListener('click', () => {
+            clearFiberDestinationContext(fibers.form);
+            fibers.page = 1;
+            fibers.load();
+        });
+    }
+
+    root.querySelectorAll('[data-fiber-state]').forEach((button) => {
+        button.addEventListener('click', () => {
+            const stateFilter = fibers?.form?.querySelector('[data-filter="estado"]');
+            if (!stateFilter) return;
+            stateFilter.value = stateFilter.value === button.dataset.fiberState
+                ? ''
+                : button.dataset.fiberState;
+            stateFilter.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+    });
 
     function setupDialog(id, triggerId, createUrl, onReset) {
         const dialog = document.getElementById(id); if (!dialog) return null; const form = dialog.querySelector('form'); const message = form.querySelector('[data-form-message]'); const trigger = document.getElementById(triggerId);

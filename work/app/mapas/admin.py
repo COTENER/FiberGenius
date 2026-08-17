@@ -149,18 +149,22 @@ class NodoRedAdmin(admin.ModelAdmin):
 @admin.register(InventarioFibra)
 class InventarioFibraAdmin(admin.ModelAdmin):
     list_display = (
-        'ruta', 'fibra_numero', 'estado', 'origen_estado',
+        'codigo_fibra', 'ruta', 'fibra_numero', 'estado', 'origen_estado',
         'condicion_fisica', 'nombre_fibra',
     )
     search_fields = (
-        'ruta__nombre', 'fibra_numero', 'nombre_fibra', 'destino',
+        'codigo_fibra', 'ruta__nombre', 'fibra_numero', 'nombre_fibra', 'destino',
         'observaciones',
     )
     list_filter = ('estado', 'origen_estado', 'condicion_fisica')
     list_select_related = ('ruta',)
 
     def get_readonly_fields(self, request, obj=None):
-        return ('ruta', 'origen_estado') if obj is not None else ('origen_estado',)
+        return (
+            ('codigo_fibra', 'ruta', 'origen_estado')
+            if obj is not None
+            else ('origen_estado',)
+        )
 
     def save_model(self, request, obj, form, change):
         from .services.fibras import (

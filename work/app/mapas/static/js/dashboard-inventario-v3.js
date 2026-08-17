@@ -76,7 +76,7 @@
         if (!total) return;
 
         const colors = chartColors();
-        const labels = ['Disponibles', 'Ocupados', 'Reservados'];
+        const labels = [canvas.dataset.freeLabel || 'Disponibles', 'Ocupados', 'Reservados'];
         const values = [free, used, reserved];
         const backgroundColors = ['#20b276', '#2275e6', '#f19a27'];
         if (unknown > 0) {

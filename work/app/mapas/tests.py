@@ -171,7 +171,6 @@ class IntegridadODFTests(TransactionTestCase):
         self.assertEqual(odf.puertos_ocupados, 0)
         self.assertEqual(odf.puertos_libres, 3)
 
-
 class IntegridadRutaTests(TestCase):
     def test_impide_otu_contradictorio_entre_ruta_y_puerto(self):
         otu_a = OTU.objects.create(nombre='OTU-A')
@@ -1255,6 +1254,27 @@ class GuiOperativaTests(TestCase):
             'ODF-SIN-DISPONIBILIDAD',
         )
 
+    def test_rankings_filtran_odf_troncal_y_tramo_por_identificador_exacto(self):
+        odfs = self.client.get(
+            reverse('api_odfs_paginados'),
+            {'odf_id': self.odf.pk},
+        ).json()
+        troncales = self.client.get(
+            reverse('api_troncales_paginadas'),
+            {'ranking_id': self.troncal.pk},
+        ).json()
+        tramos = self.client.get(
+            reverse('api_tramos_paginados'),
+            {'ranking_id': self.tramo.pk},
+        ).json()
+
+        self.assertEqual(odfs['pagination']['total'], 1)
+        self.assertEqual(odfs['data'][0]['id'], self.odf.pk)
+        self.assertEqual(troncales['pagination']['total'], 1)
+        self.assertEqual(troncales['data'][0]['id'], self.troncal.pk)
+        self.assertEqual(tramos['pagination']['total'], 1)
+        self.assertEqual(tramos['data'][0]['id'], self.tramo.pk)
+
     def test_ficha_odf_reconoce_troncal_desde_nodo_topologico(self):
         ruta = Ruta.objects.create(nombre='TRONCAL-NODO-ODF')
         nodo_odf = NodoRed.objects.create(
@@ -1283,6 +1303,71 @@ class GuiOperativaTests(TestCase):
             if item['label'] == 'Troncales relacionadas'
         )
         self.assertEqual(relacionados, '2')
+
+    def test_ficha_odf_expone_ocupacion_y_cuadricula_operativa_de_puertos(self):
+        response = self.client.get(
+            reverse('asset_360', args=['odf', self.odf.pk])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        operativo = response.json()['data']['odf_operational']
+        self.assertEqual(operativo['capacity'], 3)
+        self.assertEqual(operativo['occupied'], 1)
+        self.assertEqual(operativo['free'], 1)
+        self.assertEqual(operativo['reserved'], 1)
+        self.assertEqual(operativo['utilization'], 33.3)
+        self.assertEqual(
+            [puerto['label'] for puerto in operativo['ports']],
+            ['1', '2', '3'],
+        )
+        self.assertEqual(
+            [puerto['status'] for puerto in operativo['ports']],
+            ['Ocupado', 'Libre', 'Reservado'],
+        )
+        self.assertTrue(
+            all('/api/inventario/360/puerto/' in puerto['detail_url']
+                for puerto in operativo['ports'])
+        )
+
+    def test_ficha_puerto_expone_estado_y_conexion_oficial(self):
+        TerminacionFibra.objects.create(
+            fibra=self.fibra,
+            extremo='A',
+            puerto_odf=self.puertos[0],
+            tipo_conector='SC/APC',
+        )
+
+        response = self.client.get(
+            reverse('asset_360', args=['puerto', self.puertos[0].pk])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        operativo = response.json()['data']['port_operational']
+        self.assertTrue(operativo['is_connected'])
+        self.assertFalse(operativo['is_free'])
+        self.assertEqual(operativo['connector'], 'SC/APC')
+        self.assertEqual(operativo['fiber']['number'], 'F1')
+        self.assertEqual(operativo['fiber']['route'], 'TRONCAL-GUI')
+        self.assertEqual(operativo['fiber']['endpoint'], 'Extremo A')
+        self.assertIn('/api/inventario/360/fibra/', operativo['fiber']['detail_url'])
+        self.assertIn('/api/inventario/360/odf/', operativo['odf_detail_url'])
+
+    def test_ficha_puerto_libre_no_inventa_fibra_ni_destino_vacante(self):
+        self.puertos[1].destino = 'VACANTE'
+        self.puertos[1].bandeja = 'SIN_DATO'
+        self.puertos[1].save(update_fields=['destino', 'bandeja'])
+
+        response = self.client.get(
+            reverse('asset_360', args=['puerto', self.puertos[1].pk])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        operativo = response.json()['data']['port_operational']
+        self.assertTrue(operativo['is_free'])
+        self.assertFalse(operativo['is_connected'])
+        self.assertIsNone(operativo['fiber'])
+        self.assertIsNone(operativo['destination'])
+        self.assertIsNone(operativo['tray'])
 
     def test_mapa_entrega_navegacion_site_odf_con_datos_reales(self):
         response = self.client.get(
@@ -1588,6 +1673,14 @@ class GuiOperativaTests(TestCase):
             payload_fibras['summary']['top_troncales'][0]['nombre'],
             'TRONCAL-GUI',
         )
+        self.assertEqual(
+            payload_fibras['summary']['destinos_mayor_uso'][0]['destino'],
+            'DESTINO-GUI',
+        )
+        self.assertEqual(
+            payload_fibras['summary']['destinos_mayor_uso'][0]['total'],
+            1,
+        )
 
         reservas = self.client.get(reverse('api_elementos_paginados'), {
             'ruta': 'TRONCAL-GUI',
@@ -1680,11 +1773,16 @@ class GuiOperativaTests(TestCase):
             Path(__file__).resolve().parent / 'static' / 'css' / 'network-inventory.css'
         ).read_text(encoding='utf-8')
         self.assertIn(
-            '.network-panel .odf-kpis { grid-template-columns: repeat(5, minmax(0, 1fr)); }',
+            '.network-panel .odf-kpis { grid-template-columns: repeat(6, minmax(0, 1fr)); }',
             estilos,
         )
         self.assertIn('--odf-line: var(--ports-line', estilos)
         self.assertIn('.network-map-empty', estilos)
+        self.assertIn(
+            '.network-route-metrics span {',
+            estilos,
+        )
+        self.assertIn('background: var(--bg-surface-2);', estilos)
 
         exportacion = self.client.get(
             reverse('exportar_inventario', args=['troncales', 'xlsx']),
@@ -1800,6 +1898,8 @@ class GuiOperativaTests(TestCase):
         ).read_text(encoding='utf-8')
         self.assertIn("renderItems(asset.chain, chain, 'asset-chain')", script)
         self.assertIn("`${groupClass}__label`", script)
+        self.assertIn("drawer.dataset.assetType = asset.type || ''", script)
+        self.assertIn("asset-section--quality", script)
         self.assertNotIn("`${itemClass}__label`", script)
 
     def test_exportacion_csv_se_genera_en_el_servidor(self):
@@ -1837,6 +1937,10 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(response.context['top_odfs_capacidad'][0]['odf'], 'ODF-GUI')
         self.assertContains(response, 'Dashboard de Inventario')
         self.assertContains(response, 'Uso de puertos ODF')
+        self.assertContains(response, 'data-free-label="Libres"')
+        self.assertContains(response, 'ODF con puertos libres')
+        self.assertContains(response, 'ODF sin puertos libres')
+        self.assertContains(response, 'por ciento de puertos libres')
         self.assertContains(response, 'Uso de fibras')
         self.assertContains(response, 'Mapa del inventario')
         self.assertContains(response, 'Reservas de cable')
@@ -1925,20 +2029,20 @@ class SeguridadYRendimientoTests(TestCase):
         self.assertContains(response, 'Sin capacidad por ODF')
         self.assertNotContains(response, 'Actividad de cargas')
 
-    def test_tarjeta_de_sites_abre_la_gestion_en_lugar_del_endpoint_post(self):
+    def test_tarjeta_de_sites_abre_el_importador_guiado_sin_enlazar_el_endpoint_post(self):
         response = self.client.get(reverse('configuracion'))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, f'href="{reverse("gestion_sites")}"')
+        self.assertContains(response, "openImportModal('sites_inventario'")
         self.assertNotContains(response, f'href="{reverse("importar_sites_csv")}"')
 
-    def test_configuracion_conserva_rotulos_historicos_de_importacion(self):
+    def test_configuracion_muestra_rotulos_guiados_de_importacion(self):
         response = self.client.get(reverse('configuracion'))
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(
             response,
-            "Cargar Coordenadas y Tipo de Trazado (.csv)",
+            "Cargar recorridos en el mapa (.csv)",
         )
         self.assertContains(
             response,

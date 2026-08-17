@@ -151,12 +151,12 @@
                 <div class="inv-gauge-grid">
                     <div class="inv-gauge-card">
                         <strong>Puertos ODF</strong>
-                        <div class="inv-gauge inv-gauge--green" role="img" aria-label="{{ disponibilidad_puertos_pct }} por ciento de puertos disponibles">
+                        <div class="inv-gauge inv-gauge--green" role="img" aria-label="{{ disponibilidad_puertos_pct }} por ciento de puertos libres">
                             <svg viewBox="0 0 120 68" aria-hidden="true" focusable="false">
                                 <path class="inv-gauge__track" pathLength="100" d="M 10 60 A 50 50 0 0 1 110 60"></path>
                                 <path class="inv-gauge__value" pathLength="100" stroke-dasharray="{{ disponibilidad_puertos_pct|unlocalize }} 100" d="M 10 60 A 50 50 0 0 1 110 60"></path>
                             </svg>
-                            <span><b>{{ disponibilidad_puertos_pct }}%</b><small>Disponibles</small></span>
+                            <span><b>{{ disponibilidad_puertos_pct }}%</b><small>Libres</small></span>
                         </div>
                         <p>{{ puertos_libres }} / {{ total_puertos }}</p>
                         <small>{{ utilizacion_puertos_pct }}% comprometidos</small>
@@ -179,8 +179,8 @@
             <article class="inv-panel inv-panel--capacity-state">
                 <header class="inv-panel__header"><div><h2>Estado de capacidad</h2><p>Resumen técnico, sin alarmas operacionales.</p></div></header>
                 <div class="inv-capacity-state">
-                    <a href="{{ capacity_links.odfs_disponibles }}"><span class="is-free"></span><div><strong>ODF con puertos disponibles</strong><small>Capacidad utilizable</small></div><b>{{ odfs_con_disponibilidad }}</b></a>
-                    <a href="{{ capacity_links.odfs_sin_disponibilidad }}"><span class="is-full"></span><div><strong>ODF sin puertos disponibles</strong><small>Capacidad comprometida al 100%</small></div><b>{{ odfs_sin_disponibilidad }}</b></a>
+                    <a href="{{ capacity_links.odfs_disponibles }}"><span class="is-free"></span><div><strong>ODF con puertos libres</strong><small>Capacidad utilizable</small></div><b>{{ odfs_con_disponibilidad }}</b></a>
+                    <a href="{{ capacity_links.odfs_sin_disponibilidad }}"><span class="is-full"></span><div><strong>ODF sin puertos libres</strong><small>Capacidad comprometida al 100%</small></div><b>{{ odfs_sin_disponibilidad }}</b></a>
                     <a href="{{ capacity_links.rutas_disponibles }}"><span class="is-free"></span><div><strong>Rutas con fibras disponibles</strong><small>Con al menos un hilo libre</small></div><b>{{ rutas_con_disponibilidad }}</b></a>
                     <a href="{{ capacity_links.rutas_atencion }}"><span class="is-attention"></span><div><strong>Rutas entre 80% y 99,9%</strong><small>Capacidad próxima al límite</small></div><b>{{ rutas_capacidad_atencion }}</b></a>
                     <a href="{% url 'planta_externa' %}?tab=reservas"><span class="is-reserve"></span><div><strong>Reservas de cable</strong><small>Puntos físicos georreferenciados</small></div><b>{{ total_reservas }}</b></a>
@@ -206,7 +206,7 @@
             <header class="inv-panel__header"><div><h2>Uso de puertos ODF</h2><p>Distribución por estado.</p></div><a href="{% url 'planta_interna' %}">Ver puertos</a></header>
             {% if total_puertos %}
             <div class="inv-chart inv-chart--compact inv-chart--donut">
-                <canvas id="portStatusChartV3" data-free="{{ puertos_libres }}" data-used="{{ puertos_ocupados }}" data-reserved="{{ puertos_reservados }}" data-total="{{ total_puertos }}"></canvas>
+                <canvas id="portStatusChartV3" data-free="{{ puertos_libres }}" data-used="{{ puertos_ocupados }}" data-reserved="{{ puertos_reservados }}" data-total="{{ total_puertos }}" data-free-label="Libres"></canvas>
             </div>
             {% else %}{% include "mapa_inventario/partials/dashboard_empty.html" with empty_title="Sin puertos registrados" empty_text="Los estados aparecerán al cargar puertos ODF." %}{% endif %}
         </article>
@@ -215,7 +215,7 @@
             <header class="inv-panel__header"><div><h2>Uso de fibras</h2><p>Distribución por estado.</p></div><a href="{% url 'planta_externa' %}?tab=fibras">Ver fibras</a></header>
             {% if total_fibras %}
             <div class="inv-chart inv-chart--compact inv-chart--donut">
-                <canvas id="fiberStatusChartV3" data-free="{{ fibras_libres }}" data-used="{{ fibras_ocupadas }}" data-reserved="{{ fibras_reservadas }}" data-unknown="{{ fibras_sin_estado }}" data-total="{{ total_fibras }}"></canvas>
+                <canvas id="fiberStatusChartV3" data-free="{{ fibras_libres }}" data-used="{{ fibras_ocupadas }}" data-reserved="{{ fibras_reservadas }}" data-unknown="{{ fibras_sin_estado }}" data-total="{{ total_fibras }}" data-free-label="Disponibles"></canvas>
             </div>
             {% else %}{% include "mapa_inventario/partials/dashboard_empty.html" with empty_title="Sin fibras registradas" empty_text="Los estados aparecerán al cargar fibras." %}{% endif %}
         </article>

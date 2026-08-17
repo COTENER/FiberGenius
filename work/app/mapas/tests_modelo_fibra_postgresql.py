@@ -408,8 +408,8 @@ class ConcurrenciaModeloFibraPostgreSQLTests(TransactionTestCase):
         def importar():
             barrera.wait(10)
             contenido = '\n'.join((
-                'Ruta,ID Fibra,Fibra,Site,ODF,Puerto,Extremo,Observaciones',
-                f'{ruta.nombre},{fibra.pk},F4,{site.nombre},{odf.odf},'
+                'Ruta,ID Fibra,Fibra,Codigo Fibra,Site,ODF,Puerto,Extremo,Observaciones',
+                f'{ruta.nombre},{fibra.pk},F4,{fibra.codigo_fibra},{site.nombre},{odf.odf},'
                 f'{puertos[2].puerto_odf},A,Importado',
             ))
             _procesar_terminaciones_fibra(SimpleUploadedFile(
@@ -462,10 +462,10 @@ class ConcurrenciaModeloFibraPostgreSQLTests(TransactionTestCase):
             extremo='A',
         )
         contenido = '\n'.join((
-            'Ruta,ID Fibra,Fibra,Site,ODF,Puerto,Extremo',
-            f'{ruta.nombre},{fibra_valida.pk},F-VALIDA,{site.nombre},'
+            'Ruta,ID Fibra,Fibra,Codigo Fibra,Site,ODF,Puerto,Extremo',
+            f'{ruta.nombre},{fibra_valida.pk},F-VALIDA,{fibra_valida.codigo_fibra},{site.nombre},'
             f'{odf.odf},{puertos[0].puerto_odf},A',
-            f'{ruta.nombre},{fibra_conflicto.pk},F-CONFLICTO,{site.nombre},'
+            f'{ruta.nombre},{fibra_conflicto.pk},F-CONFLICTO,{fibra_conflicto.codigo_fibra},{site.nombre},'
             f'{odf.odf},{puertos[1].puerto_odf},A',
         ))
 
@@ -498,8 +498,8 @@ class ConcurrenciaModeloFibraPostgreSQLTests(TransactionTestCase):
 
         def importar():
             contenido = '\n'.join((
-                'Ruta,ID Fibra,Fibra,Site,ODF,Puerto,Extremo',
-                f'{ruta.nombre},{fibra.pk},F-BHP,{site.nombre},{odf.odf},'
+                'Ruta,ID Fibra,Fibra,Codigo Fibra,Site,ODF,Puerto,Extremo',
+                f'{ruta.nombre},{fibra.pk},F-BHP,{fibra.codigo_fibra},{site.nombre},{odf.odf},'
                 f'{puertos[1].puerto_odf},A',
             ))
             _procesar_terminaciones_fibra(SimpleUploadedFile(

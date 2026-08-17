@@ -8,6 +8,7 @@
     const inspectorToggle = document.getElementById('network-inspector-toggle');
     let routeMap = null;
     let routeRequest = null;
+    let rankingContext = null;
 
     function setInspectorCollapsed(collapsed) {
         if (!inspector || !inspectorToggle) return;
@@ -21,14 +22,20 @@
         const target = document.getElementById('routes-context-summary');
         if (!target) return;
         const total = Number(summary?.total || 0);
-        const primary = kind === 'troncales' ? Number(summary?.fibras || 0) : Number(summary?.aereos || 0);
-        const secondary = kind === 'troncales' ? Number(summary?.reservas || 0) : Number(summary?.soterrados || 0);
-        const base = Math.max(1, kind === 'troncales' ? primary + secondary : total);
-        const primaryPercent = Math.min(100, (primary / base) * 100);
-        const secondaryPercent = Math.min(100 - primaryPercent, (secondary / base) * 100);
+        const percentage = (value) => total ? Math.max(0, Math.min(100, (Number(value || 0) / total) * 100)) : 0;
         const donut = document.createElement('div');
         donut.className = 'network-donut';
-        donut.style.background = `conic-gradient(#2f74ee 0 ${primaryPercent}%, #f59e0b ${primaryPercent}% ${primaryPercent + secondaryPercent}%, #18b777 ${primaryPercent + secondaryPercent}% 100%)`;
+        if (kind === 'troncales') {
+            donut.style.background = total
+                ? 'conic-gradient(#2f74ee 0 100%)'
+                : 'conic-gradient(#e8edf5 0 100%)';
+        } else {
+            const aerialPercent = percentage(summary?.aereos);
+            const undergroundPercent = percentage(summary?.soterrados);
+            donut.style.background = total
+                ? `conic-gradient(#2f74ee 0 ${aerialPercent}%, #f59e0b ${aerialPercent}% ${aerialPercent + undergroundPercent}%, #94a3b8 ${aerialPercent + undergroundPercent}% 100%)`
+                : 'conic-gradient(#e8edf5 0 100%)';
+        }
         const value = document.createElement('span');
         value.textContent = number.format(total);
         const caption = document.createElement('small');
@@ -36,24 +43,54 @@
         donut.append(value, caption);
         const list = document.createElement('ul');
         const items = kind === 'troncales'
-            ? [['is-used', 'Fibras', summary?.fibras], ['is-free', 'Tramos', summary?.tramos], ['is-reserved', 'Reservas físicas', summary?.reservas]]
-            : [['is-used', 'Aéreos', summary?.aereos], ['is-free', 'Soterrados', summary?.soterrados], ['is-reserved', 'Reserva (m)', summary?.reservas_m]];
-        items.forEach(([className, label, amount]) => {
+            ? [
+                ['is-used', 'Fibras', summary?.fibras, 'hilos'],
+                ['is-free', 'Tramos', summary?.tramos, total ? `${number.format(Number(summary?.tramos || 0) / total)} por ruta` : '0 por ruta'],
+                ['is-reserved', 'Reservas físicas', summary?.reservas, 'elementos'],
+            ]
+            : [
+                ['is-used', 'Aéreos', summary?.aereos, `${number.format(percentage(summary?.aereos))}%`],
+                ['is-reserved', 'Soterrados', summary?.soterrados, `${number.format(percentage(summary?.soterrados))}%`],
+                ['is-unknown', 'Sin clasificar', Math.max(0, total - Number(summary?.aereos || 0) - Number(summary?.soterrados || 0)), `${number.format(percentage(Math.max(0, total - Number(summary?.aereos || 0) - Number(summary?.soterrados || 0))))}%`],
+            ];
+        items.forEach(([className, label, amount, context]) => {
             const item = document.createElement('li');
+            const row = document.createElement('div');
+            row.className = 'network-state-line';
             const dot = document.createElement('i');
             dot.className = className;
             const text = document.createElement('span');
             text.textContent = label;
             const totalNode = document.createElement('b');
-            totalNode.textContent = number.format(amount || 0);
-            item.append(dot, text, totalNode);
+            const count = document.createElement('span');
+            count.textContent = number.format(amount || 0);
+            const detail = document.createElement('small');
+            detail.textContent = context;
+            totalNode.append(count, detail);
+            row.append(dot, text, totalNode);
+            item.appendChild(row);
             list.appendChild(item);
         });
         target.replaceChildren(donut, list);
-        renderRouteRanking(summary?.top_ocupacion || []);
+        const source = document.getElementById('routes-context-source');
+        if (source) {
+            source.replaceChildren();
+            const primary = document.createElement('span');
+            const secondary = document.createElement('span');
+            if (kind === 'troncales') {
+                primary.textContent = number.format(summary?.distancia_km || 0);
+                secondary.textContent = number.format(summary?.tramos || 0);
+                source.append(primary, ' km documentados · ', secondary, ' tramos');
+            } else {
+                primary.textContent = number.format(summary?.reservas_m || 0);
+                secondary.textContent = number.format(Math.max(0, total - Number(summary?.aereos || 0) - Number(summary?.soterrados || 0)));
+                source.append(primary, ' m de reserva · ', secondary, ' sin clasificar');
+            }
+        }
+        renderRouteRanking(summary?.top_ocupacion || [], kind);
     }
 
-    function renderRouteRanking(items) {
+    function renderRouteRanking(items, kind) {
         const target = document.getElementById('routes-occupancy-ranking');
         if (!target) return;
         target.replaceChildren();
@@ -69,22 +106,42 @@
             item.className = 'network-ranking__item';
             item.tabIndex = 0;
             item.setAttribute('role', 'button');
-            item.setAttribute('aria-label', `Ver ${route.nombre}`);
+            item.setAttribute('aria-label', `Filtrar ${route.nombre}`);
+            const table = tables[kind];
+            const selected = rankingContext?.kind === kind
+                && rankingContext.id === String(route.id);
+            item.classList.toggle('is-selected', selected);
+            item.setAttribute('aria-pressed', String(selected));
             const label = document.createElement('div');
             label.className = 'network-ranking__label';
             const name = document.createElement('span');
             name.textContent = route.nombre;
             name.title = route.nombre;
             const value = document.createElement('b');
-            value.textContent = `${number.format(route.utilizacion || 0)}%`;
+            value.textContent = `${number.format(route.utilizados || 0)} en uso de ${number.format(route.total || 0)}`;
             label.append(name, value);
             const bar = document.createElement('div');
             bar.className = 'network-ranking__bar';
             const fill = document.createElement('i');
             fill.style.width = `${Math.min(100, Number(route.utilizacion || 0))}%`;
             bar.appendChild(fill);
-            item.append(label, bar);
-            const select = () => selectRoute(route.id);
+            const detail = document.createElement('small');
+            const notes = [`${number.format(route.utilizacion || 0)}% de ocupación`];
+            if (Number(route.sin_inventariar || 0)) notes.push(`${number.format(route.sin_inventariar)} sin inventariar`);
+            if (Number(route.hilos_sin_estado || 0)) notes.push(`${number.format(route.hilos_sin_estado)} sin estado`);
+            detail.textContent = notes.join(' · ');
+            item.append(label, bar, detail);
+            const select = () => {
+                if (!table) return;
+                if (selected) {
+                    rankingContext = null;
+                } else {
+                    rankingContext = { kind, id: String(route.id), label: route.nombre };
+                }
+                syncRankingContexts();
+                table.page = 1;
+                table.load();
+            };
             item.addEventListener('click', select);
             item.addEventListener('keydown', event => {
                 if (event.key === 'Enter' || event.key === ' ') {
@@ -94,6 +151,28 @@
             });
             target.appendChild(item);
         });
+    }
+
+    function syncRankingContexts() {
+        root.querySelectorAll('[data-ranking-context]').forEach((context) => {
+            const form = context.closest('form');
+            const panel = context.closest('[data-resource]');
+            const kind = panel?.dataset.resource;
+            const active = Boolean(
+                rankingContext
+                && rankingContext.kind === kind
+            );
+            context.hidden = !active;
+            const label = context.querySelector('[data-ranking-context-label]');
+            if (label) label.textContent = active ? rankingContext.label : '';
+        });
+    }
+
+    function clearRankingContext(table, { reload = true } = {}) {
+        if (rankingContext?.kind === table.resource) rankingContext = null;
+        syncRankingContexts();
+        table.page = 1;
+        if (reload) table.load();
     }
 
     function renderMapEmpty(target, title, detail) {
@@ -310,6 +389,7 @@
                 if (value) params.set(input.dataset.filter, value);
             });
             if (!params.has('page_size')) params.set('page_size', '25');
+            if (rankingContext?.kind === this.resource) params.set('ranking_id', rankingContext.id);
             if (includePage) params.set('page', this.page);
             return params;
         }
@@ -354,9 +434,20 @@
         bind() {
             this.form.addEventListener('submit', (event) => { event.preventDefault(); this.page = 1; this.load(); });
             const search = this.form.querySelector('[data-filter="q"]');
-            search.addEventListener('input', () => { clearTimeout(this.timer); this.timer = setTimeout(() => { this.page = 1; this.load(); }, 350); });
+            search.addEventListener('input', () => {
+                clearTimeout(this.timer);
+                this.timer = setTimeout(() => { this.page = 1; this.load(); }, 350);
+            });
             this.form.querySelectorAll('select[data-filter]').forEach((select) => select.addEventListener('change', () => { this.page = 1; this.load(); }));
-            this.form.querySelector('[data-clear]').addEventListener('click', () => { this.form.reset(); this.page = 1; search.focus(); this.load(); });
+            this.form.querySelector('[data-clear]').addEventListener('click', () => {
+                this.form.reset();
+                if (rankingContext?.kind === this.resource) rankingContext = null;
+                syncRankingContexts();
+                this.page = 1;
+                search.focus();
+                this.load();
+            });
+            this.form.querySelector('[data-ranking-context-clear]')?.addEventListener('click', () => clearRankingContext(this));
             this.form.querySelector('[data-export]').addEventListener('click', () => download(this.options.exportUrl, this.params(false), this.form.querySelector('[data-export-status]')));
             this.previous.addEventListener('click', () => { if (this.page > 1) { this.page -= 1; this.load(); } });
             this.next.addEventListener('click', () => { this.page += 1; this.load(); });

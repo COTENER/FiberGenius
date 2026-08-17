@@ -599,7 +599,7 @@ def dashboard_inventario(request):
     if rutas_sin_geometria:
         alertas_inventario.append({
             'nivel': 'datos',
-            'titulo': f'{rutas_sin_geometria} troncales sin geometria completa',
+            'titulo': f'{rutas_sin_geometria} troncales sin recorrido completo en el mapa',
             'detalle': 'Necesitan al menos dos coordenadas para visualizarse correctamente.',
         })
     if sites_sin_coordenadas:
@@ -1721,6 +1721,26 @@ def update_detalle_puerto(request):
             if not puerto_actualizado:
                 return JsonResponse({"status": "error", "message": "No se encontró el puerto o no hubo cambios"}, status=400)
 
+            identidad_solicitada = {
+                'puerto_odf': puerto_actualizado.puerto_odf,
+                'odf_nombre': puerto_actualizado.odf_obj.odf,
+            }
+            for clave, valor_actual in identidad_solicitada.items():
+                if clave not in data:
+                    continue
+                valor_solicitado = str(data.get(clave) or '').strip().upper()
+                if valor_solicitado != str(valor_actual or '').strip().upper():
+                    return JsonResponse(
+                        {
+                            "status": "error",
+                            "message": (
+                                "El ODF y el número de puerto forman una identidad fija. "
+                                "No pueden modificarse desde la edición normal."
+                            ),
+                        },
+                        status=400,
+                    )
+
             if 'estado_puerto' in data:
                 nuevo_estado = normalizar_estado_puerto_odf(
                     data.get('estado_puerto'), default=None
@@ -1745,7 +1765,6 @@ def update_detalle_puerto(request):
             campos_actualizados = []
             campos_texto = {
                 'bandeja': ('bandeja',),
-                'puerto_odf': ('puerto_odf',),
                 'tipo_conector': ('tipo_conector', 'conector'),
                 'patchcord': ('patchcord',),
                 'destino': ('destino', 'destino_externo'),

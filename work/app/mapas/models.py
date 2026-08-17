@@ -8,6 +8,11 @@ from django.db.models import Count, F, Q
 from django.db.models.functions import Coalesce, Lower
 
 
+def generar_codigo_fibra():
+    """Genera una identidad global independiente de ruta y posición física."""
+    return f"FGF-{uuid.uuid4().hex.upper()}"
+
+
 # =============================================================================
 # MODELOS ORM (Managed) — Equipos y Rutas de Fibra Óptica
 # =============================================================================
@@ -902,6 +907,16 @@ class InventarioFibra(models.Model):
         ('SIN_VERIFICAR', 'Sin verificar'),
     ]
 
+    codigo_fibra = models.CharField(
+        max_length=64,
+        unique=True,
+        default=generar_codigo_fibra,
+        verbose_name="Código estable de fibra",
+        help_text=(
+            "Identificador global e inmutable; no corresponde al número "
+            "físico F1/F2 de un tramo."
+        ),
+    )
     ruta = models.ForeignKey(
         Ruta,
         on_delete=models.SET_NULL,
@@ -1006,6 +1021,9 @@ class InventarioFibra(models.Model):
             })
 
     def save(self, *args, **kwargs):
+        self.codigo_fibra = (
+            self.codigo_fibra or generar_codigo_fibra()
+        ).strip().upper()
         self.fibra_numero = (self.fibra_numero or '').strip().upper()
         if self.origen_nodo_id:
             self.origen_odf = (

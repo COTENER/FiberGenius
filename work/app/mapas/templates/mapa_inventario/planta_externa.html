@@ -4,9 +4,9 @@
 {% block title %}Fibras y reservas — Fiber Genius{% endblock %}
 {% block page_title %}Inventario / Fibras y reservas{% endblock %}
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/odf-inventory.css' %}?v=20260721-1">
+<link rel="stylesheet" href="{% static 'css/odf-inventory.css' %}?v=20260815-fiber-operations-8">
 <link rel="stylesheet" href="{% static 'vendor/leaflet/leaflet-1.9.4.css' %}">
-<link rel="stylesheet" href="{% static 'css/network-inventory.css' %}?v=20260727-panel-fixes-1">
+<link rel="stylesheet" href="{% static 'css/network-inventory.css' %}?v=20260816-ranking-toggle-1">
 <link rel="stylesheet" href="{% static 'css/inventory-filters.css' %}?v=20260723-1">
 {% endblock %}
 
@@ -38,17 +38,20 @@
     {% if perms.mapas.view_inventariofibra %}<section id="fibras-panel" class="network-panel" role="tabpanel" data-resource="fibras">
         <section class="odf-kpis" aria-label="Resumen de fibras">
             <article class="odf-kpi"><span class="odf-kpi__icon">≋</span><div><span>Total fibras</span><strong id="fibras-stat-total">0</strong><small>Hilos registrados</small></div></article>
-            <article class="odf-kpi odf-kpi--green"><span class="odf-kpi__icon">✓</span><div><span>Libres</span><strong id="fibras-stat-free">0</strong><small>Capacidad disponible</small></div></article>
+            <article class="odf-kpi odf-kpi--green"><span class="odf-kpi__icon">✓</span><div><span>Disponibles</span><strong id="fibras-stat-free">0</strong><small>Capacidad disponible</small></div></article>
             <article class="odf-kpi odf-kpi--purple"><span class="odf-kpi__icon">⌁</span><div><span>Ocupadas</span><strong id="fibras-stat-used">0</strong><small>Con servicio asignado</small></div></article>
             <article class="odf-kpi odf-kpi--orange"><span class="odf-kpi__icon">◇</span><div><span>Reservadas</span><strong id="fibras-stat-reserved">0</strong><small>Apartadas para uso futuro</small></div></article>
+            <article class="odf-kpi odf-kpi--neutral"><span class="odf-kpi__icon">?</span><div><span>Sin información</span><strong id="fibras-stat-unknown">0</strong><small>Estado global pendiente</small></div></article>
             <article class="odf-kpi odf-kpi--cyan"><span class="odf-kpi__icon">⑂</span><div><span>Troncales</span><strong id="fibras-stat-routes">0</strong><small>Rutas con fibras</small></div></article>
         </section>
         <section class="odf-filter-card inventory-filter-card"><form id="fibras-filters" class="odf-filters inventory-filter-grid inventory-filter-grid--four" role="search">
+            <input data-filter="destino" type="hidden" value="">
+            <input data-filter="en_uso" type="hidden" value="">
             <label class="odf-search"><span class="sr-only">Buscar</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input data-filter="q" type="search" placeholder="Troncal, fibra, servicio, site, ODF o puerto" autocomplete="off"></label>
             <label class="odf-filter-field"><span>Troncal</span><select data-filter="ruta"><option value="">Todas</option>{% for ruta in rutas_planta_externa %}<option value="{{ ruta.nombre }}">{{ ruta.nombre }}</option>{% endfor %}</select></label>
-            <label class="odf-filter-field"><span>Estado</span><select data-filter="estado"><option value="">Todos</option><option value="Libre">Libre</option><option value="Ocupado">Ocupado</option><option value="Reservado">Reservado</option></select></label>
+            <label class="odf-filter-field"><span>Estado</span><select data-filter="estado"><option value="">Todos</option><option value="Libre">Disponible</option><option value="Ocupado">Ocupado</option><option value="Reservado">Reservado</option><option value="Desconocido">Sin información</option></select></label>
             <label class="odf-filter-field"><span>Filas</span><select data-filter="page_size"><option>10</option><option selected>25</option><option>50</option><option>100</option><option>200</option></select></label>
-            <div class="odf-filter-actions"><button class="odf-btn odf-btn--primary" type="submit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16l-6 7v5l-4 2v-7Z"/></svg>Aplicar filtros</button><button class="odf-btn" type="button" data-clear><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 1 0 2-5.3L4 9M4 4v5h5"/></svg>Limpiar</button><button class="odf-btn" type="button" data-export><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>Exportar Excel</button></div><p class="odf-export-status" data-export-status role="status"></p>
+            <div class="odf-filter-actions"><button class="odf-btn odf-btn--primary" type="submit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16l-6 7v5l-4 2v-7Z"/></svg>Aplicar filtros</button><button class="odf-btn" type="button" data-clear><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 1 0 2-5.3L4 9M4 4v5h5"/></svg>Limpiar</button><button class="odf-btn" type="button" data-export><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>Exportar Excel</button><div class="fiber-context-filter" data-fiber-destination-context hidden><span>Destino: <strong data-fiber-destination-label></strong></span><button type="button" data-clear-fiber-destination aria-label="Quitar filtro de destino">×</button></div></div><p class="odf-export-status" data-export-status role="status"></p>
         </form></section>
         <section class="odf-table-card"><div class="odf-message" data-message role="status"></div><div class="odf-table-wrap"><table class="odf-table"><caption class="sr-only">Fibras filtradas</caption><thead><tr><th scope="col">Troncal</th><th scope="col">N.º fibra</th><th scope="col">Estado</th><th scope="col">Condición</th><th scope="col">Completitud</th><th scope="col">Servicio / uso</th><th scope="col">Site inicial</th><th scope="col">Site final</th><th scope="col">Origen ODF / puerto</th><th scope="col">Destino ODF / puerto</th><th scope="col">Conector</th><th scope="col">Acciones</th></tr></thead><tbody data-body></tbody></table></div><footer class="odf-footer"><p data-page-info>Mostrando 0 a 0 de 0 resultados</p><nav class="odf-pagination" data-pagination></nav><div class="odf-footer__fallback"><button class="odf-page-arrow" type="button" data-previous>‹</button><button class="odf-page-arrow" type="button" data-next>›</button></div></footer></section>
     </section>{% endif %}
@@ -83,19 +86,41 @@
         </header>
         <div class="network-inspector__body">
             <section class="network-inspector-card network-inspector-card--summary" data-inspector-context="fibras">
-                <header><div><strong>Distribución por estado</strong><span>Según los filtros activos</span></div></header>
+                <header><div><strong>Estado efectivo de fibras</strong><span>Según los filtros activos</span></div></header>
                 <div class="network-state-summary">
                     <div id="fiber-summary-chart" class="network-donut" aria-label="Distribución de fibras"><span id="fiber-summary-total">0</span><small>hilos</small></div>
                     <ul>
-                        <li><i class="is-free"></i><span>Libres</span><b id="fiber-summary-free">0</b></li>
-                        <li><i class="is-used"></i><span>Ocupadas</span><b id="fiber-summary-used">0</b></li>
-                        <li><i class="is-reserved"></i><span>Reservadas</span><b id="fiber-summary-reserved">0</b></li>
+                        <li><button type="button" data-fiber-state="Libre"><i class="is-free"></i><span>Disponibles</span><b><span id="fiber-summary-free">0</span><small id="fiber-summary-free-pct">0%</small></b></button></li>
+                        <li><button type="button" data-fiber-state="Ocupado"><i class="is-used"></i><span>Ocupadas</span><b><span id="fiber-summary-used">0</span><small id="fiber-summary-used-pct">0%</small></b></button></li>
+                        <li><button type="button" data-fiber-state="Reservado"><i class="is-reserved"></i><span>Reservadas</span><b><span id="fiber-summary-reserved">0</span><small id="fiber-summary-reserved-pct">0%</small></b></button></li>
+                        <li><button type="button" data-fiber-state="Desconocido"><i class="is-unknown"></i><span>Sin información</span><b><span id="fiber-summary-unknown">0</span><small id="fiber-summary-unknown-pct">0%</small></b></button></li>
                     </ul>
                 </div>
+                <p class="network-state-source"><span id="fiber-summary-informed">0</span> informados · <span id="fiber-summary-inferred">0</span> inferidos desde tramos</p>
             </section>
             <section class="network-inspector-card network-inspector-card--ranking" data-inspector-context="fibras">
-                <header><div><strong>Troncales con mayor ocupación</strong><span>Top 5 del inventario filtrado</span></div></header>
-                <div id="fiber-top-routes" class="network-ranking"><p class="network-inspector-empty">Cargando resumen…</p></div>
+                <header><div><strong>Destinos con mayor uso</strong><span>Fibras ocupadas o reservadas</span></div></header>
+                <div id="fiber-top-destinations" class="network-ranking"><p class="network-inspector-empty">Cargando resumen…</p></div>
+            </section>
+            <section id="fiber-selected-card" class="network-inspector-card network-inspector-card--detail" data-inspector-context="fibras">
+                <header><div><strong>Fibra seleccionada</strong><span id="fiber-selected-caption">Selecciona una fila</span></div></header>
+                <div id="fiber-selected-empty" class="network-route-empty"><span>≋</span><strong>Ninguna fibra seleccionada</strong><p>Haz clic en una fila para revisar su estado, extremos y recorrido.</p></div>
+                <div id="fiber-selected-detail" class="network-asset-detail" hidden>
+                    <div class="network-fiber-heading"><h3 id="fiber-selected-name">—</h3><span id="fiber-selected-status" class="network-asset-status">Sin información</span></div>
+                    <div class="network-asset-grid">
+                        <div><span>Origen del estado</span><b id="fiber-selected-state-source">—</b></div>
+                        <div><span>Condición física</span><b id="fiber-selected-condition">—</b></div>
+                        <div class="network-asset-grid__wide"><span>Servicio / uso</span><b id="fiber-selected-service">—</b></div>
+                    </div>
+                    <div id="fiber-selected-map" class="network-route-map" aria-label="Recorrido de la fibra"></div>
+                    <div class="network-asset-grid">
+                        <div><span>Extremo A</span><b id="fiber-selected-end-a">—</b></div>
+                        <div><span>Extremo B</span><b id="fiber-selected-end-b">—</b></div>
+                        <div><span>Troncal</span><b id="fiber-selected-route">—</b></div>
+                        <div><span>Recorrido</span><b id="fiber-selected-segments">—</b></div>
+                    </div>
+                    <div class="network-asset-actions"><a id="fiber-selected-detail-link" data-open-asset-360 href="#">Ficha 360°</a><a id="fiber-selected-map-link" href="{% url 'mapa_inventario' %}">Localizar recorrido</a></div>
+                </div>
             </section>
             <section class="network-inspector-card network-inspector-card--summary" data-inspector-context="reservas" hidden>
                 <header><div><strong>Resumen de elementos</strong><span>Según los filtros activos</span></div></header>
@@ -105,7 +130,7 @@
                 <header><div><strong>Distribución por tipo</strong><span>Elementos del inventario filtrado</span></div></header>
                 <div id="reserve-type-summary" class="network-type-list"><p class="network-inspector-empty">Cargando resumen…</p></div>
             </section>
-            <section id="network-route-card" class="network-inspector-card network-inspector-card--detail network-route-card">
+            <section id="network-route-card" class="network-inspector-card network-inspector-card--detail network-route-card" data-inspector-context="reservas" hidden>
                 <header><div><strong>Vista de troncal</strong><span id="network-route-state">Selecciona una fila</span></div><a id="network-route-open" href="{% url 'mapa_inventario' %}" hidden>Mapa completo</a></header>
                 <div id="network-route-empty" class="network-route-empty"><span>⌁</span><strong>Sin troncal seleccionada</strong><p>Selecciona una fibra o un elemento para ver su capacidad y recorrido.</p></div>
                 <div id="network-route-detail" hidden>
@@ -129,5 +154,5 @@
 {% endblock %}
 {% block extra_js %}
 <script src="{% static 'vendor/leaflet/leaflet-1.9.4.js' %}"></script>
-<script src="{% static 'js/fiber-inventory.js' %}?v=20260812-fiber-quality-1"></script>
+<script src="{% static 'js/fiber-inventory.js' %}?v=20260815-fiber-operations-8"></script>
 {% endblock %}

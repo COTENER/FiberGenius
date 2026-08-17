@@ -121,6 +121,8 @@
 .port-dialog input,
 .port-dialog select,
 .port-dialog textarea {
+    width: 100%;
+    min-width: 0;
     min-height: 39px;
     padding: 8px 10px;
     border: 1px solid var(--border-input, var(--ports-line));
@@ -130,6 +132,8 @@
     background: var(--bg-input, var(--bg-surface));
     font: 500 11px/1.4 var(--font-sans);
 }
+.port-dialog input:not([type="file"]),
+.port-dialog select { height: 39px; }
 .ports-search input:focus,
 .ports-filter-field select:focus,
 .port-dialog input:focus,
@@ -160,6 +164,8 @@
 }
 .ports-btn svg { width: 15px; height: 15px; }
 .ports-btn--primary { border-color: var(--ports-blue); color: #fff; background: var(--ports-blue); }
+.ports-btn--danger { border-color: rgba(220, 53, 69, .32); color: #dc3545; background: rgba(220, 53, 69, .06); }
+.ports-btn--danger:hover { border-color: #dc3545; background: rgba(220, 53, 69, .12); }
 .ports-filter-actions > a.ports-btn { text-decoration: none; }
 .ports-export-status {
     grid-column: 1 / -1;
@@ -289,15 +295,119 @@
 .port-dialog__section-title h3 { margin: 0; font-size: 12px; }
 .port-dialog__section-title p { margin: 2px 0 0; color: var(--text-tertiary); font-size: 9px; }
 .port-dialog__grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; padding: 14px 0 0; }
-.port-dialog__grid label { display: grid; gap: 5px; }
+.port-dialog__grid label { display: grid; min-width: 0; align-content: start; gap: 5px; }
 .port-dialog__grid label > span { color: var(--text-secondary); font-size: 10px; font-weight: 680; }
 .port-dialog__grid label > small { color: var(--text-tertiary); font-size: 8px; line-height: 1.35; }
 .port-dialog__wide { grid-column: 1 / -1; }
 .port-dialog textarea { resize: vertical; }
 .port-dialog__message { min-height: 18px; margin: 0; padding: 0 21px 10px; color: var(--danger); font-size: 11px; }
+.port-dialog__message.is-success { color: var(--ports-green); }
 .port-dialog footer { position: sticky; bottom: 0; z-index: 2; border-top: 1px solid var(--ports-line); border-bottom: 0; background: var(--bg-surface); }
 .port-dialog footer > p { margin: 0; color: var(--text-tertiary); font-size: 9px; }
 .port-dialog footer > div { display: flex; gap: 8px; }
+.port-management-summary {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 14px;
+    align-items: center;
+    margin: 16px 21px 0;
+    padding: 13px 15px;
+    border: 1px solid var(--ports-line);
+    border-radius: 10px;
+    background: var(--bg-surface-2);
+}
+.port-management-summary__identity { min-width: 0; }
+.port-management-summary__identity strong {
+    display: block;
+    overflow: hidden;
+    color: var(--text-primary);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.port-management-summary__identity p { margin: 4px 0 0; color: var(--text-tertiary); font-size: 9px; line-height: 1.45; }
+.port-management-summary__state { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+.port-management-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 25px;
+    padding: 0 9px;
+    border: 1px solid rgba(15, 103, 223, .20);
+    border-radius: 999px;
+    color: var(--ports-blue);
+    background: rgba(15, 103, 223, .08);
+    font-size: 9px;
+    font-weight: 750;
+}
+.port-management-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.port-management-status.is-free { border-color: rgba(19, 160, 100, .22); color: var(--ports-green); background: rgba(19, 160, 100, .08); }
+.port-management-status.is-reserved { border-color: rgba(232, 138, 8, .24); color: #d87900; background: rgba(232, 138, 8, .09); }
+.port-management-status.is-warning { border-color: rgba(232, 138, 8, .24); color: #d87900; background: rgba(232, 138, 8, .09); }
+.port-management-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 5px;
+    margin: 14px 21px 0;
+    padding: 4px;
+    border: 1px solid var(--ports-line);
+    border-radius: 10px;
+    background: var(--bg-surface-2);
+}
+.port-management-tabs button {
+    min-height: 37px;
+    border: 0;
+    border-radius: 7px;
+    color: var(--text-secondary);
+    background: transparent;
+    font: 700 10px/1 var(--font-sans);
+    cursor: pointer;
+}
+.port-management-tabs button:hover { color: var(--text-primary); background: var(--bg-hover); }
+.port-management-tabs button.is-active { color: #fff; background: var(--ports-blue); box-shadow: 0 5px 14px rgba(15, 103, 223, .22); }
+.port-management-panel[hidden] { display: none; }
+.port-management-panel [hidden] { display: none !important; }
+.port-management-panel__actions { display: flex; justify-content: flex-end; padding: 0 21px 18px; }
+.port-management-search { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
+.port-management-search .ports-btn { min-height: 39px; }
+.port-management-fiber-results {
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid var(--ports-line);
+    border-radius: 9px;
+    background: var(--bg-surface-2);
+}
+.port-management-fiber-results__header { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--text-secondary); font-size: 9px; }
+.port-management-fiber-results__header strong { color: var(--text-primary); font-size: 10px; }
+.port-management-fiber-results__list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.port-management-fiber-result {
+    display: grid;
+    min-width: 0;
+    gap: 3px;
+    padding: 9px 10px;
+    border: 1px solid var(--ports-line);
+    border-radius: 8px;
+    color: var(--text-secondary);
+    background: var(--bg-surface);
+    text-align: left;
+    cursor: pointer;
+}
+.port-management-fiber-result:hover { border-color: rgba(15, 103, 223, .48); background: var(--bg-hover); }
+.port-management-fiber-result.is-selected { border-color: var(--ports-blue); box-shadow: 0 0 0 2px rgba(15, 103, 223, .12); }
+.port-management-fiber-result strong,
+.port-management-fiber-result span,
+.port-management-fiber-result small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.port-management-fiber-result strong { color: var(--text-primary); font-size: 10px; }
+.port-management-fiber-result span { font-size: 9px; }
+.port-management-fiber-result small { color: var(--text-tertiary); font-size: 8px; }
+.port-management-connect-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; align-items: start; }
+.port-management-connect-action { display: flex; align-items: flex-start; min-height: 0; padding-top: 21px; }
+.port-management-connect-action .ports-btn { width: 100%; min-height: 39px; }
+.port-management-panel input[readonly] { color: var(--text-secondary); background: var(--bg-surface-2); cursor: default; }
+[data-theme="dark"] .ports-btn--danger { color: #ff7884; background: rgba(255, 87, 102, .08); }
+[data-theme="dark"] .port-management-status.is-reserved,
+[data-theme="dark"] .port-management-status.is-warning { color: #ffb54a; }
 .ports-heading__actions { display: flex; align-items: center; gap: 9px; }
 .port-dialog--wide { width: min(1040px, calc(100vw - 64px)); }
 .ports-bulk-file-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
@@ -329,4 +439,9 @@
     .ports-search, .port-dialog__wide { grid-column: auto; }
     .ports-filter-actions { flex-wrap: wrap; }
     .port-dialog { width: calc(100vw - 24px); max-height: calc(100dvh - 24px); border-radius: 12px; }
+    .port-management-summary { grid-template-columns: 1fr; }
+    .port-management-summary__state { justify-content: flex-start; }
+    .port-management-search { grid-template-columns: 1fr; }
+    .port-management-fiber-results__list, .port-management-connect-row { grid-template-columns: 1fr; }
+    .port-management-connect-action { min-height: 0; padding-top: 0; }
 }

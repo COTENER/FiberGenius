@@ -42,6 +42,66 @@
 input:checked + .slider { background-color: var(--accent); }
 input:checked + .slider:before { transform: translateX(22px); }
 .toggle-label { font-size: 14px; font-weight: 600; color: var(--text-primary); transition: color 0.3s; }
+.import-flow-heading {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-4);
+    margin: var(--space-6) 0 var(--space-4);
+    padding-top: var(--space-5);
+    border-top: 1px solid var(--border-color);
+}
+.import-flow-heading h2 { margin: 0 0 6px; font-size: 1.5rem; }
+.import-flow-heading p { margin: 0; color: var(--text-tertiary); }
+.import-flow-note {
+    max-width: 390px;
+    padding: 10px 14px;
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border-color));
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--accent) 8%, var(--bg-surface));
+    color: var(--text-secondary);
+    font-size: var(--text-xs);
+    line-height: 1.45;
+}
+.import-card-grid { grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
+.import-card-grid > .card {
+    min-height: 210px;
+    display: flex;
+    flex-direction: column;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+    appearance: none;
+    transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+.import-card-grid > .card:hover,
+.import-card-grid > .card:focus-visible {
+    transform: translateY(-2px);
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--border-color));
+    box-shadow: 0 12px 28px rgba(15, 23, 42, .10);
+    outline: none;
+}
+.import-card-dependency {
+    margin-top: auto;
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--border-color);
+    color: var(--text-tertiary);
+    font-size: var(--text-xs);
+}
+.import-card-grid [data-import-type="sites_inventario"] { order: 1; }
+.import-card-grid [data-import-type="odf_inventario"] { order: 2; }
+.import-card-grid [data-import-type="fibras_globales"] { order: 3; }
+.import-card-grid [data-import-type="terminaciones_fibra"] { order: 4; }
+.import-card-grid [data-import-type="ruta_otu"] { order: 5; }
+.import-card-grid [data-import-type="tramos_inventario"] { order: 6; }
+.import-card-grid [data-import-type="fibras_inventario"] { order: 7; }
+.import-card-grid [data-import-type="coordenadas_csv"] { order: 8; }
+.import-card-grid [data-import-type="puertos_odf_inventario"] { order: 9; }
+.import-card-grid [data-import-type="reservas"] { order: 10; }
+@media (max-width: 800px) {
+    .import-flow-heading { flex-direction: column; }
+    .import-flow-note { max-width: none; }
+}
 </style>
 
 <div class="page-header">
@@ -118,20 +178,36 @@ input:checked + .slider:before { transform: translateX(22px); }
 </div>
 </div>
 
-<h2 class="page-header__title" style="margin-top: var(--space-6); font-size: 1.5rem; border-top: 1px solid var(--border); padding-top: var(--space-4);">Mapa de Inventario</h2>
-<p class="page-header__subtitle" style="margin-bottom: var(--space-4);">Carga la información segmentada y técnica para construir los registros y visualizar el mapa de inventario.</p>
+<div class="import-flow-heading">
+    <div>
+        <h2 class="page-header__title">Importación guiada del inventario</h2>
+        <p>Sigue el orden recomendado. Cada tarjeta incluye plantilla, ejemplo y validación antes de importar.</p>
+    </div>
+    <div class="import-flow-note"><strong>Regla segura:</strong> importar nuevamente actualiza registros identificados; no elimina los que no estén incluidos en el archivo.</div>
+</div>
 
-<div class="grid grid--auto">
-    <a href="{% url 'gestion_sites' %}" class="card" style="text-decoration:none; cursor:pointer;">
+<div class="grid grid--auto import-card-grid" id="guidedImportGrid">
+    <button type="button" onclick="openImportModal('sites_inventario', 'Cargar Sites (.csv)')" class="card" style="cursor:pointer;" data-import-type="sites_inventario">
         <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
             <div class="stat-card__icon stat-card__icon--success" style="width:36px;height:36px;">
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
             </div>
-            <span class="badge badge--success">Paso Previo</span>
+            <span class="badge badge--success">Paso 1</span>
         </div>
         <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Sites (.csv)</h3>
-        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Importa los Sites antes de cargar las troncales y el inventario físico.</p>
-    </a>
+        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Registra los nodos físicos. Las coordenadas del Site son opcionales, pero Latitud y Longitud deben informarse juntas.</p>
+    </button>
+
+    <button type="button" onclick="openImportModal('fibras_globales', 'Cargar inventario global de fibras (.csv)')" class="card" style="cursor:pointer;" data-import-type="fibras_globales">
+        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
+            <div class="stat-card__icon stat-card__icon--success" style="width:36px;height:36px;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M2 12h20M4.93 4.93l14.14 14.14M19.07 4.93L4.93 19.07"/></svg>
+            </div>
+            <span class="badge badge--success">Paso 3</span>
+        </div>
+        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar inventario global de fibras (.csv)</h3>
+        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Crea la identidad estable y el estado global de cada fibra. La troncal puede quedar pendiente.</p>
+    </button>
 
     <div onclick="openImportModal('ruta_otu', 'Cargar Troncales y Datos Generales')" class="card" style="text-decoration:none; cursor:pointer;">
         <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
@@ -144,15 +220,15 @@ input:checked + .slider:before { transform: translateX(22px); }
         <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Registra la troncal y sus valores generales de distancia, capacidad, ocupación, reservas y disponibilidad.</p>
     </div>
 
-    <div onclick="openImportModal('coordenadas_csv', 'Cargar Coordenadas y Tipo de Trazado (.csv)')" class="card" style="text-decoration:none; cursor:pointer;">
+    <div onclick="openImportModal('coordenadas_csv', 'Cargar recorridos en el mapa (.csv)')" class="card" style="text-decoration:none; cursor:pointer;">
         <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
             <div class="stat-card__icon stat-card__icon--warning" style="width:36px;height:36px;">
                 <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
             </div>
             <span class="badge badge--warning">Paso 2</span>
         </div>
-        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Trazado de Troncales Unificado (.csv)</h3>
-        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Crea las troncales geográficas (coordenadas) y enlaza con los Sites.</p>
+        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar recorridos en el mapa (.csv)</h3>
+        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Dibuja el recorrido de cada troncal en el mapa. Es opcional y no modifica su inventario técnico.</p>
     </div>
 
     <div onclick="openImportModal('tramos_inventario', 'Cargar Inventario Técnico de Tramos (.csv)')" class="card" style="text-decoration:none; cursor:pointer;">
@@ -174,7 +250,7 @@ input:checked + .slider:before { transform: translateX(22px); }
             <span class="badge badge--success">Archivo B</span>
         </div>
         <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Fibras por Tramo (.csv)</h3>
-        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Registra el estado de cada fibra en los tramos que componen su recorrido.</p>
+        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Registra el estado y la posición física de una fibra identificada de forma estable en cada tramo de su recorrido.</p>
     </div>
 
     <div onclick="openImportModal('odf_inventario', 'Cargar Inventario de ODFs (.csv)')" class="card" style="text-decoration:none; cursor:pointer;">
@@ -196,7 +272,7 @@ input:checked + .slider:before { transform: translateX(22px); }
             <span class="badge badge--warning">Archivo D</span>
         </div>
         <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Detalle de Puertos ODF (.csv)</h3>
-        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Sube el estado de cada puerto (Libre/Ocupado/Reservado, Patchcord, Destino).</p>
+        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Actualiza bandeja, conector, patchcord, destino y observaciones. La ocupación se deriva de las terminaciones de fibra.</p>
     </div>
 
     <div onclick="openImportModal('terminaciones_fibra', 'Cargar Terminaciones de Fibra (.csv)')" class="card" style="text-decoration:none; cursor:pointer;">
@@ -207,7 +283,7 @@ input:checked + .slider:before { transform: translateX(22px); }
             <span class="badge badge--accent">Archivo E</span>
         </div>
         <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Terminaciones de Fibra (.csv)</h3>
-        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Vincula cada hilo lógico con el ODF y puerto exactos de sus extremos A y/o B.</p>
+        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Vincula una fibra global con sus puertos ODF mediante un Código Fibra obligatorio; nunca identifica registros solo por F1/F2.</p>
     </div>
 
     <div onclick="openImportModal('reservas', 'Cargar Reservas y Elementos')" class="card" style="text-decoration:none; cursor:pointer;" role="button" tabindex="0">
@@ -265,20 +341,32 @@ input:checked + .slider:before { transform: translateX(22px); }
             <button onclick="closeImportModal()" class="btn-close" style="background:none; border:none; color:var(--text-tertiary); font-size:24px; cursor:pointer;">&times;</button>
         </div>
         <div class="modal-body" style="padding: 32px; max-height: 70vh; overflow-y: auto;">
+            <div class="import-progress" aria-label="Pasos de importación">
+                <div class="import-progress__step is-active"><span>1</span><strong>Preparar</strong></div>
+                <div class="import-progress__line"></div>
+                <div class="import-progress__step"><span>2</span><strong>Validar</strong></div>
+                <div class="import-progress__line"></div>
+                <div class="import-progress__step"><span>3</span><strong>Importar</strong></div>
+            </div>
+            <div id="importGuideSummary"></div>
             <div id="importModalRequirements"></div>
             
             <form id="importModalForm" method="post" enctype="multipart/form-data" style="margin-top: 32px;">
                 {% csrf_token %}
                 <div class="form-group" style="background: var(--bg-surface-2); padding: 20px; border-radius: 16px; border: 1px dashed var(--border-color);">
                     <label id="importModalLabel" class="form-label" style="display: block; margin-bottom: 12px; font-weight: 600; color: var(--text-secondary);">Seleccionar Archivo</label>
-                    <input type="file" id="importModalFile" name="csv_file" class="form-control" required style="width: 100%;">
+                    <input type="file" id="importModalFile" name="csv_file" class="form-control" required accept=".csv,text/csv" style="width: 100%;">
                 </div>
+
+                <div id="importValidation" class="import-validation" hidden aria-live="polite"></div>
+                <div id="importPreview" class="import-preview" hidden></div>
                 
-                <div style="display:flex; gap:12px; margin-top:32px; justify-content: flex-end;">
+                <div style="display:flex; gap:12px; margin-top:32px; justify-content: flex-end; flex-wrap:wrap;">
                     <button type="button" onclick="closeImportModal()" class="btn btn--secondary" style="padding: 12px 24px; border-radius: 12px;">Cancelar</button>
-                    <button type="submit" class="btn btn--primary" style="padding: 12px 32px; border-radius: 12px; font-weight: 700; box-shadow: 0 10px 15px -3px rgba(37, 99, 235, 0.3);">
+                    <button type="button" id="validateImportFile" class="btn btn--secondary" style="padding: 12px 24px; border-radius: 12px;">Validar archivo</button>
+                    <button type="submit" id="submitImportFile" class="btn btn--primary" disabled style="padding: 12px 32px; border-radius: 12px; font-weight: 700; box-shadow: 0 10px 15px -3px rgba(37, 99, 235, 0.3);">
                         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px; vertical-align: middle;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
-                        Subir Archivo
+                        Importar datos
                     </button>
                 </div>
             </form>
@@ -290,9 +378,59 @@ input:checked + .slider:before { transform: translateX(22px); }
 @keyframes fadeInSaas { from { opacity: 0; } to { opacity: 1; } }
 @keyframes scaleUpSaas { from { transform: scale(0.9) translateY(20px); opacity: 0; } to { transform: scale(1) translateY(0); opacity: 1; } }
 @keyframes slideInUpSaas { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+.import-progress { display:flex; align-items:center; margin-bottom:20px; }
+.import-progress__step { display:flex; align-items:center; gap:7px; color:var(--text-tertiary); font-size:12px; }
+.import-progress__step span { display:grid; place-items:center; width:25px; height:25px; border:1px solid var(--border-color); border-radius:50%; background:var(--bg-surface-2); }
+.import-progress__step.is-active { color:var(--accent); }
+.import-progress__step.is-active span { color:#fff; border-color:var(--accent); background:var(--accent); }
+.import-progress__line { flex:1; height:1px; margin:0 10px; background:var(--border-color); }
+.import-guide-summary { padding:16px; margin-bottom:16px; border:1px solid var(--border-color); border-radius:12px; background:var(--bg-surface-2); }
+.import-guide-summary__top { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; }
+.import-guide-summary h4 { margin:0 0 5px; color:var(--text-primary); font-size:14px; }
+.import-guide-summary p { margin:0; color:var(--text-secondary); font-size:12px; line-height:1.5; }
+.import-guide-summary__actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+.import-validation { margin-top:14px; padding:12px 14px; border-radius:10px; font-size:13px; line-height:1.5; }
+.import-validation.is-ok { color:var(--success); border:1px solid color-mix(in srgb, var(--success) 35%, var(--border-color)); background:color-mix(in srgb, var(--success) 8%, var(--bg-surface)); }
+.import-validation.is-error { color:var(--danger); border:1px solid color-mix(in srgb, var(--danger) 35%, var(--border-color)); background:color-mix(in srgb, var(--danger) 8%, var(--bg-surface)); }
+.import-preview { margin-top:14px; overflow:auto; max-height:210px; border:1px solid var(--border-color); border-radius:10px; }
+.import-preview table { width:100%; min-width:560px; border-collapse:collapse; font-size:11px; }
+.import-preview th, .import-preview td { padding:7px 9px; border-bottom:1px solid var(--border-color); white-space:nowrap; text-align:left; }
+.import-preview th { position:sticky; top:0; background:var(--bg-surface-2); color:var(--text-secondary); }
+@media (max-width: 640px) {
+    .import-progress__step strong { display:none; }
+    .import-guide-summary__top { flex-direction:column; }
+}
 </style>
 
 {# ─── Templates de Requisitos ─── #}
+<template id="tmpl-sites_inventario">
+    <div class="import-guide-summary">
+        <h4>Qué cargará este archivo</h4>
+        <p>Crea o actualiza Sites por su nombre. Dirección y coordenadas son opcionales; si informas una coordenada debes informar ambas.</p>
+        <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:10px;">
+            <span class="badge badge--accent">Nombre (obligatorio)</span>
+            <span class="badge badge--info">Dirección</span>
+            <span class="badge badge--info">Latitud</span>
+            <span class="badge badge--info">Longitud</span>
+        </div>
+    </div>
+</template>
+
+<template id="tmpl-fibras_globales">
+    <div class="import-guide-summary">
+        <h4>Identidad y estado global</h4>
+        <p><strong>Código Fibra</strong> es la clave estable. No uses F1/F2 como código global. Esta carga no crea posiciones por tramo ni ocupa puertos ODF.</p>
+        <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:10px;">
+            <span class="badge badge--accent">Codigo Fibra (obligatorio)</span>
+            <span class="badge badge--accent">Fibra (obligatorio)</span>
+            <span class="badge badge--accent">Estado (obligatorio)</span>
+            <span class="badge badge--info">Ruta (opcional)</span>
+            <span class="badge badge--info">Condición</span>
+            <span class="badge badge--info">Servicio</span>
+        </div>
+    </div>
+</template>
+
 <template id="tmpl-equipos_otu">
     <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
         <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Equipos y Puertos OTU</h4>
@@ -585,7 +723,7 @@ input:checked + .slider:before { transform: translateX(22px); }
     <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
         <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Coordenadas e Inventario Unificado</h4>
         <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">
-            Sube un único archivo <code>.csv</code> que contenga las coordenadas de múltiples troncales a la vez. No requiere comprimir en ZIP.
+            Sube un único archivo <code>.csv</code> con los puntos necesarios para dibujar el recorrido de varias troncales en el mapa. No requiere comprimir en ZIP.
         </p>
         <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Columnas requeridas y recomendadas:</p>
         <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
@@ -599,7 +737,7 @@ input:checked + .slider:before { transform: translateX(22px); }
         <details style="margin-bottom:var(--space-3);color:var(--text-secondary);font-size:var(--text-xs);">
             <summary style="cursor:pointer;font-weight:600;color:var(--text-primary);">Información sobre los cortes del trazado</summary>
             <p style="margin-top:var(--space-2);">
-                Los cambios de <code>tipo_trazado</code> y <code>new_seg</code> conservan la segmentación visual del mapa sin reemplazar los detalles técnicos cargados por separado.
+                Esta carga solo actualiza la representación en el mapa. Los campos <code>tipo_trazado</code> y <code>new_seg</code> permiten diferenciar visualmente las partes del recorrido sin reemplazar los datos técnicos cargados por separado.
             </p>
         </details>
         <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo:</h5>
@@ -680,16 +818,17 @@ input:checked + .slider:before { transform: translateX(22px); }
 <template id="tmpl-fibras_inventario">
     <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
         <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Fibras por Tramo</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Cada fila declara una posición física. <code>Codigo Fibra</code> identifica la fibra global y es obligatorio, incluso cuando la troncal ya está informada.</p>
         <div style="display:flex;flex-wrap:wrap;gap:4px; margin-bottom: 12px;">
-            <span class="badge badge--accent">Troncal</span><span class="badge badge--accent">Fibra</span><span class="badge badge--accent">Estado</span><span class="badge badge--accent">Tipo de Servicio</span><span class="badge badge--accent">Origen</span><span class="badge badge--accent">Destino</span><span class="badge badge--accent">Conector</span>
+            <span class="badge badge--accent">Troncal</span><span class="badge badge--accent">Fibra</span><span class="badge badge--warning">Codigo Fibra (obligatorio)</span><span class="badge badge--accent">Estado</span><span class="badge badge--accent">Tipo de Servicio</span><span class="badge badge--accent">Origen</span><span class="badge badge--accent">Destino</span><span class="badge badge--accent">Conector</span>
         </div>
         <div style="overflow-x: auto;">
             <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);min-width:900px;">
                 <thead style="border-bottom:1px solid var(--border-color);color:var(--text-secondary);">
-                    <tr><th style="text-align:left;padding:4px;">Troncal</th><th>Fibra</th><th>Estado</th><th>Tipo de Servicio</th><th>Origen</th><th>Destino</th><th>Conector</th></tr>
+                    <tr><th style="text-align:left;padding:4px;">Troncal</th><th>Fibra</th><th>Codigo Fibra</th><th>Estado</th><th>Tipo de Servicio</th><th>Origen</th><th>Destino</th><th>Conector</th></tr>
                 </thead>
                 <tbody>
-                    <tr><td style="padding:4px;">TR01_LMLO...</td><td style="text-align:center;">F61</td><td style="text-align:center;">Ocupado</td><td style="text-align:center;">Reserva TR01</td><td style="text-align:center;">TR01</td><td style="text-align:center;">LMLO123-F</td><td style="text-align:center;">SC/APC</td></tr>
+                    <tr><td style="padding:4px;">TR01_LMLO...</td><td style="text-align:center;">F61</td><td style="text-align:center;">FGF-TR01-0061</td><td style="text-align:center;">Ocupado</td><td style="text-align:center;">Reserva TR01</td><td style="text-align:center;">TR01</td><td style="text-align:center;">LMLO123-F</td><td style="text-align:center;">SC/APC</td></tr>
                 </tbody>
             </table>
         </div>
@@ -697,7 +836,7 @@ input:checked + .slider:before { transform: translateX(22px); }
             <summary style="cursor:pointer;font-size:var(--text-sm);font-weight:600;color:var(--text-primary);">Opciones avanzadas para fibras en varios tramos</summary>
             <div style="margin-top:var(--space-3);">
                 <p style="font-size:var(--text-xs);color:var(--text-secondary);margin-bottom:var(--space-2);">
-                    En rutas de un solo tramo no necesitas cambiar el archivo habitual. Para rutas con varios tramos agrega <code>Codigo Tramo</code>; usa <code>Codigo Fibra</code> cuando la misma fibra lógica cambie de posición física.
+                    Para rutas con varios tramos agrega <code>Codigo Tramo</code>. Mantén el mismo <code>Codigo Fibra</code> global en todo el recorrido, aunque la posición cambie de F1 a F2 entre tramos. F&lt;n&gt; identifica únicamente la posición física y ya no se admite como código global.
                 </p>
                 <a href="/static/ejemplos/fibras_por_tramo_ejemplo.csv" download class="btn btn--sm btn--secondary">Descargar plantilla opcional para varios tramos</a>
             </div>
@@ -748,12 +887,12 @@ input:checked + .slider:before { transform: translateX(22px); }
     <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
         <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Terminaciones de Fibra</h4>
         <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">
-            Una fila representa un hilo lógico. Ruta es opcional: si todavía no se conoce, el hilo se registra con troncal pendiente. Cada extremo debe incluir juntos el ODF y el puerto exactos.
+            Una fila representa una fibra global. Código Fibra es obligatorio y estable; Ruta es opcional y puede quedar pendiente. Cada extremo debe incluir juntos el ODF y el puerto exactos.
         </p>
         <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:12px;">
             <span class="badge badge--info">Ruta (opcional)</span>
             <span class="badge badge--accent">Fibra</span>
-            <span class="badge badge--info">Codigo Fibra (opcional)</span>
+            <span class="badge badge--warning">Codigo Fibra (obligatorio)</span>
             <span class="badge badge--info">Nodo A (referencia)</span>
             <span class="badge badge--accent">ODF Extremo A</span>
             <span class="badge badge--accent">Puerto Extremo A</span>
@@ -774,7 +913,7 @@ input:checked + .slider:before { transform: translateX(22px); }
                 </thead>
                 <tbody>
                     <tr>
-                        <td style="padding:4px;font-weight:600;">MEL-TC-001</td><td style="text-align:center;">F1</td><td style="text-align:center;">F1</td><td style="text-align:center;">SITE-A</td>
+                        <td style="padding:4px;font-weight:600;">MEL-TC-001</td><td style="text-align:center;">F1</td><td style="text-align:center;">FGF-EJEMPLO-0001</td><td style="text-align:center;">SITE-A</td>
                         <td style="text-align:center;">MEL-SITE-A-ODF-01</td><td style="text-align:center;">1</td><td style="text-align:center;">LC</td><td style="text-align:center;">SITE-B</td>
                         <td style="text-align:center;">MEL-SITE-B-ODF-01</td><td style="text-align:center;">1</td><td style="text-align:center;">LC</td>
                     </tr>
@@ -784,7 +923,7 @@ input:checked + .slider:before { transform: translateX(22px); }
         <details style="margin-top:var(--space-3);padding-top:var(--space-3);border-top:1px solid var(--border-color);">
             <summary style="cursor:pointer;font-size:var(--text-sm);font-weight:600;color:var(--text-primary);">Reglas de carga segura</summary>
             <p style="font-size:var(--text-xs);color:var(--text-secondary);margin-top:var(--space-2);">
-                La carga crea o actualiza únicamente los extremos incluidos y no elimina terminaciones omitidas. Cada terminación deja su puerto Ocupado. Un puerto no puede pertenecer a dos terminaciones. Si Ruta está vacía, el sistema identifica recargas por los puertos ya conectados, no solamente por el número de hilo.
+                La carga crea o actualiza únicamente los extremos incluidos y no elimina terminaciones omitidas. Cada terminación deja su puerto Ocupado. Un puerto no puede pertenecer a dos terminaciones. El sistema reconcilia siempre por Codigo Fibra; ID Fibra y Ruta solo se usan para verificar coherencia. Nunca identifica una fibra global usando solamente F1/F2.
             </p>
         </details>
         <div style="margin-top:16px;display:flex;flex-wrap:wrap;gap:8px;">
@@ -796,13 +935,134 @@ input:checked + .slider:before { transform: translateX(22px); }
 
 <script>
 const impModal = document.getElementById('importModal');
+let currentImportType = '';
+
+const IMPORT_GUIDES = {
+    sites_inventario: {
+        step: 'Paso 1', dependency: 'Inicio del flujo · no depende de otras cargas',
+        purpose: 'Crea o actualiza los Sites que usarán los ODF y la red.',
+        required: [['nombre', 'site', 'hub', 'hub_site']],
+        template: '/static/ejemplos/plantilla_sites.csv', example: '/static/ejemplos/sites_ejemplo.csv'
+    },
+    odf_inventario: {
+        step: 'Paso 2', dependency: 'Requiere: Sites',
+        purpose: 'Crea ODF y genera sus puertos libres según la capacidad indicada.',
+        required: [['odf'], ['hub_site'], ['sala'], ['rack']],
+        template: '/static/ejemplos/plantilla_odfs.csv', example: '/static/ejemplos/odfs_ejemplo.csv'
+    },
+    fibras_globales: {
+        step: 'Paso 3', dependency: 'La troncal es opcional y puede asociarse después',
+        purpose: 'Registra la identidad estable y el estado global oficial de cada fibra.',
+        required: [['codigo_fibra', 'codigo_de_fibra'], ['fibra', 'numero_de_fibra', 'hilo'], ['estado', 'estado_global']],
+        template: '/static/ejemplos/plantilla_fibras_globales.csv', example: '/static/ejemplos/fibras_globales_ejemplo.csv'
+    },
+    terminaciones_fibra: {
+        step: 'Paso 4', dependency: 'Requiere: Fibra global y ODF/puertos existentes',
+        purpose: 'Conecta cada fibra a uno o dos puertos ODF y actualiza su ocupación.',
+        required: [['fibra'], ['codigo_fibra', 'codigo_fibra_global']],
+        template: '{% url "plantilla_terminaciones_fibra" %}', example: '/static/ejemplos/terminaciones_fibra_ejemplo.csv'
+    },
+    ruta_otu: {
+        step: 'Paso 5', dependency: 'Puede cargarse sin coordenadas',
+        purpose: 'Registra el cable continuo o troncal y sus datos técnicos generales.',
+        required: [['ruta', 'troncal', 'ruta_troncal']],
+        template: '/static/ejemplos/plantilla_troncales.csv', example: '/static/ejemplos/rutas_ejemplo.csv'
+    },
+    tramos_inventario: {
+        step: 'Paso 6', dependency: 'Requiere: Troncal',
+        purpose: 'Define uno o varios tramos ordenados dentro de cada troncal.',
+        required: [['ruta', 'troncal', 'ruta_troncal'], ['codigo_tramo']],
+        template: '/static/ejemplos/plantilla_tramos.csv', example: '/static/ejemplos/inventario_tramos_ejemplo.csv'
+    },
+    fibras_inventario: {
+        step: 'Paso 7', dependency: 'Requiere: Fibra global, troncal y tramo',
+        purpose: 'Ubica la misma fibra global en cada tramo de su recorrido.',
+        required: [['ruta', 'troncal'], ['codigo_tramo'], ['fibra'], ['codigo_fibra'], ['estado']],
+        template: '/static/ejemplos/plantilla_fibras_por_tramo.csv', example: '/static/ejemplos/fibras_por_tramo_ejemplo.csv'
+    },
+    coordenadas_csv: {
+        step: 'Opcional', dependency: 'Requiere: Troncal; el inventario funciona sin mapa',
+        purpose: 'Dibuja el recorrido en el mapa sin alterar distancia ni capacidad técnica.',
+        required: [['ruta', 'troncal'], ['latitude', 'latitud'], ['longitude', 'longitud']],
+        template: '/static/ejemplos/plantilla_recorridos_mapa.csv', example: '/static/ejemplos/coordenadas_unificadas_ejemplo.csv'
+    },
+    puertos_odf_inventario: {
+        step: 'Opcional', dependency: 'Requiere: ODF; no modifica ocupación oficial',
+        purpose: 'Actualiza bandeja, conector, patchcord, destino y observaciones del puerto.',
+        required: [['hub_site'], ['odf'], ['puerto_odf']],
+        template: '/static/ejemplos/plantilla_datos_puertos.csv', example: '/static/ejemplos/datos_puertos_ejemplo.csv'
+    },
+    reservas: {
+        step: 'Opcional', dependency: 'Requiere una troncal existente para vincular el elemento',
+        purpose: 'Carga reservas de cable y elementos físicos georreferenciados.',
+        required: [['landmark_name'], ['connection_type'], ['latitud', 'latitude'], ['longitud', 'longitude'], ['enlace', 'ruta', 'troncal']],
+        template: '/static/ejemplos/plantilla_reservas_elementos.csv', example: '/static/ejemplos/reservas_ejemplo.csv'
+    }
+};
+
+function normalizeHeader(value) {
+    return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+}
+
+function parseCsv(text) {
+    const rows = [];
+    let row = [], value = '', quoted = false;
+    for (let index = 0; index < text.length; index += 1) {
+        const char = text[index];
+        if (char === '"' && quoted && text[index + 1] === '"') { value += '"'; index += 1; continue; }
+        if (char === '"') { quoted = !quoted; continue; }
+        if (char === ',' && !quoted) { row.push(value); value = ''; continue; }
+        if ((char === '\n' || char === '\r') && !quoted) {
+            if (char === '\r' && text[index + 1] === '\n') index += 1;
+            row.push(value); value = '';
+            if (row.some(cell => String(cell).trim())) rows.push(row);
+            row = [];
+            continue;
+        }
+        value += char;
+    }
+    if (value || row.length) { row.push(value); if (row.some(cell => String(cell).trim())) rows.push(row); }
+    return rows;
+}
+
+function setImportProgress(step) {
+    document.querySelectorAll('.import-progress__step').forEach((item, index) => item.classList.toggle('is-active', index <= step));
+}
+
+function resetImportValidation() {
+    const status = document.getElementById('importValidation');
+    const preview = document.getElementById('importPreview');
+    status.hidden = true; status.className = 'import-validation'; status.textContent = '';
+    preview.hidden = true; preview.replaceChildren();
+    document.getElementById('submitImportFile').disabled = true;
+    setImportProgress(0);
+}
+
+function renderGuide(tipo) {
+    const guide = IMPORT_GUIDES[tipo];
+    const container = document.getElementById('importGuideSummary');
+    container.replaceChildren();
+    if (!guide) return;
+    const wrapper = document.createElement('div');
+    wrapper.className = 'import-guide-summary';
+    wrapper.innerHTML = `<div class="import-guide-summary__top"><div><h4>${guide.step} · ${guide.dependency}</h4><p>${guide.purpose}</p></div></div>`;
+    const actions = document.createElement('div'); actions.className = 'import-guide-summary__actions';
+    [[guide.template, 'Descargar plantilla vacía'], [guide.example, 'Ver ejemplo completo']].forEach(([href, label]) => {
+        if (!href) return;
+        const link = document.createElement('a'); link.className = 'btn btn--sm btn--secondary'; link.href = href; link.download = ''; link.textContent = label; actions.appendChild(link);
+    });
+    wrapper.appendChild(actions); container.appendChild(wrapper);
+}
 
 function openImportModal(tipo, nombre) {
+    currentImportType = tipo;
     document.getElementById('importModalTitle').textContent = nombre;
     document.getElementById('importModalForm').action = `/cargar-csv/${tipo}/`;
     
     const label = document.getElementById('importModalLabel');
     const fileInput = document.getElementById('importModalFile');
+    document.getElementById('submitImportFile').textContent = 'Importar datos';
     if (tipo === 'coordenadas_rutas' || tipo === 'coordenadas_inventario') {
         label.textContent = "Seleccionar Archivo ZIP (.zip)";
         fileInput.accept = ".zip";
@@ -815,11 +1075,85 @@ function openImportModal(tipo, nombre) {
     const container = document.getElementById('importModalRequirements');
     container.innerHTML = '';
     if (tmpl) container.appendChild(tmpl.content.cloneNode(true));
-    
+    fileInput.value = '';
+    renderGuide(tipo);
+    resetImportValidation();
     impModal.style.display = 'flex';
 }
 
 function closeImportModal() { impModal.style.display = 'none'; }
+
+async function validateImportFile() {
+    const input = document.getElementById('importModalFile');
+    const status = document.getElementById('importValidation');
+    const preview = document.getElementById('importPreview');
+    const guide = IMPORT_GUIDES[currentImportType];
+    resetImportValidation();
+    status.hidden = false;
+    if (!input.files.length) {
+        status.classList.add('is-error'); status.textContent = 'Selecciona primero un archivo CSV.'; return;
+    }
+    const file = input.files[0];
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+        status.classList.add('is-error'); status.textContent = 'El archivo debe tener extensión .csv.'; return;
+    }
+    if (file.size > 15 * 1024 * 1024) {
+        status.classList.add('is-error'); status.textContent = 'El archivo supera el límite preventivo de 15 MB.'; return;
+    }
+    const text = (await file.text()).replace(/^\uFEFF/, '');
+    const rows = parseCsv(text);
+    if (rows.length < 2) {
+        status.classList.add('is-error'); status.textContent = 'El CSV debe incluir encabezados y al menos una fila de datos.'; return;
+    }
+    const headers = rows[0].map(normalizeHeader);
+    const missing = (guide?.required || []).filter(group => !group.some(name => headers.includes(normalizeHeader(name))));
+    if (missing.length) {
+        status.classList.add('is-error');
+        status.textContent = `Faltan columnas obligatorias: ${missing.map(group => group[0]).join(', ')}. Descarga la plantilla para usar los encabezados correctos.`;
+        return;
+    }
+    const table = document.createElement('table');
+    const thead = document.createElement('thead'); const headerRow = document.createElement('tr');
+    rows[0].forEach(value => { const th = document.createElement('th'); th.textContent = value; headerRow.appendChild(th); });
+    thead.appendChild(headerRow); table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    rows.slice(1, 6).forEach(values => {
+        const tr = document.createElement('tr'); rows[0].forEach((_, index) => { const td = document.createElement('td'); td.textContent = values[index] || '—'; tr.appendChild(td); }); tbody.appendChild(tr);
+    });
+    table.appendChild(tbody); preview.appendChild(table); preview.hidden = false;
+    status.classList.add('is-ok');
+    status.textContent = `Estructura válida: ${rows.length - 1} fila(s) detectadas. La importación hará la validación completa de datos y relaciones.`;
+    document.getElementById('submitImportFile').disabled = false;
+    setImportProgress(1);
+}
+
+document.getElementById('validateImportFile').addEventListener('click', validateImportFile);
+document.getElementById('importModalFile').addEventListener('change', resetImportValidation);
+document.getElementById('importModalForm').addEventListener('submit', event => {
+    if (document.getElementById('submitImportFile').disabled) { event.preventDefault(); return; }
+    setImportProgress(2);
+    document.getElementById('submitImportFile').disabled = true;
+    document.getElementById('submitImportFile').textContent = 'Importando…';
+});
+
+document.querySelectorAll('#guidedImportGrid [onclick*="openImportModal"]').forEach(card => {
+    const match = card.getAttribute('onclick').match(/openImportModal\('([^']+)'/);
+    if (!match) return;
+    const tipo = match[1]; const guide = IMPORT_GUIDES[tipo];
+    card.dataset.importType = tipo;
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); card.click(); }
+    });
+    if (guide && !card.querySelector('.import-card-dependency')) {
+        const badge = card.querySelector('.badge');
+        if (badge) badge.textContent = guide.step;
+        const dependency = document.createElement('div'); dependency.className = 'import-card-dependency'; dependency.textContent = `${guide.step} · ${guide.dependency}`; card.appendChild(dependency);
+    }
+});
+impModal.addEventListener('click', event => { if (event.target === impModal) closeImportModal(); });
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && impModal.style.display === 'flex') closeImportModal(); });
 </script>
 
 <script>

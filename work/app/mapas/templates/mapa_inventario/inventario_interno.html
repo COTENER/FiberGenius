@@ -6,7 +6,7 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'css/odf-inventory.css' %}?v=20260727-unified-inspector-1">
-<link rel="stylesheet" href="{% static 'css/network-inventory.css' %}?v=20260727-panel-fixes-1">
+<link rel="stylesheet" href="{% static 'css/network-inventory.css' %}?v=20260816-compact-odf-selection-1">
 <link rel="stylesheet" href="{% static 'css/inventory-filters.css' %}?v=20260723-1">
 {% endblock %}
 
@@ -62,7 +62,7 @@
             <label class="odf-filter-field"><span>Estado</span><select id="odf-status-filter" name="estado"><option value="">Todos</option>{% for value in estados_odf %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
             <label class="odf-filter-field"><span>Disponibilidad</span><select id="odf-capacity-filter" name="capacidad"><option value="">Todas</option><option value="disponible">Con puertos disponibles</option><option value="sin_disponibilidad">Sin puertos disponibles</option></select></label>
             <label class="odf-filter-field odf-filter-field--size"><span>Filas</span><select id="odf-page-size" name="page_size"><option value="10">10</option><option value="25" selected>25</option><option value="50">50</option><option value="100">100</option><option value="200">200</option></select></label>
-            <div class="odf-filter-actions"><button class="odf-btn odf-btn--primary" type="submit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16l-6 7v5l-4 2v-7Z"/></svg>Aplicar filtros</button><button id="odf-clear" class="odf-btn" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 1 0 2-5.3L4 9M4 4v5h5"/></svg>Limpiar</button></div>
+            <div class="odf-filter-actions"><button class="odf-btn odf-btn--primary" type="submit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 5h16l-6 7v5l-4 2v-7Z"/></svg>Aplicar filtros</button><button id="odf-clear" class="odf-btn" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 1 0 2-5.3L4 9M4 4v5h5"/></svg>Limpiar</button><div id="odf-ranking-context" class="network-context-filter" hidden><span>ODF: <strong id="odf-ranking-context-label"></strong></span><button id="odf-ranking-context-clear" type="button" aria-label="Quitar filtro de ODF">×</button></div></div>
             <p id="odf-export-status" class="odf-export-status" role="status" aria-live="polite"></p>
         </form>
     </section>
@@ -83,6 +83,7 @@
             <section class="network-inspector-card network-inspector-card--summary">
                 <header><div><strong>Distribución por estado</strong><span>Según los filtros activos</span></div></header>
                 <div id="odf-inspector-summary" class="network-state-summary"></div>
+                <p id="odf-inspector-source" class="network-state-source"></p>
             </section>
             <section class="network-inspector-card network-inspector-card--ranking">
                 <header><div><strong>ODF con mayor ocupación</strong><span>Top 5 del inventario filtrado</span></div></header>
@@ -134,5 +135,5 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/odf-inventory.js' %}?v=20260727-unified-inspector-1"></script>
+<script src="{% static 'js/odf-inventory.js' %}?v=20260816-ranking-toggle-1"></script>
 {% endblock %}
