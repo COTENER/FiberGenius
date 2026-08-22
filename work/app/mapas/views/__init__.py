@@ -41,6 +41,7 @@ from .usuarios import (
 from .importacion import (
     configuracion,
     cargar_csv,
+    progreso_importacion,
     descargar_plantilla_terminaciones_fibra,
     eliminar_ruta_config,
 )

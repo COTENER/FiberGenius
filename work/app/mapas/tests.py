@@ -1923,10 +1923,10 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(response.context['total_odfs'], 1)
         self.assertEqual(response.context['total_salas'], 1)
         self.assertEqual(response.context['total_racks'], 1)
-        self.assertEqual(response.context['total_fibras'], 12)
-        self.assertEqual(response.context['fibras_sin_estado'], 11)
-        self.assertEqual(response.context['ocupacion_fibras_pct'], 8.3)
-        self.assertEqual(response.context['utilizacion_fibras_pct'], 8.3)
+        self.assertEqual(response.context['total_fibras'], 1)
+        self.assertEqual(response.context['fibras_sin_estado'], 0)
+        self.assertEqual(response.context['ocupacion_fibras_pct'], 100)
+        self.assertEqual(response.context['utilizacion_fibras_pct'], 100)
         self.assertTrue(response.context['alertas_inventario'])
         self.assertEqual(response.context['top_rutas_capacidad'][0]['nombre'], 'TRONCAL-GUI')
         self.assertEqual(
@@ -2027,6 +2027,30 @@ class SeguridadYRendimientoTests(TestCase):
         self.assertContains(response, 'Sin capacidad por ruta')
         self.assertContains(response, 'Sin capacidad por ODF')
         self.assertNotContains(response, 'Actividad de cargas')
+
+    def test_dashboard_cuenta_fibras_globales_con_ruta_pendiente(self):
+        InventarioFibra.objects.create(
+            fibra_numero='F1',
+            estado='DISPONIBLE',
+            origen_estado='INFORMADO',
+        )
+        InventarioFibra.objects.create(
+            fibra_numero='F2',
+            estado='RESERVADO',
+            origen_estado='INFORMADO',
+        )
+
+        response = self.client.get(reverse('dashboard_inventario'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['total_fibras'], 2)
+        self.assertEqual(response.context['fibras_libres'], 1)
+        self.assertEqual(response.context['fibras_reservadas'], 1)
+        self.assertEqual(response.context['fibras_ocupadas'], 0)
+        self.assertEqual(response.context['fibras_sin_estado'], 0)
+        self.assertEqual(response.context['fibras_sin_cobertura'], 2)
+        self.assertTrue(response.context['inventario_con_datos'])
+        self.assertNotContains(response, 'Sin fibras registradas')
 
     def test_tarjeta_de_sites_abre_el_importador_guiado_sin_enlazar_el_endpoint_post(self):
         response = self.client.get(reverse('configuracion'))

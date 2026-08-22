@@ -66,6 +66,11 @@ urlpatterns = [
     path('grupos/eliminar/<int:pk>/', views.eliminar_grupo, name='eliminar_grupo'),
     path('cargar-csv/<str:tipo_csv>/', views.cargar_csv, name='cargar_csv'),
     path(
+        'api/importaciones/progreso/<uuid:codigo>/',
+        views.progreso_importacion,
+        name='progreso_importacion',
+    ),
+    path(
         'Configuracion/plantillas/terminaciones-fibra/',
         views.descargar_plantilla_terminaciones_fibra,
         name='plantilla_terminaciones_fibra',

@@ -1,5 +1,5 @@
-Ruta,Codigo Tramo,Fibra,Estado,Tipo de Servicio,Origen,Destino,Conector,Codigo Fibra,Observaciones
-TRONCAL-01,T001,F1,Ocupado,RED DATOS,ODF-A,ODF-B,SC/APC,FGF-TRONCAL-01-0001,Servicio principal
-TRONCAL-01,T002,F1,Ocupado,RED DATOS,ODF-A,ODF-B,SC/APC,FGF-TRONCAL-01-0001,Continúa desde T001
-TRONCAL-01,T001,F2,Disponible,VACANTE,ODF-A,ODF-B,SC/APC,FGF-TRONCAL-01-0002,
-TRONCAL-01,T002,F2,Disponible,VACANTE,ODF-A,ODF-B,SC/APC,FGF-TRONCAL-01-0002,
+Ruta,Secuencia,Codigo Fibra,Fibra,Estado,Observaciones
+TRONCAL-01,1,FGF-TRONCAL-01-0001,F1,Ocupado,Primer tramo
+TRONCAL-01,2,FGF-TRONCAL-01-0001,F1,Ocupado,Continúa desde el tramo 1
+TRONCAL-01,1,FGF-TRONCAL-01-0002,F2,Disponible,
+TRONCAL-01,2,FGF-TRONCAL-01-0002,F2,Disponible,

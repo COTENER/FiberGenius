@@ -5,25 +5,30 @@ import os
 import io
 import csv
 import hashlib
+import json
 import logging
 import re
+import threading
 import unicodedata
 import zipfile
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 
 import pandas as pd
 from django.conf import settings
 from django.shortcuts import render, redirect
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from django.contrib.auth.decorators import login_required, permission_required
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.validators import URLValidator
-from django.db import transaction
+from django.db import close_old_connections, transaction
 from django.db.models import Count, Q
 from django.utils.timezone import now
-from django.views.decorators.http import require_POST
+from django.urls import reverse
+from django.views.decorators.http import require_GET, require_POST
 import math
 from ..models import (
     OTU, Ruta, PuertoOTU, CoordenadaRuta, Reserva, IDRuta,
@@ -32,6 +37,7 @@ from ..models import (
     FibraTramo, TerminacionFibra, DetallePuertoODF,
 )
 from ..services.topologia import (
+    codigo_tramo_automatico,
     inferir_tipo_nodo,
     nodo_identifica_texto,
     normalizar_tipo_nodo,
@@ -40,6 +46,12 @@ from ..services.topologia import (
 from ..services.ubicacion import nombre_site
 
 logger = logging.getLogger('fibergenius.import')
+
+_IMPORT_EXECUTOR = ThreadPoolExecutor(
+    max_workers=1,
+    thread_name_prefix='fibergenius-import',
+)
+_IMPORT_PROGRESS_LOCAL = threading.local()
 
 VALORES_VACIOS = {'', '-', 'nan', 'none', 'null', 'sin_dato', 'no_aplica', 'n/a'}
 
@@ -61,6 +73,99 @@ ESTADOS_FIBRA_GLOBAL_CSV = {
     **ESTADOS_FIBRA_CSV,
     'disponibles': 'DISPONIBLE',
 }
+
+
+def _directorio_importaciones():
+    base = Path(
+        getattr(
+            settings,
+            'DATA_ROOT',
+            getattr(settings, 'MEDIA_ROOT', Path(settings.BASE_DIR) / 'media'),
+        )
+    )
+    directorio = base / 'importaciones'
+    (directorio / 'pendientes').mkdir(parents=True, exist_ok=True)
+    (directorio / 'progreso').mkdir(parents=True, exist_ok=True)
+    return directorio
+
+
+def _ruta_progreso(codigo):
+    return _directorio_importaciones() / 'progreso' / f'{codigo}.json'
+
+
+def _guardar_progreso(codigo, **cambios):
+    """Publica avance fuera de la BD para que SQLite no bloquee el sondeo."""
+    ruta = _ruta_progreso(codigo)
+    actual = {}
+    if ruta.exists():
+        try:
+            actual = json.loads(ruta.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            actual = {}
+    actual.update(cambios)
+    actual['codigo'] = str(codigo)
+    actual['actualizado_en'] = now().isoformat()
+    temporal = ruta.with_suffix(f'.{threading.get_ident()}.tmp')
+    temporal.write_text(
+        json.dumps(actual, ensure_ascii=False),
+        encoding='utf-8',
+    )
+    os.replace(temporal, ruta)
+    return actual
+
+
+def _reportar_progreso(
+    porcentaje,
+    etapa,
+    *,
+    procesadas=None,
+    total=None,
+    creadas=None,
+    actualizadas=None,
+    rechazadas=None,
+):
+    reporter = getattr(_IMPORT_PROGRESS_LOCAL, 'reporter', None)
+    if reporter is None:
+        return
+    datos = {
+        'porcentaje': max(0, min(100, int(porcentaje))),
+        'etapa': str(etapa),
+        'estado': 'PROCESANDO',
+    }
+    for clave, valor in (
+        ('procesadas', procesadas),
+        ('total', total),
+        ('creadas', creadas),
+        ('actualizadas', actualizadas),
+        ('rechazadas', rechazadas),
+    ):
+        if valor is not None:
+            datos[clave] = int(valor)
+    reporter(**datos)
+
+
+def _dividir_en_lotes(valores, tamano=500):
+    """Divide identificadores para no superar el límite de parámetros SQL."""
+    valores = list(valores)
+    for indice in range(0, len(valores), tamano):
+        yield valores[indice:indice + tamano]
+
+
+def _observacion_global_desde_terminacion(valor):
+    """Retira de la nota global datos redundantes del extremo y su puerto."""
+    texto = _texto(valor)
+    texto = re.sub(
+        r'(?i)(^|;\s*)Terminacion=[AB];\s*',
+        r'\1',
+        texto,
+    )
+    texto = re.sub(
+        r'(?i)(^|;\s*)Puerto local=[^;]*;\s*',
+        r'\1',
+        texto,
+    )
+    texto = re.sub(r';\s*;', ';', texto)
+    return texto.strip(' ;')
 
 
 def _validar_archivo_subido(archivo, *, es_zip=False):
@@ -200,7 +305,14 @@ def _leer_csv_normalizado(file, aliases=None):
         raise ValueError(f'No se pudo interpretar el CSV: {exc}') from exc
     if df.empty:
         raise ValueError('El CSV no contiene filas de datos.')
-    return _normalizar_dataframe_csv(df, aliases=aliases)
+    df = _normalizar_dataframe_csv(df, aliases=aliases)
+    _reportar_progreso(
+        20,
+        'Archivo leído; validando estructura y relaciones',
+        procesadas=0,
+        total=len(df),
+    )
+    return df
 
 
 def _capacidad_hilos(valor, *, permitir_vacio=True):
@@ -1432,13 +1544,14 @@ def _procesar_tramos_inventario(file, lote=None):
     if not (columnas & discriminadoras):
         return _procesar_tramos_legacy_validado(df, lote=lote)
 
-    requeridas = {
-        'ruta', 'codigo_tramo', 'secuencia',
-        'origen_tipo', 'origen_codigo',
-        'destino_tipo', 'destino_codigo',
-        'estado', 'distancia_m', 'capacidad', 'tipo_fibra',
-    }
-    faltantes = sorted(requeridas - columnas)
+    faltantes = []
+    for columna in ('ruta', 'secuencia'):
+        if columna not in columnas:
+            faltantes.append(columna)
+    if not columnas & {'origen', 'origen_codigo'}:
+        faltantes.append('origen')
+    if not columnas & {'destino', 'destino_codigo'}:
+        faltantes.append('destino')
     if faltantes:
         raise ValueError(
             'Inventario técnico de tramos: faltan columnas obligatorias: '
@@ -1455,37 +1568,54 @@ def _procesar_tramos_inventario(file, lote=None):
     secuencias_archivo = set()
     nombres_nodo_archivo = {}
     por_ruta = defaultdict(list)
+    tipos_inferidos = {}
+
+    def tipo_extremo(valor, tipo_informado):
+        clave = valor.casefold()
+        if tipo_informado:
+            tipo = normalizar_tipo_nodo(tipo_informado)
+            tipos_inferidos.setdefault(clave, tipo)
+            return tipo
+        if clave not in tipos_inferidos:
+            tipos_inferidos[clave] = inferir_tipo_nodo(valor)
+        return tipos_inferidos[clave]
 
     for indice, row in enumerate(df.to_dict('records'), start=2):
         ruta_nombre = _texto(row.get('ruta'))
-        codigo = _texto(row.get('codigo_tramo')).upper()
-        origen_codigo = _texto(row.get('origen_codigo')).upper()
-        destino_codigo = _texto(row.get('destino_codigo')).upper()
         try:
             ruta = rutas.get(ruta_nombre.casefold()) if ruta_nombre else None
             if not ruta_nombre:
                 raise ValueError('ruta es obligatoria')
             if not ruta:
                 raise ValueError(f"la ruta '{ruta_nombre}' no existe")
-            if not codigo:
-                raise ValueError('codigo_tramo es obligatorio')
             secuencia = _numero_no_negativo(
                 row.get('secuencia'), 'secuencia'
             )
             if not secuencia:
                 raise ValueError('secuencia debe ser mayor que cero')
+
+            codigo_informado = bool(_texto(row.get('codigo_tramo')))
+            codigo = (
+                _texto(row.get('codigo_tramo')).upper()
+                or codigo_tramo_automatico(secuencia)
+            )
+            origen_valor = (
+                _texto(row.get('origen'))
+                or _texto(row.get('origen_codigo'))
+            )
+            destino_valor = (
+                _texto(row.get('destino'))
+                or _texto(row.get('destino_codigo'))
+            )
+            if not origen_valor or not destino_valor:
+                raise ValueError('origen y destino son obligatorios')
+            origen_codigo = origen_valor.upper()
+            destino_codigo = destino_valor.upper()
+
             origen_tipo_raw = _texto(row.get('origen_tipo'))
             destino_tipo_raw = _texto(row.get('destino_tipo'))
-            if not origen_tipo_raw or not destino_tipo_raw:
-                raise ValueError(
-                    'origen_tipo y destino_tipo son obligatorios'
-                )
-            origen_tipo = normalizar_tipo_nodo(origen_tipo_raw)
-            destino_tipo = normalizar_tipo_nodo(destino_tipo_raw)
-            if not origen_codigo or not destino_codigo:
-                raise ValueError(
-                    'origen_codigo y destino_codigo son obligatorios'
-                )
+            origen_tipo = tipo_extremo(origen_valor, origen_tipo_raw)
+            destino_tipo = tipo_extremo(destino_valor, destino_tipo_raw)
             if (
                 origen_tipo == destino_tipo
                 and origen_codigo.casefold() == destino_codigo.casefold()
@@ -1539,8 +1669,12 @@ def _procesar_tramos_inventario(file, lote=None):
                 raise ValueError(f'secuencia {secuencia} repetida')
             codigos_archivo.add(clave_codigo)
             secuencias_archivo.add(clave_secuencia)
-            origen_nombre = _texto(row.get('origen_nombre')) or None
-            destino_nombre = _texto(row.get('destino_nombre')) or None
+            origen_nombre = (
+                _texto(row.get('origen_nombre')) or origen_valor
+            )
+            destino_nombre = (
+                _texto(row.get('destino_nombre')) or destino_valor
+            )
             for tipo_nodo, codigo_nodo, nombre_nodo in (
                 (origen_tipo, origen_codigo, origen_nombre),
                 (destino_tipo, destino_codigo, destino_nombre),
@@ -1564,6 +1698,7 @@ def _procesar_tramos_inventario(file, lote=None):
                 'fila': indice,
                 'ruta': ruta,
                 'codigo_tramo': codigo,
+                'codigo_informado': codigo_informado,
                 'secuencia': secuencia,
                 'origen_tipo': origen_tipo,
                 'origen_codigo': origen_codigo,
@@ -1629,21 +1764,26 @@ def _procesar_tramos_inventario(file, lote=None):
     objetivos_ids = set()
     for item in preparadas:
         candidatos = por_ruta_existentes[item['ruta'].pk]
-        objetivo = next(
-            (
-                tramo for tramo in candidatos
-                if tramo.codigo_tramo
-                and tramo.codigo_tramo.casefold()
-                == item['codigo_tramo'].casefold()
-            ),
-            None,
-        )
+        objetivo = None
+        if item['codigo_informado']:
+            objetivo = next(
+                (
+                    tramo for tramo in candidatos
+                    if tramo.codigo_tramo
+                    and tramo.codigo_tramo.casefold()
+                    == item['codigo_tramo'].casefold()
+                ),
+                None,
+            )
         if objetivo is None:
             objetivo = next(
                 (
                     tramo for tramo in candidatos
-                    if not tramo.codigo_tramo
-                    and tramo.tramo_secuencia == item['secuencia']
+                    if tramo.tramo_secuencia == item['secuencia']
+                    and (
+                        not item['codigo_informado']
+                        or not tramo.codigo_tramo
+                    )
                 ),
                 None,
             )
@@ -1766,7 +1906,12 @@ def _procesar_tramos_inventario(file, lote=None):
         creada = tramo is None
         if creada:
             tramo = InventarioTramo(ruta=item['ruta'])
-        tramo.codigo_tramo = item['codigo_tramo']
+        if creada or item['codigo_informado'] or not tramo.codigo_tramo:
+            tramo.codigo_tramo = item['codigo_tramo']
+        else:
+            # Una recarga simplificada identifica por ruta + secuencia y no
+            # reemplaza un código interno estable que ya exista.
+            item['codigo_tramo'] = tramo.codigo_tramo
         tramo.tramo_secuencia = item['secuencia']
         clave_origen = (
             item['origen_tipo'],
@@ -1847,6 +1992,8 @@ def _procesar_fibras_inventario(file, lote=None):
     df = _leer_csv_normalizado(file, aliases={
         'troncal': 'ruta',
         'codigo_de_tramo': 'codigo_tramo',
+        'numero_de_tramo': 'secuencia',
+        'n_de_tramo': 'secuencia',
         'codigo_de_fibra': 'codigo_fibra',
         'numero_de_fibra': 'fibra',
         'n_de_fibra': 'fibra',
@@ -1921,8 +2068,37 @@ def _procesar_fibras_inventario(file, lote=None):
                 )
 
             codigo_tramo = _texto(row.get('codigo_tramo')).upper()
+            secuencia = None
+            if _texto(row.get('secuencia')):
+                secuencia = _numero_no_negativo(
+                    row.get('secuencia'), 'secuencia'
+                )
+                if not secuencia:
+                    raise ValueError('secuencia debe ser mayor que cero')
             candidatos = tramos_por_ruta[ruta.pk]
-            if codigo_tramo:
+            if secuencia is not None:
+                tramo = next(
+                    (
+                        item for item in candidatos
+                        if item.tramo_secuencia == secuencia
+                    ),
+                    None,
+                )
+                if not tramo:
+                    raise ValueError(
+                        f'la secuencia {secuencia} no existe en la ruta'
+                    )
+                if (
+                    codigo_tramo
+                    and tramo.codigo_tramo
+                    and tramo.codigo_tramo.casefold()
+                    != codigo_tramo.casefold()
+                ):
+                    raise ValueError(
+                        f"la secuencia {secuencia} corresponde a "
+                        f"'{tramo.codigo_tramo}', no a '{codigo_tramo}'"
+                    )
+            elif codigo_tramo:
                 tramo = next(
                     (
                         item for item in candidatos
@@ -1942,8 +2118,8 @@ def _procesar_fibras_inventario(file, lote=None):
                 raise ValueError('la ruta no tiene inventario técnico')
             else:
                 raise ValueError(
-                    'Codigo Tramo es obligatorio porque la ruta tiene '
-                    f'{len(candidatos)} tramos'
+                    'Secuencia o Codigo Tramo es obligatorio porque la ruta '
+                    f'tiene {len(candidatos)} tramos'
                 )
 
             if (
@@ -1996,11 +2172,12 @@ def _procesar_fibras_inventario(file, lote=None):
         )
     }
     faltan_fibras = []
+    rutas_por_fibra = defaultdict(set)
     for item in preparadas:
         fibra = fibras_consultadas_por_codigo.get(
             item['codigo_estable'].casefold()
         )
-        if fibra and fibra.ruta_id != item['ruta'].pk:
+        if fibra and fibra.ruta_id not in (None, item['ruta'].pk):
             faltan_fibras.append(
                 f"fila {item['fila']}: el Codigo Fibra "
                 f"{item['codigo_estable']} pertenece a otra ruta"
@@ -2013,7 +2190,40 @@ def _procesar_fibras_inventario(file, lote=None):
                 f"{item['ruta'].nombre} / {item['codigo_estable']} no existe; "
                 'cárguela previamente en el inventario de fibras'
             )
+        else:
+            rutas_por_fibra[fibra.pk].add(item['ruta'].pk)
+    for fibra_id, rutas_objetivo in rutas_por_fibra.items():
+        if len(rutas_objetivo) > 1:
+            fibra = next(
+                item for item in fibras_consultadas_por_codigo.values()
+                if item.pk == fibra_id
+            )
+            faltan_fibras.append(
+                f"el Codigo Fibra {fibra.codigo_fibra} aparece en más de "
+                'una ruta dentro del archivo'
+            )
     _errores_csv(faltan_fibras, 'Detalle de fibras por tramo')
+
+    # Asociar una fibra provisional a sus tramos es precisamente el momento
+    # en que queda confirmada su troncal. La identidad global no cambia.
+    from ..services.fibras import asignar_ruta_fibra
+
+    fibras_asignadas = {}
+    for item in preparadas:
+        fibra = item['fibra_consultada']
+        if fibra.pk in fibras_asignadas:
+            item['fibra_consultada'] = fibras_asignadas[fibra.pk]
+            continue
+        if fibra.ruta_id is None:
+            fibra, _, _ = asignar_ruta_fibra(
+                fibra=fibra,
+                ruta=item['ruta'],
+                usuario=getattr(lote, 'usuario', None) if lote else None,
+                origen='EXCEL',
+                lote_importacion=lote,
+            )
+        fibras_asignadas[fibra.pk] = fibra
+        item['fibra_consultada'] = fibra
 
     ids_fibra = sorted({
         item['fibra_consultada'].pk for item in preparadas
@@ -2202,7 +2412,7 @@ def _procesar_terminaciones_fibra(file, lote=None):
         normalizar_estado_fibra,
         restablecer_estado_fibra,
     )
-    from ..services.puertos import conectar_puerto
+    from ..services.puertos import conectar_puertos_masivo
 
     df = _leer_csv_normalizado(file, aliases=TERMINACIONES_ALIASES_CSV)
     faltantes = sorted(
@@ -2374,23 +2584,34 @@ def _procesar_terminaciones_fibra(file, lote=None):
                     if 'servicio' in df.columns else None
                 ),
                 'observaciones': (
-                    _texto(row.get('observaciones'))
+                    _observacion_global_desde_terminacion(
+                        row.get('observaciones')
+                    )
                     if 'observaciones' in df.columns else None
                 ),
             })
         except Exception as exc:
             errores.append(f'fila {numero_fila}: {exc}')
     _errores_csv(errores, 'Terminaciones de fibra')
+    _reportar_progreso(
+        28,
+        'Filas interpretadas; verificando ODF y puertos',
+        procesadas=len(preparadas),
+        total=len(df),
+    )
 
-    odf_ids = {clave[0] for clave in claves_puerto}
-    puertos = {
-        (puerto.odf_obj_id, puerto.puerto_odf.casefold()): puerto
+    odf_ids = sorted({clave[0] for clave in claves_puerto})
+    puertos = {}
+    for lote_odf_ids in _dividir_en_lotes(odf_ids):
         for puerto in (
             DetallePuertoODF.objects
             .select_related('odf_obj__rack_obj__sala__hub_site')
-            .filter(odf_obj_id__in=odf_ids)
-        )
-    }
+            .filter(odf_obj_id__in=lote_odf_ids)
+            .iterator()
+        ):
+            puertos[
+                (puerto.odf_obj_id, puerto.puerto_odf.casefold())
+            ] = puerto
     errores = []
     for item in preparadas:
         for extremo in item['extremos']:
@@ -2403,15 +2624,25 @@ def _procesar_terminaciones_fibra(file, lote=None):
             else:
                 extremo['puerto'] = puerto
     _errores_csv(errores, 'Terminaciones de fibra')
+    _reportar_progreso(
+        38,
+        'ODF y puertos verificados; comprobando terminaciones existentes',
+        procesadas=len(preparadas),
+        total=len(df),
+    )
 
-    ids_puerto = [puerto.pk for puerto in puertos.values()]
     terminaciones_objetivo = list(
         TerminacionFibra.objects
         .select_related('fibra__ruta', 'puerto_odf__odf_obj')
-        .filter(puerto_odf_id__in=ids_puerto)
+        .all()
+        .iterator()
     )
     por_puerto = {
         terminacion.puerto_odf_id: terminacion
+        for terminacion in terminaciones_objetivo
+    }
+    por_fibra_extremo = {
+        (terminacion.fibra_id, terminacion.extremo): terminacion
         for terminacion in terminaciones_objetivo
     }
 
@@ -2565,10 +2796,7 @@ def _procesar_terminaciones_fibra(file, lote=None):
                 )
                 continue
             existente_extremo = (
-                TerminacionFibra.objects.filter(
-                    fibra=fibra,
-                    extremo=extremo['extremo'],
-                ).first()
+                por_fibra_extremo.get((fibra.pk, extremo['extremo']))
                 if fibra else None
             )
             if (
@@ -2590,6 +2818,12 @@ def _procesar_terminaciones_fibra(file, lote=None):
                     'reservado; consuma la reserva mediante una operación explícita'
                 )
     _errores_csv(errores, 'Terminaciones de fibra')
+    _reportar_progreso(
+        50,
+        'Relaciones validadas; preparando fibras globales',
+        procesadas=len(preparadas),
+        total=len(df),
+    )
 
     for item in preparadas:
         globales = grupos_globales[item['grupo']]
@@ -2607,17 +2841,53 @@ def _procesar_terminaciones_fibra(file, lote=None):
 
     from ..services.fibras import (
         actualizar_metadatos_fibra,
+        actualizar_fibras_masivo,
         asignar_ruta_fibra,
         crear_fibra,
     )
 
-    creadas = actualizadas = 0
     fibras_por_grupo = {
         item['grupo']: item['fibra']
         for item in preparadas
         if item['fibra'] is not None
     }
+    grupos_existentes = set(fibras_por_grupo)
     grupos_aplicados = set()
+    fibras_tocadas = set()
+    conexiones = []
+    usuario = getattr(lote, 'usuario', None) if lote else None
+
+    operaciones_fibras = []
+    grupos_preparados = set()
+    for item in preparadas:
+        if item['grupo'] in grupos_preparados or item['grupo'] not in grupos_existentes:
+            continue
+        cambios = {}
+        if item['condicion_informada']:
+            cambios['condicion_fisica'] = item['condicion_informada']
+        if item['servicio'] is not None:
+            cambios['nombre_fibra'] = item['servicio']
+        if item['observaciones'] is not None:
+            cambios['observaciones'] = item['observaciones']
+        operaciones_fibras.append({
+            'fibra': fibras_por_grupo[item['grupo']],
+            'cambios': cambios,
+            'estado_informado': item['estado_informado'],
+            'restablecer_estado': item['restablecer_estado'],
+        })
+        grupos_preparados.add(item['grupo'])
+    actualizar_fibras_masivo(
+        operaciones_fibras,
+        usuario=usuario,
+        origen='EXCEL',
+        lote_importacion=lote,
+    )
+    _reportar_progreso(
+        70,
+        'Metadatos de fibras actualizados; preparando conexiones ODF',
+        total=len(df),
+    )
+
     for item in preparadas:
         fibra = fibras_por_grupo.get(item['grupo'])
         if fibra is None:
@@ -2630,7 +2900,7 @@ def _procesar_terminaciones_fibra(file, lote=None):
                 ),
                 nombre_fibra=item['servicio'] or '',
                 observaciones=item['observaciones'] or '',
-                usuario=getattr(lote, 'usuario', None) if lote else None,
+                usuario=usuario,
                 origen='EXCEL',
                 lote_importacion=lote,
             )
@@ -2650,19 +2920,27 @@ def _procesar_terminaciones_fibra(file, lote=None):
                 cambios_metadatos['nombre_fibra'] = item['servicio']
             if item['observaciones'] is not None:
                 cambios_metadatos['observaciones'] = item['observaciones']
-            if cambios_metadatos:
+            cambios_reales = {
+                campo: valor
+                for campo, valor in cambios_metadatos.items()
+                if getattr(fibra, campo) != valor
+            }
+            if item['grupo'] not in grupos_existentes and cambios_reales:
                 actualizar_metadatos_fibra(
                     fibra=fibra,
-                    usuario=getattr(lote, 'usuario', None) if lote else None,
+                    usuario=usuario,
                     origen='EXCEL',
                     lote_importacion=lote,
-                    **cambios_metadatos,
+                    **cambios_reales,
                 )
-            if item['estado_informado']:
+            if item['grupo'] not in grupos_existentes and item['estado_informado'] and (
+                fibra.estado != item['estado_informado']
+                or fibra.origen_estado != 'INFORMADO'
+            ):
                 establecer_estado_fibra_informado(
                     fibra=fibra,
                     estado=item['estado_informado'],
-                    usuario=getattr(lote, 'usuario', None) if lote else None,
+                    usuario=usuario,
                     origen='EXCEL',
                     lote_importacion=lote,
                 )
@@ -2670,58 +2948,58 @@ def _procesar_terminaciones_fibra(file, lote=None):
                 fibra, _, _ = asignar_ruta_fibra(
                     fibra=fibra,
                     ruta=item['ruta'],
-                    usuario=getattr(lote, 'usuario', None) if lote else None,
+                    usuario=usuario,
                     origen='EXCEL',
                     lote_importacion=lote,
                 )
             # Sin información se aplica al final. Así la materialización
             # 1:1 de una Ruta de un tramo no convierte el dato BHP en una
             # inferencia dentro de la misma acción.
-            if item['restablecer_estado']:
+            if item['grupo'] not in grupos_existentes and item['restablecer_estado']:
                 restablecer_estado_fibra(
                     fibra=fibra,
-                    usuario=getattr(lote, 'usuario', None) if lote else None,
+                    usuario=usuario,
                     origen='EXCEL',
                     lote_importacion=lote,
                 )
             grupos_aplicados.add(item['grupo'])
         item['fibra'] = fibra
+        fibras_tocadas.add(fibra.pk)
         for extremo in item['extremos']:
-            terminacion, creada = conectar_puerto(
-                puerto_id=extremo['puerto'].pk,
-                fibra_id=fibra.pk,
-                fibra_numero='',
-                extremo=extremo['extremo'],
-                permitir_mover=False,
-                ocupar_fibra=False,
-                usuario=getattr(lote, 'usuario', None) if lote else None,
-                origen='EXCEL',
+            conexiones.append({
+                'fibra': fibra,
+                'puerto': extremo['puerto'],
+                'extremo': extremo['extremo'],
+                'tipo_conector': extremo['conector'],
+            })
+
+    # El lote identifica la procedencia del último dato sin generar un evento
+    # de auditoría ficticio cuando ningún valor de negocio cambió.
+    if lote is not None:
+        for lote_ids in _dividir_en_lotes(sorted(fibras_tocadas)):
+            InventarioFibra.objects.filter(pk__in=lote_ids).update(
                 lote_importacion=lote,
             )
-            fibra = terminacion.fibra
-            item['fibra'] = fibra
-            if creada:
-                creadas += 1
-            else:
-                actualizadas += 1
 
-            conector = (
-                extremo['conector']
-                or terminacion.tipo_conector
-                or extremo['puerto'].tipo_conector
-                or extremo['puerto'].odf_obj.tipo_conector
-                or fibra.tipo_conector
-                or ''
-            )
-            cambios = []
-            if terminacion.tipo_conector != conector:
-                terminacion.tipo_conector = conector
-                cambios.append('tipo_conector')
-            if terminacion.lote_importacion_id != getattr(lote, 'pk', None):
-                terminacion.lote_importacion = lote
-                cambios.append('lote_importacion')
-            if cambios:
-                terminacion.save(update_fields=cambios)
+    _reportar_progreso(
+        78,
+        'Creando terminaciones y actualizando puertos',
+        total=len(df),
+    )
+    _, creadas, actualizadas = conectar_puertos_masivo(
+        conexiones,
+        usuario=usuario,
+        origen='EXCEL',
+        lote_importacion=lote,
+    )
+    _reportar_progreso(
+        92,
+        'Terminaciones creadas; cerrando contadores y auditoría',
+        procesadas=len(df),
+        total=len(df),
+        creadas=creadas,
+        actualizadas=actualizadas,
+    )
 
     resultado = _resultado(
         len(df),
@@ -3009,6 +3287,125 @@ def _procesar_coordenadas_csv(file, lote=None):
     return resultado
 
 
+def _cerrar_lote_exitoso(lote, resultado):
+    if not isinstance(resultado, dict):
+        resultado = _resultado()
+    filas_rechazadas = int(resultado.get('rechazadas', 0) or 0)
+    lote.estado = 'COMPLETADO_CON_ERRORES' if filas_rechazadas else 'COMPLETADO'
+    lote.total_filas = int(resultado.get('total', 0) or 0)
+    lote.filas_creadas = int(resultado.get('creadas', 0) or 0)
+    lote.filas_actualizadas = int(resultado.get('actualizadas', 0) or 0)
+    lote.filas_rechazadas = filas_rechazadas
+    lote.finalizado_en = now()
+    lote.save(update_fields=[
+        'estado', 'total_filas', 'filas_creadas', 'filas_actualizadas',
+        'filas_rechazadas', 'finalizado_en',
+    ])
+    return resultado
+
+
+def _cerrar_lote_fallido(lote, exc):
+    lote.estado = 'FALLIDO'
+    lote.detalle_errores = [str(exc)[:1000]]
+    lote.finalizado_en = now()
+    lote.save(update_fields=['estado', 'detalle_errores', 'finalizado_en'])
+
+
+def _guardar_archivo_importacion(archivo_subido, lote):
+    nombre = os.path.basename(archivo_subido.name)
+    ruta = _directorio_importaciones() / 'pendientes' / f'{lote.codigo}_{nombre}'
+    archivo_subido.seek(0)
+    with ruta.open('wb') as destino:
+        for chunk in archivo_subido.chunks():
+            destino.write(chunk)
+    return ruta
+
+
+def _ejecutar_importacion_en_segundo_plano(
+    lote_id,
+    codigo,
+    tipo_csv,
+    nombre_amigable,
+    procesador_func,
+    ruta_archivo,
+):
+    close_old_connections()
+    _IMPORT_PROGRESS_LOCAL.reporter = lambda **datos: _guardar_progreso(
+        codigo,
+        **datos,
+    )
+    try:
+        lote = LoteImportacion.objects.select_related('usuario').get(pk=lote_id)
+        _reportar_progreso(10, f'Preparando {nombre_amigable}')
+        with Path(ruta_archivo).open('rb') as archivo:
+            _reportar_progreso(15, 'Validando archivo y datos relacionados')
+            resultado = procesador_func(archivo, lote=lote)
+        _reportar_progreso(95, 'Consolidando resultado y auditoría')
+        resultado = _cerrar_lote_exitoso(lote, resultado)
+        _guardar_progreso(
+            codigo,
+            estado=lote.estado,
+            porcentaje=100,
+            etapa='Importación completada',
+            procesadas=resultado['total'],
+            total=resultado['total'],
+            creadas=resultado['creadas'],
+            actualizadas=resultado['actualizadas'],
+            rechazadas=resultado.get('rechazadas', 0),
+            mensaje=(
+                f"{nombre_amigable}: {resultado['total']} fila(s) procesadas; "
+                f"{resultado['creadas']} creadas, "
+                f"{resultado['actualizadas']} actualizadas y "
+                f"{resultado.get('rechazadas', 0)} rechazadas."
+            ),
+        )
+    except Exception as exc:
+        logger.exception(
+            'Error inesperado al procesar la carga asíncrona %s',
+            tipo_csv,
+        )
+        close_old_connections()
+        try:
+            lote = LoteImportacion.objects.get(pk=lote_id)
+            _cerrar_lote_fallido(lote, exc)
+        except Exception:
+            logger.exception('No se pudo cerrar como fallido el lote %s', codigo)
+        _guardar_progreso(
+            codigo,
+            estado='FALLIDO',
+            porcentaje=100,
+            etapa='La importación falló',
+            mensaje='No se pudo completar la importación. Revise el detalle del lote.',
+        )
+    finally:
+        _IMPORT_PROGRESS_LOCAL.reporter = None
+        try:
+            Path(ruta_archivo).unlink(missing_ok=True)
+        except OSError:
+            logger.warning('No se pudo retirar el archivo temporal %s', ruta_archivo)
+        close_old_connections()
+
+
+@require_GET
+def progreso_importacion(request, codigo):
+    """Estado por UUID; evita consultar BD durante el bloqueo de SQLite."""
+    ruta = _ruta_progreso(codigo)
+    if not ruta.exists():
+        return JsonResponse(
+            {'estado': 'PENDIENTE', 'porcentaje': 0, 'etapa': 'En cola'},
+            status=404,
+        )
+    try:
+        datos = json.loads(ruta.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return JsonResponse(
+            {'estado': 'PROCESANDO', 'porcentaje': 0, 'etapa': 'Preparando estado'},
+            status=503,
+        )
+    respuesta = JsonResponse(datos)
+    respuesta['Cache-Control'] = 'no-store, max-age=0'
+    return respuesta
+
 
 @login_required
 @require_POST
@@ -3067,6 +3464,9 @@ def cargar_csv(request, tipo_csv):
         raise PermissionDenied
 
     procesador_func, nombre_amigable = PROCESADORES[tipo_csv]
+    solicitud_asincrona = (
+        request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+    )
 
     if request.method == 'POST':
         if 'csv_file' in request.FILES:
@@ -3074,6 +3474,11 @@ def cargar_csv(request, tipo_csv):
 
             extension_valida = '.zip' if tipo_csv in ['coordenadas_rutas', 'coordenadas_inventario'] else '.csv'
             if not archivo_subido.name.casefold().endswith(extension_valida):
+                if solicitud_asincrona:
+                    return JsonResponse(
+                        {'error': f'El archivo debe ser de formato {extension_valida}.'},
+                        status=400,
+                    )
                 messages.error(request, f"El archivo debe ser de formato {extension_valida}.")
                 return redirect('configuracion')
 
@@ -3083,6 +3488,8 @@ def cargar_csv(request, tipo_csv):
                     es_zip=extension_valida == '.zip',
                 )
             except ValueError as exc:
+                if solicitud_asincrona:
+                    return JsonResponse({'error': str(exc)}, status=400)
                 messages.error(request, str(exc))
                 return redirect('configuracion')
 
@@ -3097,6 +3504,53 @@ def cargar_csv(request, tipo_csv):
                 estado='PROCESANDO',
                 usuario=request.user,
             )
+
+            if solicitud_asincrona:
+                try:
+                    ruta_archivo = _guardar_archivo_importacion(
+                        archivo_subido,
+                        lote,
+                    )
+                    _guardar_progreso(
+                        lote.codigo,
+                        estado='PENDIENTE',
+                        porcentaje=2,
+                        etapa='Archivo recibido; esperando turno',
+                        procesadas=0,
+                        total=0,
+                        creadas=0,
+                        actualizadas=0,
+                        rechazadas=0,
+                        tipo=tipo_csv,
+                        archivo=lote.archivo_origen,
+                    )
+                    _IMPORT_EXECUTOR.submit(
+                        _ejecutar_importacion_en_segundo_plano,
+                        lote.pk,
+                        str(lote.codigo),
+                        tipo_csv,
+                        nombre_amigable,
+                        procesador_func,
+                        str(ruta_archivo),
+                    )
+                except Exception as exc:
+                    logger.exception('No se pudo encolar la importación %s', tipo_csv)
+                    _cerrar_lote_fallido(lote, exc)
+                    return JsonResponse(
+                        {'error': 'No se pudo iniciar la importación.'},
+                        status=500,
+                    )
+                return JsonResponse(
+                    {
+                        'lote': str(lote.codigo),
+                        'estado': 'PENDIENTE',
+                        'progreso_url': reverse(
+                            'progreso_importacion',
+                            args=[lote.codigo],
+                        ),
+                    },
+                    status=202,
+                )
 
             try:
                 kwargs_procesador = {'lote': lote}
@@ -3151,24 +3605,12 @@ def cargar_csv(request, tipo_csv):
                         )
                     notificar(request, mensaje)
 
-                lote.estado = 'COMPLETADO_CON_ERRORES' if filas_rechazadas else 'COMPLETADO'
-                lote.total_filas = resultado['total']
-                lote.filas_creadas = resultado['creadas']
-                lote.filas_actualizadas = resultado['actualizadas']
-                lote.filas_rechazadas = filas_rechazadas
-                lote.finalizado_en = now()
-                lote.save(update_fields=[
-                    'estado', 'total_filas', 'filas_creadas', 'filas_actualizadas',
-                    'filas_rechazadas', 'finalizado_en',
-                ])
+                _cerrar_lote_exitoso(lote, resultado)
 
                 return redirect('configuracion')
             except Exception as e:
                 logger.exception("Error inesperado al procesar la carga %s", tipo_csv)
-                lote.estado = 'FALLIDO'
-                lote.detalle_errores = [str(e)[:1000]]
-                lote.finalizado_en = now()
-                lote.save(update_fields=['estado', 'detalle_errores', 'finalizado_en'])
+                _cerrar_lote_fallido(lote, e)
                 messages.error(request, "No se pudo procesar el archivo. Consulte el detalle del lote.")
                 return redirect('configuracion')
         else:

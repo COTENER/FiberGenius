@@ -360,6 +360,17 @@ input:checked + .slider:before { transform: translateX(22px); }
 
                 <div id="importValidation" class="import-validation" hidden aria-live="polite"></div>
                 <div id="importPreview" class="import-preview" hidden></div>
+                <div id="importExecution" class="import-execution" hidden aria-live="polite">
+                    <div class="import-execution__header">
+                        <strong id="importExecutionStage">Preparando importación</strong>
+                        <span id="importExecutionPercent">0 %</span>
+                    </div>
+                    <div class="import-execution__track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                        <div id="importExecutionBar" class="import-execution__bar"></div>
+                    </div>
+                    <div id="importExecutionCounts" class="import-execution__counts">Esperando inicio…</div>
+                    <div id="importExecutionMessage" class="import-execution__message" hidden></div>
+                </div>
                 
                 <div style="display:flex; gap:12px; margin-top:32px; justify-content: flex-end; flex-wrap:wrap;">
                     <button type="button" onclick="closeImportModal()" class="btn btn--secondary" style="padding: 12px 24px; border-radius: 12px;">Cancelar</button>
@@ -396,6 +407,13 @@ input:checked + .slider:before { transform: translateX(22px); }
 .import-preview table { width:100%; min-width:560px; border-collapse:collapse; font-size:11px; }
 .import-preview th, .import-preview td { padding:7px 9px; border-bottom:1px solid var(--border-color); white-space:nowrap; text-align:left; }
 .import-preview th { position:sticky; top:0; background:var(--bg-surface-2); color:var(--text-secondary); }
+.import-execution { margin-top:16px; padding:16px; border:1px solid var(--border-color); border-radius:12px; background:var(--bg-surface-2); }
+.import-execution__header { display:flex; align-items:center; justify-content:space-between; gap:16px; color:var(--text-primary); font-size:13px; }
+.import-execution__track { height:12px; margin-top:12px; overflow:hidden; border-radius:999px; background:var(--border-color); }
+.import-execution__bar { width:0; height:100%; border-radius:inherit; background:linear-gradient(90deg,var(--accent),#22c55e); transition:width .35s ease; }
+.import-execution.is-failed .import-execution__bar { background:var(--danger); }
+.import-execution__counts { margin-top:10px; color:var(--text-secondary); font-size:12px; }
+.import-execution__message { margin-top:10px; color:var(--text-primary); font-size:12px; line-height:1.5; }
 @media (max-width: 640px) {
     .import-progress__step strong { display:none; }
     .import-guide-summary__top { flex-direction:column; }
@@ -785,62 +803,44 @@ input:checked + .slider:before { transform: translateX(22px); }
 <template id="tmpl-tramos_inventario">
     <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
         <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Inventario Técnico de Tramos</h4>
-        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Columnas disponibles (usa <span class="badge badge--accent">ruta/troncal</span> como clave):</p>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Fiber Genius genera el código interno del tramo y determina el tipo de sus extremos. Solo debes identificar la troncal, el orden y los nombres de origen y destino.</p>
         <div style="display:flex;flex-wrap:wrap;gap:4px; margin-bottom: 12px;">
-            <span class="badge badge--accent">ruta/troncal</span><span class="badge badge--accent">estado</span><span class="badge badge--accent">distancia</span><span class="badge badge--accent">mufas</span><span class="badge badge--accent">splitters</span><span class="badge badge--accent">reservas_m</span><span class="badge badge--accent">capacidad</span><span class="badge badge--accent">tipo_fibra</span><span class="badge badge--accent">origen</span><span class="badge badge--accent">destino</span><span class="badge badge--accent">hub_site</span><span class="badge badge--accent">marca_modelo</span><span class="badge badge--accent">serial</span><span class="badge badge--accent">odf_nombre</span><span class="badge badge--accent">hilos_ocupados</span><span class="badge badge--accent">hilos_libres</span>
+            <span class="badge badge--warning">ruta (obligatorio)</span><span class="badge badge--warning">secuencia (obligatorio)</span><span class="badge badge--warning">origen (obligatorio)</span><span class="badge badge--warning">destino (obligatorio)</span><span class="badge badge--accent">estado</span><span class="badge badge--accent">distancia_m</span><span class="badge badge--accent">capacidad</span><span class="badge badge--accent">tipo_fibra</span><span class="badge badge--accent">tipo_trazado</span><span class="badge badge--accent">marca_modelo</span><span class="badge badge--accent">serial</span><span class="badge badge--accent">mufas</span><span class="badge badge--accent">splitters</span><span class="badge badge--accent">reservas_m</span><span class="badge badge--accent">observaciones</span>
         </div>
         <h5 style="font-size:12px;color:var(--text-primary);margin-bottom:8px;">Ejemplo de Fila:</h5>
         <div style="overflow-x: auto;">
-            <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);min-width:1200px;">
+            <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);min-width:700px;">
                 <thead style="border-bottom:1px solid var(--border-color);color:var(--text-secondary);">
-                    <tr><th style="text-align:left;padding:4px;">ruta/troncal</th><th>estado</th><th>distancia</th><th>mufas</th><th>splitters</th><th>reservas_m</th><th>capacidad</th><th>tipo_fibra</th><th>origen</th><th>destino</th><th>hub_site</th><th>marca_modelo</th><th>serial</th><th>odf_nombre</th><th>hilos_ocupados</th><th>hilos_libres</th></tr>
+                    <tr><th style="text-align:left;padding:4px;">ruta</th><th>secuencia</th><th>origen</th><th>destino</th><th>estado</th><th>distancia_m</th><th>capacidad</th><th>tipo_fibra</th></tr>
                 </thead>
                 <tbody>
-                    <tr><td style="padding:4px;">Colina OLT1...</td><td style="text-align:center;">ACTIVO</td><td style="text-align:center;">36.86</td><td style="text-align:center;">2</td><td style="text-align:center;">0</td><td style="text-align:center;">2.97</td><td style="text-align:center;">144 fibras</td><td style="text-align:center;">G.652D</td><td style="text-align:center;">Indep.</td><td style="text-align:center;">Colina</td><td style="text-align:center;">Indep.</td><td style="text-align:center;">Cable FO</td><td style="text-align:center;">S/N</td><td style="text-align:center;">TR01</td><td style="text-align:center;">0</td><td style="text-align:center;">144</td></tr>
+                    <tr><td style="padding:4px;">TRONCAL-01</td><td style="text-align:center;">1</td><td style="text-align:center;">SITE-A</td><td style="text-align:center;">MUFA-01</td><td style="text-align:center;">ACTIVO</td><td style="text-align:center;">1250</td><td style="text-align:center;">64</td><td style="text-align:center;">G.652D</td></tr>
                 </tbody>
             </table>
         </div>
-        <details style="margin-top:var(--space-3);padding-top:var(--space-3);border-top:1px solid var(--border-color);">
-            <summary style="cursor:pointer;font-size:var(--text-sm);font-weight:600;color:var(--text-primary);">Opciones avanzadas para rutas con varios tramos</summary>
-            <div style="margin-top:var(--space-3);">
-                <p style="font-size:var(--text-xs);color:var(--text-secondary);margin-bottom:var(--space-2);">
-                    El archivo habitual continúa funcionando para rutas de un solo tramo. Para varios tramos, identifica cada fila con <code>codigo_tramo</code> y <code>secuencia</code>, y declara sus extremos. La carga crea o actualiza; no elimina tramos omitidos.
-                </p>
-                <div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:var(--space-2);">
-                    <span class="badge badge--accent">ruta</span><span class="badge badge--accent">codigo_tramo</span><span class="badge badge--accent">secuencia</span><span class="badge badge--accent">origen_tipo</span><span class="badge badge--accent">origen_codigo</span><span class="badge badge--accent">destino_tipo</span><span class="badge badge--accent">destino_codigo</span>
-                </div>
-                <a href="/static/ejemplos/inventario_tramos_ejemplo.csv" download class="btn btn--sm btn--secondary">Descargar plantilla opcional para varios tramos</a>
-            </div>
-        </details>
+        <a href="/static/ejemplos/inventario_tramos_ejemplo.csv" download class="btn btn--sm btn--secondary" style="margin-top:var(--space-3);">Descargar ejemplo simplificado</a>
     </div>
 </template>
 
 <template id="tmpl-fibras_inventario">
     <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
         <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Fibras por Tramo</h4>
-        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Cada fila declara una posición física. <code>Codigo Fibra</code> identifica la fibra global y es obligatorio, incluso cuando la troncal ya está informada.</p>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Cada fila ubica una fibra global existente en una posición física de un tramo. El tramo se identifica por <code>Ruta + Secuencia</code>; no debes informar su código interno.</p>
         <div style="display:flex;flex-wrap:wrap;gap:4px; margin-bottom: 12px;">
-            <span class="badge badge--accent">Troncal</span><span class="badge badge--accent">Fibra</span><span class="badge badge--warning">Codigo Fibra (obligatorio)</span><span class="badge badge--accent">Estado</span><span class="badge badge--accent">Tipo de Servicio</span><span class="badge badge--accent">Origen</span><span class="badge badge--accent">Destino</span><span class="badge badge--accent">Conector</span>
+            <span class="badge badge--warning">Ruta (obligatorio)</span><span class="badge badge--warning">Secuencia (obligatorio)</span><span class="badge badge--warning">Codigo Fibra (obligatorio)</span><span class="badge badge--warning">Fibra (obligatorio)</span><span class="badge badge--warning">Estado (obligatorio)</span><span class="badge badge--accent">Observaciones</span>
         </div>
         <div style="overflow-x: auto;">
-            <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);min-width:900px;">
+            <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);min-width:650px;">
                 <thead style="border-bottom:1px solid var(--border-color);color:var(--text-secondary);">
-                    <tr><th style="text-align:left;padding:4px;">Troncal</th><th>Fibra</th><th>Codigo Fibra</th><th>Estado</th><th>Tipo de Servicio</th><th>Origen</th><th>Destino</th><th>Conector</th></tr>
+                    <tr><th style="text-align:left;padding:4px;">Ruta</th><th>Secuencia</th><th>Codigo Fibra</th><th>Fibra</th><th>Estado</th><th>Observaciones</th></tr>
                 </thead>
                 <tbody>
-                    <tr><td style="padding:4px;">TR01_LMLO...</td><td style="text-align:center;">F61</td><td style="text-align:center;">FGF-TR01-0061</td><td style="text-align:center;">Ocupado</td><td style="text-align:center;">Reserva TR01</td><td style="text-align:center;">TR01</td><td style="text-align:center;">LMLO123-F</td><td style="text-align:center;">SC/APC</td></tr>
+                    <tr><td style="padding:4px;">TRONCAL-01</td><td style="text-align:center;">1</td><td style="text-align:center;">FGF-TRONCAL-01-0001</td><td style="text-align:center;">F1</td><td style="text-align:center;">Ocupado</td><td style="text-align:center;">Primer tramo</td></tr>
                 </tbody>
             </table>
         </div>
-        <details style="margin-top:var(--space-3);padding-top:var(--space-3);border-top:1px solid var(--border-color);">
-            <summary style="cursor:pointer;font-size:var(--text-sm);font-weight:600;color:var(--text-primary);">Opciones avanzadas para fibras en varios tramos</summary>
-            <div style="margin-top:var(--space-3);">
-                <p style="font-size:var(--text-xs);color:var(--text-secondary);margin-bottom:var(--space-2);">
-                    Para rutas con varios tramos agrega <code>Codigo Tramo</code>. Mantén el mismo <code>Codigo Fibra</code> global en todo el recorrido, aunque la posición cambie de F1 a F2 entre tramos. F&lt;n&gt; identifica únicamente la posición física y ya no se admite como código global.
-                </p>
-                <a href="/static/ejemplos/fibras_por_tramo_ejemplo.csv" download class="btn btn--sm btn--secondary">Descargar plantilla opcional para varios tramos</a>
-            </div>
-        </details>
+        <p style="font-size:var(--text-xs);color:var(--text-secondary);margin-top:var(--space-3);">Mantén el mismo <code>Codigo Fibra</code> en todos los tramos de su recorrido. La posición física <code>F&lt;n&gt;</code> puede cambiar entre tramos.</p>
+        <a href="/static/ejemplos/fibras_por_tramo_ejemplo.csv" download class="btn btn--sm btn--secondary" style="margin-top:var(--space-3);">Descargar ejemplo simplificado</a>
     </div>
 </template>
 
@@ -931,6 +931,7 @@ input:checked + .slider:before { transform: translateX(22px); }
 <script>
 const impModal = document.getElementById('importModal');
 let currentImportType = '';
+let importPollTimer = null;
 
 const IMPORT_GUIDES = {
     sites_inventario: {
@@ -966,13 +967,18 @@ const IMPORT_GUIDES = {
     tramos_inventario: {
         step: 'Paso 6', dependency: 'Requiere: Troncal',
         purpose: 'Define uno o varios tramos ordenados dentro de cada troncal.',
-        required: [['ruta', 'troncal', 'ruta_troncal'], ['codigo_tramo']],
+        required: [
+            ['ruta', 'troncal', 'ruta_troncal'],
+            ['secuencia', 'numero_de_tramo', 'n_de_tramo'],
+            ['origen'],
+            ['destino']
+        ],
         template: '/static/ejemplos/plantilla_tramos.csv', example: '/static/ejemplos/inventario_tramos_ejemplo.csv'
     },
     fibras_inventario: {
         step: 'Paso 7', dependency: 'Requiere: Fibra global, troncal y tramo',
         purpose: 'Ubica la misma fibra global en cada tramo de su recorrido.',
-        required: [['ruta', 'troncal'], ['codigo_tramo'], ['fibra'], ['codigo_fibra'], ['estado']],
+        required: [['ruta', 'troncal'], ['secuencia', 'numero_de_tramo', 'n_de_tramo'], ['fibra'], ['codigo_fibra'], ['estado']],
         template: '/static/ejemplos/plantilla_fibras_por_tramo.csv', example: '/static/ejemplos/fibras_por_tramo_ejemplo.csv'
     },
     coordenadas_csv: {
@@ -1031,6 +1037,11 @@ function resetImportValidation() {
     status.hidden = true; status.className = 'import-validation'; status.textContent = '';
     preview.hidden = true; preview.replaceChildren();
     document.getElementById('submitImportFile').disabled = true;
+    const execution = document.getElementById('importExecution');
+    execution.hidden = true; execution.classList.remove('is-failed');
+    document.getElementById('importExecutionBar').style.width = '0%';
+    document.getElementById('importExecutionPercent').textContent = '0 %';
+    document.getElementById('importExecutionMessage').hidden = true;
     setImportProgress(0);
 }
 
@@ -1053,7 +1064,9 @@ function renderGuide(tipo) {
 function openImportModal(tipo, nombre) {
     currentImportType = tipo;
     document.getElementById('importModalTitle').textContent = nombre;
-    document.getElementById('importModalForm').action = `/cargar-csv/${tipo}/`;
+    const importForm = document.getElementById('importModalForm');
+    importForm.action = `/cargar-csv/${tipo}/`;
+    importForm.hidden = false;
     
     const label = document.getElementById('importModalLabel');
     const fileInput = document.getElementById('importModalFile');
@@ -1077,6 +1090,107 @@ function openImportModal(tipo, nombre) {
 }
 
 function closeImportModal() { impModal.style.display = 'none'; }
+
+function renderImportExecution(data) {
+    const execution = document.getElementById('importExecution');
+    const percentage = Math.max(0, Math.min(100, Number(data.porcentaje || 0)));
+    execution.hidden = false;
+    execution.classList.toggle('is-failed', data.estado === 'FALLIDO');
+    document.getElementById('importExecutionStage').textContent = data.etapa || 'Procesando importación';
+    document.getElementById('importExecutionPercent').textContent = `${percentage} %`;
+    document.getElementById('importExecutionBar').style.width = `${percentage}%`;
+    execution.querySelector('[role="progressbar"]').setAttribute('aria-valuenow', percentage);
+    const processed = Number(data.procesadas || 0);
+    const total = Number(data.total || 0);
+    const rows = total ? `${processed.toLocaleString()} de ${total.toLocaleString()} filas` : 'Calculando filas…';
+    const counters = [
+        data.creadas != null ? `${Number(data.creadas).toLocaleString()} creadas` : '',
+        data.actualizadas != null ? `${Number(data.actualizadas).toLocaleString()} actualizadas` : '',
+        data.rechazadas != null ? `${Number(data.rechazadas).toLocaleString()} rechazadas` : ''
+    ].filter(Boolean).join(' · ');
+    document.getElementById('importExecutionCounts').textContent = counters ? `${rows} · ${counters}` : rows;
+    const message = document.getElementById('importExecutionMessage');
+    message.textContent = data.mensaje || '';
+    message.hidden = !data.mensaje;
+}
+
+function restoreImportControls() {
+    document.getElementById('importModalFile').disabled = false;
+    document.getElementById('validateImportFile').disabled = false;
+    const submit = document.getElementById('submitImportFile');
+    submit.disabled = true;
+    submit.textContent = 'Importar datos';
+}
+
+async function pollImportProgress(url) {
+    if (importPollTimer) window.clearTimeout(importPollTimer);
+    try {
+        const response = await fetch(url, {cache: 'no-store'});
+        const data = await response.json();
+        renderImportExecution(data);
+        if (['COMPLETADO', 'COMPLETADO_CON_ERRORES', 'FALLIDO'].includes(data.estado)) {
+            localStorage.removeItem('fiberGeniusActiveImport');
+            document.getElementById('validateImportFile').disabled = false;
+            window.setTimeout(() => window.location.reload(), 2200);
+            return;
+        }
+    } catch (error) {
+        renderImportExecution({
+            estado: 'PROCESANDO', porcentaje: 0,
+            etapa: 'Esperando respuesta del proceso…'
+        });
+    }
+    importPollTimer = window.setTimeout(() => pollImportProgress(url), 1500);
+}
+
+function startImportUpload(form) {
+    const formData = new FormData(form);
+    const execution = document.getElementById('importExecution');
+    execution.hidden = false;
+    document.getElementById('importValidation').hidden = true;
+    document.getElementById('importPreview').hidden = true;
+    document.getElementById('validateImportFile').disabled = true;
+    document.getElementById('importModalFile').disabled = true;
+    renderImportExecution({estado: 'PROCESANDO', porcentaje: 0, etapa: 'Subiendo archivo'});
+
+    const request = new XMLHttpRequest();
+    request.open('POST', form.action);
+    request.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+    request.upload.addEventListener('progress', event => {
+        if (!event.lengthComputable) return;
+        renderImportExecution({
+            estado: 'PROCESANDO',
+            porcentaje: Math.max(1, Math.round((event.loaded / event.total) * 8)),
+            etapa: 'Subiendo archivo'
+        });
+    });
+    request.addEventListener('load', () => {
+        let payload = {};
+        try { payload = JSON.parse(request.responseText || '{}'); } catch (error) { payload = {}; }
+        if (request.status !== 202 || !payload.progreso_url) {
+            renderImportExecution({
+                estado: 'FALLIDO', porcentaje: 100,
+                etapa: 'No se pudo iniciar la importación',
+                mensaje: payload.error || 'Revise el archivo y vuelva a intentarlo.'
+            });
+            restoreImportControls();
+            return;
+        }
+        const active = {codigo: payload.lote, url: payload.progreso_url};
+        localStorage.setItem('fiberGeniusActiveImport', JSON.stringify(active));
+        renderImportExecution({estado: 'PENDIENTE', porcentaje: 2, etapa: 'Archivo recibido; esperando turno'});
+        pollImportProgress(payload.progreso_url);
+    });
+    request.addEventListener('error', () => {
+        renderImportExecution({
+            estado: 'FALLIDO', porcentaje: 100,
+            etapa: 'Error de comunicación',
+            mensaje: 'No se pudo enviar el archivo al servidor.'
+        });
+        restoreImportControls();
+    });
+    request.send(formData);
+}
 
 async function validateImportFile() {
     const input = document.getElementById('importModalFile');
@@ -1126,10 +1240,28 @@ document.getElementById('validateImportFile').addEventListener('click', validate
 document.getElementById('importModalFile').addEventListener('change', resetImportValidation);
 document.getElementById('importModalForm').addEventListener('submit', event => {
     if (document.getElementById('submitImportFile').disabled) { event.preventDefault(); return; }
+    event.preventDefault();
     setImportProgress(2);
     document.getElementById('submitImportFile').disabled = true;
     document.getElementById('submitImportFile').textContent = 'Importando…';
+    startImportUpload(event.currentTarget);
 });
+
+try {
+    const activeImport = JSON.parse(localStorage.getItem('fiberGeniusActiveImport') || 'null');
+    if (activeImport && activeImport.url) {
+        currentImportType = '';
+        document.getElementById('importModalTitle').textContent = 'Importación en curso';
+        document.getElementById('importGuideSummary').replaceChildren();
+        document.getElementById('importModalRequirements').replaceChildren();
+        document.getElementById('importModalForm').hidden = true;
+        impModal.style.display = 'flex';
+        renderImportExecution({estado: 'PROCESANDO', porcentaje: 0, etapa: 'Recuperando avance…'});
+        pollImportProgress(activeImport.url);
+    }
+} catch (error) {
+    localStorage.removeItem('fiberGeniusActiveImport');
+}
 
 document.querySelectorAll('#guidedImportGrid [onclick*="openImportModal"]').forEach(card => {
     const match = card.getAttribute('onclick').match(/openImportModal\('([^']+)'/);

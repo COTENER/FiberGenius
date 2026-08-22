@@ -4,6 +4,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from .models import (
+    AuditoriaPuertoODF,
     DetallePuertoODF,
     HubSite,
     InventarioFibra,
@@ -112,6 +113,84 @@ class ImportacionTerminacionesFibraTests(TestCase):
         self.puerto_b_1.refresh_from_db()
         self.assertEqual(self.puerto_a_1.estado_puerto, 'OCUPADO')
         self.assertEqual(self.puerto_b_1.estado_puerto, 'OCUPADO')
+        self.assertEqual(
+            AuditoriaPuertoODF.objects.filter(
+                accion='CONECTAR',
+                origen='EXCEL',
+                fibra=self.fibra_1,
+            ).count(),
+            2,
+        )
+
+    def test_importa_sin_superar_limite_sql_con_mas_de_mil_puertos(self):
+        odf = self._crear_odf('SITE-GRANDE', 'ODF-GRANDE')
+        InventarioODF.objects.filter(pk=odf.pk).update(
+            capacidad_puertos=1100,
+        )
+        DetallePuertoODF.objects.bulk_create(
+            [
+                DetallePuertoODF(
+                    odf_obj=odf,
+                    puerto_odf=str(numero),
+                    estado_puerto='LIBRE',
+                    tipo_conector='LC',
+                )
+                for numero in range(1, 1101)
+            ],
+            batch_size=100,
+        )
+        contenido = '\n'.join([
+            'Ruta,Fibra,Codigo Fibra,Extremo,Site,ODF,Puerto,Conector',
+            (
+                f'MEL-TC-TEST,F1,{self.fibra_1.codigo_fibra},A,'
+                'SITE-GRANDE,ODF-GRANDE,1100,LC'
+            ),
+        ])
+
+        resultado = _procesar_terminaciones_fibra(
+            _csv('muchos-puertos.csv', contenido)
+        )
+
+        self.assertEqual(resultado['total'], 1)
+        self.assertEqual(resultado['creadas'], 1)
+        self.assertTrue(
+            TerminacionFibra.objects.filter(
+                fibra=self.fibra_1,
+                extremo='A',
+                puerto_odf__odf_obj=odf,
+                puerto_odf__puerto_odf='1100',
+            ).exists()
+        )
+
+    def test_consolida_observaciones_redundantes_de_extremos_a_y_b(self):
+        observacion_comun = (
+            'Regla=RECIPROCO_REMAPEO; A=ODF-A/F1; B=ODF-B/F1; '
+            'IDs fuente=ID_1 | ID_2'
+        )
+        contenido = '\n'.join([
+            (
+                'Ruta,Fibra,Codigo Fibra,Extremo,Site,ODF,Puerto,'
+                'Conector,Observaciones'
+            ),
+            (
+                f'MEL-TC-TEST,F1,{self.fibra_1.codigo_fibra},A,SITE-A,'
+                'ODF-A,1,LC,"Terminacion=A; Puerto local=P1; '
+                f'{observacion_comun}"'
+            ),
+            (
+                f'MEL-TC-TEST,F1,{self.fibra_1.codigo_fibra},B,SITE-B,'
+                'ODF-B,1,LC,"Terminacion=B; Puerto local=P13; '
+                f'{observacion_comun}"'
+            ),
+        ])
+
+        resultado = _procesar_terminaciones_fibra(
+            _csv('observaciones-a-b.csv', contenido)
+        )
+
+        self.fibra_1.refresh_from_db()
+        self.assertEqual(resultado['creadas'], 2)
+        self.assertEqual(self.fibra_1.observaciones, observacion_comun)
 
     def test_recarga_no_mueve_un_extremo_implicitamente(self):
         _procesar_terminaciones_fibra(

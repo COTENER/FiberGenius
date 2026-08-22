@@ -13,7 +13,8 @@ from django.views.decorators.gzip import gzip_page
 from django.db import IntegrityError, transaction
 from django.urls import reverse
 from ..models import (
-    Ruta, CoordenadaRuta, InventarioTramo, TerminacionFibra, normalizar_estado_puerto_odf,
+    Ruta, CoordenadaRuta, InventarioFibra, InventarioTramo, TerminacionFibra,
+    normalizar_estado_puerto_odf,
     normalizar_estado_puerto_odf_con_destino,
 )
 from ..services.trazabilidad import (
@@ -397,30 +398,53 @@ def dashboard_inventario(request):
             or capacidad_por_ruta[ruta_id]['fibras_total']
         )
     ]
-    fibras_libres = sum(
-        resumen['hilos_libres'] for resumen in resumenes_fibras_logicas
+    fibras_dashboard = InventarioFibra.objects.all()
+    if site_seleccionado:
+        fibras_dashboard = fibras_dashboard.filter(
+            Q(
+                terminaciones__puerto_odf__odf_obj__rack_obj__sala__hub_site__nombre__iexact=site_seleccionado
+            )
+            | Q(ruta__tramos_inventario__hub_site__iexact=site_seleccionado)
+            | Q(ruta__tramos_inventario__origen__iexact=site_seleccionado)
+            | Q(ruta__tramos_inventario__destino__iexact=site_seleccionado)
+            | Q(ruta__tramos_inventario__origen_nodo__codigo__iexact=site_seleccionado)
+            | Q(ruta__tramos_inventario__origen_nodo__nombre__iexact=site_seleccionado)
+            | Q(ruta__tramos_inventario__destino_nodo__codigo__iexact=site_seleccionado)
+            | Q(ruta__tramos_inventario__destino_nodo__nombre__iexact=site_seleccionado)
+        )
+    if trazado_seleccionado:
+        fibras_dashboard = fibras_dashboard.filter(ruta_id__in=rutas_ids)
+
+    # El estado global oficial vive en InventarioFibra. La capacidad declarada
+    # de las rutas se mantiene para los indicadores de troncales, pero no debe
+    # ocultar fibras válidas cuya Ruta todavía está pendiente.
+    conteo_fibras = fibras_dashboard.aggregate(
+        total=Count('id', distinct=True),
+        libres=Count(
+            'id', filter=Q(estado='DISPONIBLE'), distinct=True,
+        ),
+        ocupadas=Count(
+            'id', filter=Q(estado='OCUPADO'), distinct=True,
+        ),
+        reservadas=Count(
+            'id', filter=Q(estado='RESERVADO'), distinct=True,
+        ),
+        sin_estado=Count(
+            'id', filter=Q(estado='SIN_INFORMACION'), distinct=True,
+        ),
+        pendientes_troncal=Count(
+            'id', filter=Q(ruta__isnull=True), distinct=True,
+        ),
     )
-    fibras_ocupadas = sum(
-        resumen['hilos_ocupados'] for resumen in resumenes_fibras_logicas
-    )
-    fibras_reservadas = sum(
-        resumen['hilos_reservados'] for resumen in resumenes_fibras_logicas
-    )
-    fibras_sin_estado = sum(
-        resumen['hilos_sin_estado'] for resumen in resumenes_fibras_logicas
-    )
+    fibras_libres = conteo_fibras['libres']
+    fibras_ocupadas = conteo_fibras['ocupadas']
+    fibras_reservadas = conteo_fibras['reservadas']
+    fibras_sin_estado = conteo_fibras['sin_estado']
     fibras_sin_cobertura = sum(
         resumen['fibras_sin_cobertura']
         for resumen in resumenes_fibras_logicas
-    )
-    total_fibras = sum(
-        (
-            resumen['capacidad_efectiva']
-            if resumen['capacidad_efectiva'] is not None
-            else resumen['fibras_total']
-        )
-        for resumen in resumenes_fibras_logicas
-    )
+    ) + conteo_fibras['pendientes_troncal']
+    total_fibras = conteo_fibras['total']
 
     odfs_data = [
         {
@@ -592,8 +616,14 @@ def dashboard_inventario(request):
         (1 - incidencias_calidad / controles_calidad) * 100
     ) if controles_calidad else 0
 
+    inventario_con_datos = bool(
+        controles_calidad
+        or total_fibras
+        or total_puertos
+    )
+
     alertas_inventario = []
-    if not controles_calidad:
+    if not inventario_con_datos:
         alertas_inventario.append({
             'nivel': 'datos',
             'titulo': 'Inventario sin registros',
@@ -680,7 +710,7 @@ def dashboard_inventario(request):
         'odfs_saturados': odfs_saturados,
         'odfs_disponibilidad_pct': odfs_disponibilidad_pct,
         'calidad_inventario': calidad_inventario,
-        'inventario_con_datos': bool(controles_calidad),
+        'inventario_con_datos': inventario_con_datos,
         'alertas_inventario': alertas_inventario[:4],
         'top_rutas_capacidad': top_rutas_capacidad,
         'top_odfs_capacidad': top_odfs_capacidad,
@@ -780,8 +810,7 @@ def inventario_externo(request):
 
     context = {
         'rutas_inventario': list(
-            Ruta.objects.filter(tramos_inventario__isnull=False)
-            .order_by('nombre').values('id', 'nombre').distinct()
+            Ruta.objects.order_by('nombre').values('id', 'nombre')
         ),
         'tipos_trazado': sorted(tipos_trazado, key=str.casefold),
         'estados_tramo': opciones('estado'),

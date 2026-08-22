@@ -464,7 +464,9 @@ def _estadisticas_capacidad_rutas(ids_ruta):
 
 
 def _filtro_troncales(request):
-    queryset = Ruta.objects.filter(tramos_inventario__isnull=False)
+    # Una troncal existe desde que se carga Ruta. Sus tramos pueden incorporarse
+    # después, por lo que no deben ser un requisito para verla en inventario.
+    queryset = Ruta.objects.all()
     ranking_id = request.GET.get("ranking_id", "").strip()
     termino = request.GET.get("q", "").strip()[:150]
     tipo = request.GET.get("tipo", "").strip()[:50]
@@ -615,7 +617,11 @@ def _serializar_troncales(troncales):
                     if capacidad_ruta["capacidad_efectiva"] is not None
                     else "—"
                 ),
-                "estado": _texto(primero.estado if primero else None, "Sin estado"),
+                "estado": (
+                    _texto(primero.estado, "Sin estado")
+                    if primero
+                    else "Sin tramos cargados"
+                ),
                 "fibras": getattr(
                     troncal,
                     "fibras_total",

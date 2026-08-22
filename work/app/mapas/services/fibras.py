@@ -129,9 +129,9 @@ def _registrar_auditoria(
         origen=_origen_auditoria(origen),
         usuario=usuario,
         fibra=fibra,
-        referencia_fibra=_referencia_fibra(fibra),
-        valor_anterior=str(valor_anterior or ""),
-        valor_nuevo=str(valor_nuevo or ""),
+        referencia_fibra=_referencia_fibra(fibra)[:300],
+        valor_anterior=str(valor_anterior or "")[:300],
+        valor_nuevo=str(valor_nuevo or "")[:300],
         lote_importacion=lote_importacion,
         metadatos=metadatos or {},
     )
@@ -206,6 +206,175 @@ def actualizar_metadatos_fibra(
     for campo in campos:
         setattr(fibra, campo, getattr(bloqueada, campo))
     return True
+
+
+@transaction.atomic
+def actualizar_fibras_masivo(
+    operaciones,
+    *,
+    usuario=None,
+    origen="SISTEMA",
+    lote_importacion=None,
+):
+    """Actualiza metadatos y estado de fibras validadas en una sola operación.
+
+    Mantiene los mismos eventos de auditoría de las operaciones unitarias, pero
+    evita bloquear, guardar y auditar cada fibra con consultas independientes.
+    La asignación de Ruta se conserva fuera de este servicio porque puede
+    materializar topología 1:1 y requiere sus validaciones específicas.
+    """
+    operaciones = list(operaciones)
+    if not operaciones:
+        return {}
+
+    por_id = {}
+    for operacion in operaciones:
+        fibra_id = int(getattr(operacion.get("fibra"), "pk", 0) or 0)
+        if not fibra_id:
+            raise ValidationError("La fibra seleccionada no existe.")
+        if fibra_id in por_id:
+            raise ValidationError("La misma fibra está repetida en la operación masiva.")
+        por_id[fibra_id] = operacion
+
+    ids = sorted(por_id)
+    bloqueadas = {}
+    for indice in range(0, len(ids), 500):
+        lote_ids = ids[indice:indice + 500]
+        for fibra in (
+            InventarioFibra.objects.select_for_update()
+            .select_related("ruta")
+            .filter(pk__in=lote_ids)
+            .order_by("pk")
+        ):
+            bloqueadas[fibra.pk] = fibra
+    if set(bloqueadas) != set(ids):
+        raise ValidationError("Una de las fibras seleccionadas ya no existe.")
+
+    if usuario is not None and not getattr(usuario, "is_authenticated", False):
+        usuario = None
+    origen_auditoria = _origen_auditoria(origen)
+    auditorias = []
+    modificadas = []
+    estados_cambiados = []
+
+    for fibra_id in ids:
+        operacion = por_id[fibra_id]
+        fibra = bloqueadas[fibra_id]
+        cambios = dict(operacion.get("cambios") or {})
+        desconocidos = set(cambios) - {
+            "fibra_numero",
+            "nombre_fibra",
+            "condicion_fisica",
+            "tipo_conector",
+            "observaciones",
+        }
+        if desconocidos:
+            raise ValidationError(
+                "Metadatos de fibra no admitidos: " + ", ".join(sorted(desconocidos))
+            )
+
+        anteriores = {}
+        campos_negocio = []
+        for campo, valor in cambios.items():
+            if campo == "condicion_fisica" and valor not in (None, ""):
+                valor = normalizar_condicion_fisica(valor)
+            if campo == "fibra_numero":
+                valor, _ = normalizar_numero_hilo(valor)
+            if campo in {"nombre_fibra", "tipo_conector", "observaciones"}:
+                valor = str(valor or "").strip()
+            if campo == "nombre_fibra" and len(valor) > 150:
+                raise ValidationError("El servicio no puede superar 150 caracteres.")
+            if campo == "tipo_conector" and len(valor) > 100:
+                raise ValidationError("El tipo de conector no puede superar 100 caracteres.")
+            if getattr(fibra, campo) != valor:
+                anteriores[campo] = getattr(fibra, campo)
+                setattr(fibra, campo, valor)
+                campos_negocio.append(campo)
+
+        if campos_negocio:
+            auditorias.append(AuditoriaFibra(
+                accion="ACTUALIZAR_METADATOS",
+                origen=origen_auditoria,
+                usuario=usuario,
+                fibra=fibra,
+                referencia_fibra=_referencia_fibra(fibra)[:300],
+                valor_anterior=str(anteriores)[:300],
+                valor_nuevo=str({
+                    campo: getattr(fibra, campo) for campo in campos_negocio
+                })[:300],
+                lote_importacion=lote_importacion,
+                metadatos={"campos": sorted(campos_negocio)},
+            ))
+
+        estado_informado = operacion.get("estado_informado")
+        restablecer = bool(operacion.get("restablecer_estado"))
+        if estado_informado and restablecer:
+            raise ValidationError(
+                "No se puede informar y restablecer el estado en la misma operación."
+            )
+        if estado_informado:
+            estado_nuevo = normalizar_estado_fibra(estado_informado)
+            origen_nuevo = "INFORMADO"
+            accion_estado = "CAMBIAR_ESTADO"
+        elif restablecer:
+            estado_nuevo = "SIN_INFORMACION"
+            origen_nuevo = "NO_INFORMADO"
+            accion_estado = "RESTABLECER_ESTADO"
+        else:
+            estado_nuevo = origen_nuevo = accion_estado = None
+
+        cambio_estado = estado_nuevo is not None and (
+            fibra.estado != estado_nuevo or fibra.origen_estado != origen_nuevo
+        )
+        if cambio_estado:
+            anterior = f"{fibra.estado}/{fibra.origen_estado}"
+            fibra.estado = estado_nuevo
+            fibra.origen_estado = origen_nuevo
+            estados_cambiados.append(fibra)
+            auditorias.append(AuditoriaFibra(
+                accion=accion_estado,
+                origen=origen_auditoria,
+                usuario=usuario,
+                fibra=fibra,
+                referencia_fibra=_referencia_fibra(fibra)[:300],
+                valor_anterior=anterior[:300],
+                valor_nuevo=f"{estado_nuevo}/{origen_nuevo}"[:300],
+                lote_importacion=lote_importacion,
+                metadatos={},
+            ))
+
+        cambio_lote = (
+            lote_importacion is not None
+            and fibra.lote_importacion_id != lote_importacion.pk
+        )
+        if cambio_lote:
+            fibra.lote_importacion = lote_importacion
+        if campos_negocio or cambio_estado or cambio_lote:
+            modificadas.append(fibra)
+
+        original = operacion["fibra"]
+        for campo in (
+            "fibra_numero", "nombre_fibra", "condicion_fisica",
+            "tipo_conector", "observaciones", "estado", "origen_estado",
+            "lote_importacion",
+        ):
+            setattr(original, campo, getattr(fibra, campo))
+
+    if modificadas:
+        InventarioFibra.objects.bulk_update(
+            modificadas,
+            [
+                "fibra_numero", "nombre_fibra", "condicion_fisica",
+                "tipo_conector", "observaciones", "estado", "origen_estado",
+                "lote_importacion",
+            ],
+            batch_size=500,
+        )
+    if auditorias:
+        AuditoriaFibra.objects.bulk_create(auditorias, batch_size=500)
+    for fibra in estados_cambiados:
+        _sincronizar_estado_tramo_unico(fibra, fibra.estado)
+    return bloqueadas
 
 
 @transaction.atomic

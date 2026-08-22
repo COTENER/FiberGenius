@@ -14,6 +14,11 @@ audit_logger = logging.getLogger('fibergenius.audit')
 security_logger = logging.getLogger('fibergenius.security')
 
 
+def _es_sondeo_progreso_importacion(request):
+    """El sondeo no debe tocar la BD mientras SQLite procesa una carga."""
+    return request.path.startswith('/api/importaciones/progreso/')
+
+
 def _request_identity(request):
     user = getattr(request, 'user', None)
     username = (
@@ -33,6 +38,9 @@ class AuditSecurityMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
+        if _es_sondeo_progreso_importacion(request):
+            return self.get_response(request)
+
         if request.user.is_authenticated:
             current = int(time.time())
             last_activity = request.session.get('_fg_last_activity')
@@ -106,6 +114,9 @@ class ActiveUserMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
+        if _es_sondeo_progreso_importacion(request):
+            return self.get_response(request)
+
         if request.user.is_authenticated:
             intervalo = max(
                 30,

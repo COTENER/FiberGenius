@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Count, Q
 
 from ..models import (
     AuditoriaPuertoODF,
     DetallePuertoODF,
     InventarioFibra,
+    InventarioODF,
     TerminacionFibra,
 )
 from .fibras import crear_fibra, establecer_estado_fibra_informado
@@ -119,6 +121,256 @@ def _registrar_auditoria(
         lote_importacion=lote_importacion,
         metadatos=metadatos or {},
     )
+
+
+def _lotes(valores, tamano=500):
+    valores = list(valores)
+    for indice in range(0, len(valores), tamano):
+        yield valores[indice:indice + tamano]
+
+
+def _actualizar_contadores_masivo(odf_ids):
+    """Recalcula contadores de varios ODF sin ejecutar una consulta por ODF."""
+    odf_ids = sorted({int(odf_id) for odf_id in odf_ids})
+    actualizaciones = []
+    for lote_ids in _lotes(odf_ids):
+        resumenes = {
+            fila["odf_obj_id"]: fila
+            for fila in (
+                DetallePuertoODF.objects
+                .filter(odf_obj_id__in=lote_ids)
+                .values("odf_obj_id")
+                .annotate(
+                    ocupados=Count("id", filter=Q(estado_puerto="OCUPADO")),
+                    reservados=Count("id", filter=Q(estado_puerto="RESERVADO")),
+                    libres=Count("id", filter=Q(estado_puerto="LIBRE")),
+                )
+            )
+        }
+        for odf_id in lote_ids:
+            resumen = resumenes.get(odf_id, {})
+            actualizaciones.append(InventarioODF(
+                pk=odf_id,
+                puertos_ocupados=resumen.get("ocupados", 0),
+                puertos_reservados=resumen.get("reservados", 0),
+                puertos_libres=resumen.get("libres", 0),
+            ))
+    if actualizaciones:
+        InventarioODF.objects.bulk_update(
+            actualizaciones,
+            ["puertos_ocupados", "puertos_reservados", "puertos_libres"],
+            batch_size=500,
+        )
+
+
+@transaction.atomic
+def conectar_puertos_masivo(
+    conexiones,
+    *,
+    usuario=None,
+    origen="SISTEMA",
+    lote_importacion=None,
+):
+    """Conecta un lote ya validado con las mismas invariantes del servicio unitario.
+
+    Cada elemento debe aportar ``fibra``, ``puerto``, ``extremo`` y puede aportar
+    ``tipo_conector``. El bloqueo y las restricciones se vuelven a comprobar dentro
+    de la transacción; ``bulk_create`` evita una operación SQL por terminación.
+    """
+    conexiones = list(conexiones)
+    if not conexiones:
+        return [], 0, 0
+
+    normalizadas = []
+    claves_extremo = set()
+    ids_puerto = set()
+    ids_fibra = set()
+    for conexion in conexiones:
+        fibra_id = int(getattr(conexion.get("fibra"), "pk", 0) or 0)
+        puerto_id = int(getattr(conexion.get("puerto"), "pk", 0) or 0)
+        extremo = str(conexion.get("extremo") or "").strip().upper()
+        if not fibra_id:
+            raise ValidationError("La fibra seleccionada no existe.")
+        if not puerto_id:
+            raise ValidationError("El puerto ODF no existe.")
+        if extremo not in {"A", "B"}:
+            raise ValidationError("Seleccione el extremo A o B.")
+        clave_extremo = (fibra_id, extremo)
+        if clave_extremo in claves_extremo:
+            raise ValidationError(
+                "El mismo extremo de una fibra está repetido en la operación masiva."
+            )
+        if puerto_id in ids_puerto:
+            raise ValidationError(
+                "El mismo puerto ODF está repetido en la operación masiva."
+            )
+        tipo_conector = str(conexion.get("tipo_conector") or "").strip()
+        if len(tipo_conector) > 100:
+            raise ValidationError("El tipo de conector no puede superar 100 caracteres.")
+        claves_extremo.add(clave_extremo)
+        ids_puerto.add(puerto_id)
+        ids_fibra.add(fibra_id)
+        normalizadas.append({
+            "fibra_id": fibra_id,
+            "puerto_id": puerto_id,
+            "extremo": extremo,
+            "tipo_conector": tipo_conector,
+        })
+
+    fibras = {}
+    for lote_ids in _lotes(sorted(ids_fibra)):
+        for fibra in (
+            InventarioFibra.objects.select_for_update()
+            .select_related("ruta")
+            .filter(pk__in=lote_ids)
+            .order_by("pk")
+        ):
+            fibras[fibra.pk] = fibra
+    if set(fibras) != ids_fibra:
+        raise ValidationError("Una de las fibras seleccionadas ya no existe.")
+
+    por_extremo = {}
+    for lote_ids in _lotes(sorted(ids_fibra)):
+        for terminacion in (
+            TerminacionFibra.objects.select_for_update()
+            .select_related("fibra__ruta", "puerto_odf__odf_obj")
+            .filter(fibra_id__in=lote_ids)
+            .order_by("pk")
+        ):
+            por_extremo[(terminacion.fibra_id, terminacion.extremo)] = terminacion
+
+    puertos = {}
+    for lote_ids in _lotes(sorted(ids_puerto)):
+        for puerto in (
+            DetallePuertoODF.objects.select_for_update()
+            .select_related("odf_obj__rack_obj__sala__hub_site")
+            .filter(pk__in=lote_ids)
+            .order_by("pk")
+        ):
+            puertos[puerto.pk] = puerto
+    if set(puertos) != ids_puerto:
+        raise ValidationError("Uno de los puertos ODF ya no existe.")
+
+    por_puerto = {}
+    for lote_ids in _lotes(sorted(ids_puerto)):
+        for terminacion in (
+            TerminacionFibra.objects
+            .select_related("fibra__ruta", "puerto_odf__odf_obj")
+            .filter(puerto_odf_id__in=lote_ids)
+            .order_by("pk")
+        ):
+            por_puerto[terminacion.puerto_odf_id] = terminacion
+
+    origen = str(origen or "SISTEMA").strip().upper()
+    if origen not in {clave for clave, _ in AuditoriaPuertoODF.ORIGENES}:
+        origen = "SISTEMA"
+    if usuario is not None and not getattr(usuario, "is_authenticated", False):
+        usuario = None
+
+    nuevas = []
+    existentes_actualizadas = []
+    puertos_actualizados = []
+    auditorias = []
+    resultados = []
+    odf_ids_actualizados = set()
+    creadas = actualizadas = 0
+
+    for conexion in normalizadas:
+        fibra = fibras[conexion["fibra_id"]]
+        puerto = puertos[conexion["puerto_id"]]
+        extremo = conexion["extremo"]
+        existente = por_extremo.get((fibra.pk, extremo))
+        ocupante = por_puerto.get(puerto.pk)
+        if ocupante and (not existente or ocupante.pk != existente.pk):
+            raise ValidationError(
+                "El puerto ya está conectado a otra fibra. Desconéctelo antes de reutilizarlo."
+            )
+        if existente and existente.puerto_odf_id != puerto.pk:
+            raise MovimientoRequiereConfirmacion(existente)
+        if puerto.estado_puerto not in {"LIBRE", "RESERVADO", "OCUPADO"}:
+            raise ValidationError("El puerto no tiene un estado válido para conectarlo.")
+
+        conector = (
+            conexion["tipo_conector"]
+            or (existente.tipo_conector if existente else "")
+            or puerto.tipo_conector
+            or puerto.odf_obj.tipo_conector
+            or fibra.tipo_conector
+            or ""
+        )
+        if len(conector) > 100:
+            raise ValidationError("El tipo de conector no puede superar 100 caracteres.")
+
+        estado_anterior = puerto.estado_puerto
+        cambio_estado = estado_anterior != "OCUPADO"
+        if cambio_estado:
+            puerto.estado_puerto = "OCUPADO"
+            puertos_actualizados.append(puerto)
+            odf_ids_actualizados.add(puerto.odf_obj_id)
+
+        if existente:
+            cambios_terminacion = False
+            if existente.tipo_conector != conector:
+                existente.tipo_conector = conector
+                cambios_terminacion = True
+            if existente.lote_importacion_id != getattr(lote_importacion, "pk", None):
+                existente.lote_importacion = lote_importacion
+                cambios_terminacion = True
+            if cambios_terminacion:
+                existentes_actualizadas.append(existente)
+            terminacion = existente
+            actualizadas += 1
+        else:
+            terminacion = TerminacionFibra(
+                fibra=fibra,
+                extremo=extremo,
+                puerto_odf=puerto,
+                tipo_conector=conector,
+                lote_importacion=lote_importacion,
+            )
+            nuevas.append(terminacion)
+            creadas += 1
+
+        if existente is None or cambio_estado:
+            auditorias.append(AuditoriaPuertoODF(
+                accion="CONECTAR",
+                origen=origen,
+                usuario=usuario,
+                fibra=fibra,
+                extremo=extremo,
+                puerto_anterior=puerto if existente else None,
+                puerto_nuevo=puerto,
+                estado_anterior=estado_anterior,
+                estado_nuevo="OCUPADO",
+                referencia_puerto_anterior=(
+                    _referencia_puerto(puerto) if existente else ""
+                ),
+                referencia_puerto_nuevo=_referencia_puerto(puerto),
+                referencia_fibra=f"{fibra.nombre_troncal} / {fibra.fibra_numero}",
+                sincronizo_fibra=False,
+                lote_importacion=lote_importacion,
+                metadatos={"conexion_existente": True} if existente else {},
+            ))
+        resultados.append(terminacion)
+
+    if nuevas:
+        TerminacionFibra.objects.bulk_create(nuevas, batch_size=500)
+    if existentes_actualizadas:
+        TerminacionFibra.objects.bulk_update(
+            existentes_actualizadas,
+            ["tipo_conector", "lote_importacion"],
+            batch_size=500,
+        )
+    if puertos_actualizados:
+        DetallePuertoODF.objects.bulk_update(
+            puertos_actualizados,
+            ["estado_puerto"],
+            batch_size=500,
+        )
+    if auditorias:
+        AuditoriaPuertoODF.objects.bulk_create(auditorias, batch_size=500)
+    _actualizar_contadores_masivo(odf_ids_actualizados)
+    return resultados, creadas, actualizadas
 
 
 @transaction.atomic
