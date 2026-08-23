@@ -714,9 +714,11 @@ class ApiFibrasFase3Tests(TestCase):
         self.assertEqual(filtro_libres["pagination"]["total"], 1)
 
         dashboard = self.client.get(reverse("dashboard_inventario"))
-        self.assertEqual(dashboard.context["total_fibras"], 4)
-        self.assertEqual(dashboard.context["fibras_libres"], 0)
-        self.assertEqual(dashboard.context["fibras_sin_estado"], 4)
+        # El tablero cuenta fibras lógicas globales, no la capacidad declarada
+        # de la ruta ni una fila independiente por cada tramo.
+        self.assertEqual(dashboard.context["total_fibras"], 1)
+        self.assertEqual(dashboard.context["fibras_libres"], 1)
+        self.assertEqual(dashboard.context["fibras_sin_estado"], 0)
 
     def test_subconjunto_invalido_no_deja_fibra_huerfana(self):
         response = self.client.post(

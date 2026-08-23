@@ -4,7 +4,6 @@ import sqlite3
 import uuid
 import zipfile
 from pathlib import Path
-from unittest.mock import patch
 
 from django.conf import settings
 from django.test import SimpleTestCase, override_settings
@@ -42,19 +41,16 @@ class BackupRestoreTests(SimpleTestCase):
             BACKUP_RETENTION_DAYS=30,
             MEDIA_ROOT=self.media,
             DATA_ROOT=self.data,
-        )
-        self.overrides.enable()
-        self.database_patch = patch.dict(
-            settings.DATABASES['default'],
-            {
-                'ENGINE': 'django.db.backends.sqlite3',
-                'NAME': self.database,
+            DATABASES={
+                'default': {
+                    'ENGINE': 'django.db.backends.sqlite3',
+                    'NAME': self.database,
+                },
             },
         )
-        self.database_patch.start()
+        self.overrides.enable()
 
     def tearDown(self):
-        self.database_patch.stop()
         self.overrides.disable()
         shutil.rmtree(self.root, ignore_errors=True)
 

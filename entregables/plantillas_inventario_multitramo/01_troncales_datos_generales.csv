@@ -1,0 +1,3 @@
+Ruta,OTU,Distancia (m),OLT,SLOT OLT,PUERTO OLT,PON,Enlace PON Traxium,Capacidad,Hilos Ocupados,Hilos Reservados,Hilos Libres,Reservas (m)
+TRONCAL-EJEMPLO-01,,3000,,,,,,48,1,1,1,30
+TRONCAL-EJEMPLO-02,,500,,,,,,24,1,0,1,0

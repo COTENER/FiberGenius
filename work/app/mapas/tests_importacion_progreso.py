@@ -14,8 +14,6 @@ from .views.importacion import _ejecutar_importacion_en_segundo_plano
 
 
 class ProgresoImportacionTests(TransactionTestCase):
-    reset_sequences = True
-
     def setUp(self):
         self.directorio = Path(settings.BASE_DIR) / '.tmp-tests-progress-data'
         self.directorio.mkdir(parents=True, exist_ok=True)
@@ -61,6 +59,28 @@ class ProgresoImportacionTests(TransactionTestCase):
         self.assertEqual(estado.status_code, 200)
         self.assertEqual(estado.json()['estado'], 'PENDIENTE')
         self.assertEqual(estado.json()['porcentaje'], 2)
+        self.assertEqual(estado.json()['usuario_id'], self.usuario.pk)
+
+    @patch('mapas.views.importacion._IMPORT_EXECUTOR.submit')
+    def test_progreso_exige_sesion_y_respeta_el_propietario(self, submit):
+        respuesta = self.client.post(
+            reverse('cargar_csv', args=['ruta_otu']),
+            {'csv_file': self._archivo()},
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+        progreso_url = respuesta.json()['progreso_url']
+
+        self.client.logout()
+        anonimo = self.client.get(progreso_url)
+        self.assertEqual(anonimo.status_code, 302)
+
+        otro_usuario = get_user_model().objects.create_user(
+            username='otro-importador',
+            password='clave-segura',
+        )
+        self.client.force_login(otro_usuario)
+        ajeno = self.client.get(progreso_url)
+        self.assertEqual(ajeno.status_code, 404)
 
     @patch('mapas.views.importacion._IMPORT_EXECUTOR.submit')
     def test_trabajo_en_segundo_plano_cierra_lote_y_llega_a_cien(self, submit):

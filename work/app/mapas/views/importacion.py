@@ -3386,6 +3386,7 @@ def _ejecutar_importacion_en_segundo_plano(
         close_old_connections()
 
 
+@login_required
 @require_GET
 def progreso_importacion(request, codigo):
     """Estado por UUID; evita consultar BD durante el bloqueo de SQLite."""
@@ -3401,6 +3402,17 @@ def progreso_importacion(request, codigo):
         return JsonResponse(
             {'estado': 'PROCESANDO', 'porcentaje': 0, 'etapa': 'Preparando estado'},
             status=503,
+        )
+    propietario_id = datos.get('usuario_id')
+    if (
+        not request.user.is_superuser
+        and propietario_id != request.user.pk
+    ):
+        # Se responde como inexistente para no revelar UUID ni actividad de
+        # importaciones pertenecientes a otro usuario.
+        return JsonResponse(
+            {'estado': 'NO_ENCONTRADO'},
+            status=404,
         )
     respuesta = JsonResponse(datos)
     respuesta['Cache-Control'] = 'no-store, max-age=0'
@@ -3513,6 +3525,7 @@ def cargar_csv(request, tipo_csv):
                     )
                     _guardar_progreso(
                         lote.codigo,
+                        usuario_id=request.user.pk,
                         estado='PENDIENTE',
                         porcentaje=2,
                         etapa='Archivo recibido; esperando turno',

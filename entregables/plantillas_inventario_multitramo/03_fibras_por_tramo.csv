@@ -1,0 +1,12 @@
+Ruta,Secuencia,Codigo Fibra,Fibra,Estado,Observaciones
+TRONCAL-EJEMPLO-01,1,FGF-EJ-01-0001,F1,Ocupado,Fibra continua de ejemplo
+TRONCAL-EJEMPLO-01,2,FGF-EJ-01-0001,F1,Ocupado,Fibra continua de ejemplo
+TRONCAL-EJEMPLO-01,3,FGF-EJ-01-0001,F1,Ocupado,Fibra continua de ejemplo
+TRONCAL-EJEMPLO-01,1,FGF-EJ-01-0002,F2,Reservado,Fibra continua de ejemplo
+TRONCAL-EJEMPLO-01,2,FGF-EJ-01-0002,F2,Reservado,Fibra continua de ejemplo
+TRONCAL-EJEMPLO-01,3,FGF-EJ-01-0002,F2,Reservado,Fibra continua de ejemplo
+TRONCAL-EJEMPLO-01,1,FGF-EJ-01-0003,F3,Disponible,Fibra continua de ejemplo
+TRONCAL-EJEMPLO-01,2,FGF-EJ-01-0003,F3,Disponible,Fibra continua de ejemplo
+TRONCAL-EJEMPLO-01,3,FGF-EJ-01-0003,F3,Disponible,Fibra continua de ejemplo
+TRONCAL-EJEMPLO-02,1,FGF-EJ-02-0001,F1,Ocupado,Fibra de ejemplo
+TRONCAL-EJEMPLO-02,1,FGF-EJ-02-0002,F2,Disponible,Fibra de ejemplo

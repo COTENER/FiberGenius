@@ -11,6 +11,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.views.decorators.http import require_http_methods, require_POST
 from django.views.decorators.gzip import gzip_page
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.urls import reverse
 from ..models import (
     Ruta, CoordenadaRuta, InventarioFibra, InventarioTramo, TerminacionFibra,
@@ -771,28 +772,45 @@ def inventario_externo(request):
 
     tramos = InventarioTramo.objects.all()
 
-    def opciones(campo):
-        return list(
-            tramos.exclude(**{f'{campo}__isnull': True})
-            .exclude(**{campo: ''})
-            .order_by(campo)
-            .values_list(campo, flat=True)
-            .distinct()
-        )
+    # Los tres catálogos simples se obtienen en una sola consulta. Esto evita
+    # sumar viajes a la BD cada vez que se agrega un filtro a la pantalla.
+    sites_troncal = set()
+    tipos_trazado = set()
+    estados_tramo = set()
+    for hub_site, tipo_trazado, estado in tramos.values_list(
+        'hub_site',
+        'tipo_trazado',
+        'estado',
+    ):
+        if hub_site:
+            sites_troncal.add(hub_site)
+        if tipo_trazado:
+            tipos_trazado.add(tipo_trazado)
+        if estado:
+            estados_tramo.add(estado)
 
-    sites_troncal = set(opciones('hub_site'))
-    for prefijo in ('origen_nodo', 'destino_nodo'):
-        for codigo, nombre in (
-            tramos.filter(**{f'{prefijo}__tipo': 'SITE'})
-            .values_list(f'{prefijo}__codigo', f'{prefijo}__nombre')
-            .distinct()
-        ):
-            if codigo:
-                sites_troncal.add(codigo)
-            if nombre:
-                sites_troncal.add(nombre)
-
-    tipos_trazado = set(opciones('tipo_trazado'))
+    # Origen y destino se consolidan juntos en vez de ejecutar una consulta
+    # independiente para cada extremo del tramo.
+    for origen_tipo, origen_codigo, origen_nombre, destino_tipo, destino_codigo, destino_nombre in (
+        tramos.filter(
+            Q(origen_nodo__tipo='SITE') | Q(destino_nodo__tipo='SITE')
+        ).values_list(
+            'origen_nodo__tipo',
+            'origen_nodo__codigo',
+            'origen_nodo__nombre',
+            'destino_nodo__tipo',
+            'destino_nodo__codigo',
+            'destino_nodo__nombre',
+        ).distinct()
+    ):
+        if origen_tipo == 'SITE':
+            sites_troncal.update(
+                valor for valor in (origen_codigo, origen_nombre) if valor
+            )
+        if destino_tipo == 'SITE':
+            sites_troncal.update(
+                valor for valor in (destino_codigo, destino_nombre) if valor
+            )
     tipos_geograficos_por_ruta = defaultdict(set)
     for ruta_id, tipo in (
         CoordenadaRuta.objects.exclude(tipo_trazado__isnull=True)
@@ -813,7 +831,7 @@ def inventario_externo(request):
             Ruta.objects.order_by('nombre').values('id', 'nombre')
         ),
         'tipos_trazado': sorted(tipos_trazado, key=str.casefold),
-        'estados_tramo': opciones('estado'),
+        'estados_tramo': sorted(estados_tramo, key=str.casefold),
         'sites_troncal': sorted(sites_troncal, key=str.casefold),
     }
     return render(request, 'mapa_inventario/inventario_externo.html', context)

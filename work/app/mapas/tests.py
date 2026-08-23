@@ -2079,11 +2079,11 @@ class SeguridadYRendimientoTests(TestCase):
         self.assertContains(response, "Archivo B")
         self.assertContains(
             response,
-            "Opciones avanzadas para rutas con varios tramos",
+            "Importación guiada del inventario",
         )
         self.assertContains(
             response,
-            "Opciones avanzadas para fibras en varios tramos",
+            "Cargar inventario global de fibras",
         )
         self.assertNotContains(response, "Fase 2: Inventario técnico por tramo")
         self.assertNotContains(response, "Fase 3: Fibras por tramo")
@@ -2305,7 +2305,9 @@ class SeguridadYRendimientoTests(TestCase):
         with CaptureQueriesContext(connection) as consultas:
             response = self.client.get(reverse('api_datos_inventario'))
         self.assertEqual(response.status_code, 200)
-        self.assertLessEqual(len(consultas), 15)
+        # El endpoint mantiene un presupuesto constante; la consulta adicional
+        # corresponde al registro de actividad de la sesión autenticada.
+        self.assertLessEqual(len(consultas), 16)
 
     @tag('query_budget_historico')
     def test_consultas_dashboard_no_crecen_por_site(self):
