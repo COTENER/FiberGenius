@@ -37,7 +37,7 @@ from django.db.models import (
 )
 from django.db.models.functions import Cast, Coalesce, Lower, Substr
 from django.http import Http404, HttpResponse, JsonResponse, StreamingHttpResponse
-from django.shortcuts import get_object_or_404
+from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
 
 from ..models import (
@@ -141,7 +141,9 @@ def _filtro_puertos(request):
         queryset = queryset.filter(
             Q(odf_obj__odf__icontains=termino)
             | Q(puerto_odf__icontains=termino)
+            | Q(terminaciones_fibra__fibra__codigo_fibra__icontains=termino)
             | Q(terminaciones_fibra__fibra__fibra_numero__icontains=termino)
+            | Q(terminaciones_fibra__fibra__nombre_fibra__icontains=termino)
             | Q(terminaciones_fibra__fibra__ruta__nombre__icontains=termino)
             | Q(destino__icontains=termino)
             | Q(odf_obj__rack_obj__sala__hub_site__nombre__icontains=termino)
@@ -237,9 +239,11 @@ def _serializar_puertos(puertos):
         if terminacion:
             conexion = {
                 "fibra_id": terminacion.fibra_id,
+                "codigo": terminacion.fibra.codigo_fibra,
                 "ruta": terminacion.fibra.nombre_troncal,
                 "ruta_pendiente": terminacion.fibra.es_provisional,
                 "fibra": terminacion.fibra.fibra_numero,
+                "servicio": terminacion.fibra.nombre_fibra,
                 "estado_fibra": terminacion.fibra.estado,
                 "extremo": terminacion.extremo,
             }
@@ -251,9 +255,12 @@ def _serializar_puertos(puertos):
             "odf": _texto(puerto.odf_obj.odf),
             "bandeja": _texto(puerto.bandeja),
             "puerto": _texto(puerto.puerto_odf),
-            "fibra": (
-                f"{conexion['ruta']} / {conexion['fibra']} · Extremo {conexion['extremo']}"
-                if conexion else _texto(None)
+            "fibra": _texto(conexion["codigo"] or conexion["fibra"]) if conexion else _texto(None),
+            "fibra_numero": _texto(conexion["fibra"]) if conexion else _texto(None),
+            "servicio": _texto(conexion["servicio"]) if conexion else _texto(None),
+            "troncal": _texto(conexion["ruta"]) if conexion else _texto(None),
+            "extremo": (
+                f"Extremo {conexion['extremo']}" if conexion else _texto(None)
             ),
             "estado": _texto(puerto.estado_puerto),
             "estado_label": puerto.get_estado_puerto_display(),
@@ -479,6 +486,7 @@ def _filtro_troncales(request):
         queryset = queryset.filter(
             Q(nombre__icontains=termino)
             | Q(olt__icontains=termino)
+            | Q(fibras_inventario__codigo_fibra__icontains=termino)
             | Q(tramos_inventario__hub_site__icontains=termino)
             | Q(tramos_inventario__destino__icontains=termino)
             | Q(tramos_inventario__origen_nodo__codigo__icontains=termino)
@@ -1005,6 +1013,7 @@ def _filtro_fibras(request, *, aplicar_en_uso=True):
     if termino:
         queryset = queryset.filter(
             Q(ruta__nombre__icontains=termino)
+            | Q(codigo_fibra__icontains=termino)
             | Q(fibra_numero__icontains=termino)
             | Q(nombre_fibra__icontains=termino)
             | Q(terminaciones__puerto_odf__puerto_odf__icontains=termino)
@@ -2831,4 +2840,25 @@ def asset_360(request, tipo, pk):
         raise Http404("Tipo de activo no disponible")
     if not request.user.has_perm(permiso):
         raise PermissionDenied
+
+    # El endpoint alimenta el panel lateral y no es una página navegable. Si
+    # un enlace antiguo o JavaScript en caché intenta abrirlo como documento,
+    # regresamos a la pantalla operativa y pedimos abrir allí la ficha. Las
+    # peticiones fetch/XHR y los clientes que solicitan JSON mantienen el
+    # contrato original de la API.
+    accepts_html = "text/html" in request.headers.get("Accept", "")
+    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+    if accepts_html and not is_ajax:
+        destinos = {
+            "troncal": ("inventario_externo", {"tab": "troncales"}),
+            "fibra": ("planta_externa", {"tab": "fibras"}),
+            "elemento": ("planta_externa", {"tab": "reservas"}),
+            "odf": ("inventario_interno", {}),
+            "puerto": ("planta_interna", {}),
+            "site": ("mapa_inventario", {}),
+        }
+        vista, parametros = destinos[tipo]
+        parametros["ficha_360"] = reverse("asset_360", args=[tipo, pk])
+        return redirect(f'{reverse(vista)}?{urlencode(parametros)}')
+
     return JsonResponse({"status": "success", "data": constructor(pk)})

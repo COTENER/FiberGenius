@@ -44,7 +44,7 @@
             <article class="odf-kpi odf-kpi--orange"><span class="odf-kpi__icon">⌖</span><div><span>Reservas</span><strong id="troncales-stat-reserves">0</strong><small>Elementos georreferenciados</small></div></article>
         </section>
         <section class="odf-filter-card inventory-filter-card"><form id="troncales-filters" class="odf-filters inventory-filter-grid inventory-filter-grid--six" role="search">
-            <label class="odf-search"><span class="sr-only">Buscar</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input data-filter="q" type="search" placeholder="Troncal, origen, destino, ODF o serial" autocomplete="off"></label>
+            <label class="odf-search"><span class="sr-only">Buscar</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input data-filter="q" type="search" placeholder="Troncal, fibra, origen, destino, ODF o serial" autocomplete="off"></label>
             <label class="odf-filter-field"><span>Tipo</span><select data-filter="tipo"><option value="">Todos</option>{% for value in tipos_trazado %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
             <label class="odf-filter-field"><span>Estado</span><select data-filter="estado"><option value="">Todos</option>{% for value in estados_tramo %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
             <label class="odf-filter-field"><span>Site origen</span><select data-filter="site"><option value="">Todos</option>{% for value in sites_troncal %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>

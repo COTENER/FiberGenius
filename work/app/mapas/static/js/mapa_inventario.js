@@ -1843,7 +1843,13 @@
             '<h4>Puerto ' + displayValue(port.puerto, port.id) + '</h4>' +
             '<dl>' +
             '<dt>Estado</dt><dd>' + displayValue(port.estado, 'Libre') + '</dd>' +
-            '<dt>Fibra</dt><dd>' + displayValue(port.fibra) + '</dd>' +
+            '<dt>Hilo / extremo</dt><dd>' + displayValue(
+                port.fibra_numero && port.extremo
+                    ? port.fibra_numero + ' · ' + port.extremo
+                    : port.fibra_numero || port.extremo
+            ) + '</dd>' +
+            '<dt>Servicio / uso</dt><dd>' + displayValue(port.servicio, 'Sin servicio asignado') + '</dd>' +
+            '<dt>Troncal</dt><dd>' + displayValue(port.troncal, 'Troncal pendiente') + '</dd>' +
             '<dt>Destino</dt><dd>' + displayValue(port.destino) + '</dd>' +
             '<dt>Conector</dt><dd>' + displayValue(port.conector) + '</dd>' +
             '<dt>Patchcord</dt><dd>' + displayValue(port.patchcord) + '</dd>' +

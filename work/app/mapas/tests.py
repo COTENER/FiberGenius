@@ -1043,6 +1043,31 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(payload['summary']['top_odfs'][0]['utilizacion'], 100)
         self.assertIn('/api/inventario/360/puerto/', payload['data'][0]['detail_url'])
 
+    def test_puerto_ocupado_expone_fibra_servicio_y_troncal_oficiales(self):
+        codigo = 'MEL-FIB-GUI-TRONCAL-001-F001'
+        self.fibra.codigo_fibra = codigo
+        self.fibra.save(update_fields=['codigo_fibra'])
+        TerminacionFibra.objects.create(
+            fibra=self.fibra,
+            extremo='A',
+            puerto_odf=self.puertos[0],
+        )
+
+        response = self.client.get(
+            reverse('api_puertos_paginados'),
+            {'q': codigo, 'page_size': 25},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload['pagination']['total'], 1)
+        puerto = payload['data'][0]
+        self.assertEqual(puerto['fibra'], codigo)
+        self.assertEqual(puerto['fibra_numero'], 'F1')
+        self.assertEqual(puerto['servicio'], 'DESTINO-GUI')
+        self.assertEqual(puerto['troncal'], 'TRONCAL-GUI')
+        self.assertEqual(puerto['extremo'], 'Extremo A')
+
     def test_puertos_se_filtran_por_ubicacion_fisica(self):
         response = self.client.get(reverse('api_puertos_paginados'), {
             'site': self.odf.hub_site,
@@ -1606,6 +1631,26 @@ class GuiOperativaTests(TestCase):
         self.assertEqual(payload['data'][0]['secuencia'], 1)
         self.assertEqual(payload['summary']['total'], 1)
 
+    def test_codigo_global_de_fibra_encuentra_fibra_y_troncal_asociada(self):
+        codigo = 'MEL-FIB-GUI-TRONCAL-001-F001'
+        InventarioFibra.objects.filter(pk=self.fibra.pk).update(
+            codigo_fibra=codigo,
+        )
+
+        fibras = self.client.get(
+            reverse('api_fibras_paginadas'),
+            {'q': codigo},
+        ).json()
+        troncales = self.client.get(
+            reverse('api_troncales_paginadas'),
+            {'q': codigo},
+        ).json()
+
+        self.assertEqual(fibras['pagination']['total'], 1)
+        self.assertEqual(fibras['data'][0]['id'], self.fibra.pk)
+        self.assertEqual(troncales['pagination']['total'], 1)
+        self.assertEqual(troncales['data'][0]['nombre'], self.troncal.nombre)
+
     def test_troncales_se_filtran_por_disponibilidad_y_umbral(self):
         ruta_disponible = Ruta.objects.create(nombre='TRONCAL-DISPONIBLE')
         InventarioTramo.objects.create(
@@ -1899,7 +1944,28 @@ class GuiOperativaTests(TestCase):
         self.assertIn("`${groupClass}__label`", script)
         self.assertIn("drawer.dataset.assetType = asset.type || ''", script)
         self.assertIn("asset-section--quality", script)
+        self.assertIn("closest('[data-open-asset-360]')", script)
+        self.assertIn("event.preventDefault();", script)
         self.assertNotIn("`${itemClass}__label`", script)
+
+    def test_ficha_360_navegada_redirige_a_la_gui_y_fetch_conserva_json(self):
+        puerto = self.puertos[0]
+        endpoint = reverse('asset_360', args=['puerto', puerto.pk])
+
+        navegacion = self.client.get(endpoint, HTTP_ACCEPT='text/html')
+        fetch = self.client.get(
+            endpoint,
+            HTTP_ACCEPT='application/json',
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+
+        self.assertRedirects(
+            navegacion,
+            f'{reverse("planta_interna")}?{urlencode({"ficha_360": endpoint})}',
+            fetch_redirect_response=False,
+        )
+        self.assertEqual(fetch.status_code, 200)
+        self.assertEqual(fetch.json()['data']['type'], 'puerto')
 
     def test_exportacion_csv_se_genera_en_el_servidor(self):
         response = self.client.get(

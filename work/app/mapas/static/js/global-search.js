@@ -491,6 +491,19 @@
 
     FG.openAsset360 = openAsset;
 
+    // Todos los enlaces de ficha 360° deben abrir el panel lateral. Sin esta
+    // delegación, los enlaces creados por otros módulos navegan directamente
+    // al endpoint JSON cuando la página no carga un controlador específico.
+    document.addEventListener('click', (event) => {
+        const link = event.target.closest('[data-open-asset-360]');
+        if (!link) return;
+        const detailUrl = link.getAttribute('href');
+        if (!detailUrl || detailUrl === '#') return;
+        event.preventDefault();
+        event.stopPropagation();
+        openAsset(detailUrl);
+    }, { capture: true });
+
     if (input && results && search) {
         input.addEventListener('input', () => {
             window.clearTimeout(debounceTimer);
@@ -544,4 +557,14 @@
             }
         }
     });
+
+    // Recuperación segura cuando el servidor redirige una navegación directa
+    // al endpoint JSON (por ejemplo, desde una pestaña con JavaScript antiguo).
+    const currentUrl = new URL(window.location.href);
+    const redirectedAssetUrl = currentUrl.searchParams.get('ficha_360');
+    if (redirectedAssetUrl && redirectedAssetUrl.startsWith('/api/inventario/360/')) {
+        currentUrl.searchParams.delete('ficha_360');
+        window.history.replaceState({}, '', `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`);
+        window.setTimeout(() => openAsset(redirectedAssetUrl), 0);
+    }
 })();
