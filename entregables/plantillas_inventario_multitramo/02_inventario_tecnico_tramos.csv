@@ -1,5 +1,0 @@
-ruta,secuencia,origen,destino,estado,distancia_m,capacidad,tipo_fibra,tipo_trazado,marca_modelo,serial,mufas,splitters,reservas_m,observaciones
-TRONCAL-EJEMPLO-01,1,SITE-A,MUFA-01,ACTIVO,1000,48,MONOMODO,AEREO,,,,,10,Primer tramo del ejemplo
-TRONCAL-EJEMPLO-01,2,MUFA-01,MUFA-02,ACTIVO,1000,48,MONOMODO,SOTERRADO,,,,,10,Segundo tramo del ejemplo
-TRONCAL-EJEMPLO-01,3,MUFA-02,SITE-B,ACTIVO,1000,48,MONOMODO,AEREO,,,,,10,Tercer tramo del ejemplo
-TRONCAL-EJEMPLO-02,1,SITE-C,SITE-D,ACTIVO,500,24,MONOMODO,AEREO,,,,,0,Troncal de un solo tramo

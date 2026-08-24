@@ -31,14 +31,6 @@ staticfiles_pruebas/
 gui-review/
 outputs/
 entregables/
-# Las plantillas canónicas son parte del producto y deben viajar con el repo.
-!entregables/
-entregables/*
-!entregables/plantillas_inventario_multitramo/
-entregables/plantillas_inventario_multitramo/*
-!entregables/plantillas_inventario_multitramo/01_troncales_datos_generales.csv
-!entregables/plantillas_inventario_multitramo/02_inventario_tecnico_tramos.csv
-!entregables/plantillas_inventario_multitramo/03_fibras_por_tramo.csv
 *.log
 
 # Operational exports and internal validation artifacts
