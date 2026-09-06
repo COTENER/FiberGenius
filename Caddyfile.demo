@@ -1,0 +1,3 @@
+fiber-genius-lab-178-238-230-173.sslip.io {
+    reverse_proxy fiber-genius-rc2-lab-web:8000
+}

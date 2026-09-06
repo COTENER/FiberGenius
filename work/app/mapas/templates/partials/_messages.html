@@ -1,0 +1,22 @@
+{# ─── Django Messages as Toasts ─── #}
+{% if messages %}
+<div class="toast-container" id="toast-container">
+    {% for message in messages %}
+    <div class="toast toast--{{ message.tags|default:'info' }}" role="alert">
+        <span>{{ message }}</span>
+        <button class="toast__close" onclick="this.parentElement.remove()" aria-label="Cerrar">&times;</button>
+    </div>
+    {% endfor %}
+</div>
+<script>
+    // Auto-dismiss toasts after 5 seconds
+    setTimeout(() => {
+        document.querySelectorAll('.toast').forEach(t => {
+            t.style.transition = 'opacity 0.3s, transform 0.3s';
+            t.style.opacity = '0';
+            t.style.transform = 'translateX(100%)';
+            setTimeout(() => t.remove(), 300);
+        });
+    }, 5000);
+</script>
+{% endif %}

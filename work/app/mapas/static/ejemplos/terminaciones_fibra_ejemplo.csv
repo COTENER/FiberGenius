@@ -1,0 +1,3 @@
+Fibra,Ruta,ODF A,Puerto A,Conector A,ODF B,Puerto B,Conector B,Estado,Condicion,Servicio,Observaciones
+F17,,MEL-SITE-A-ODF-01,12,LC,MEL-SITE-B-ODF-01,8,SC,Ocupado,Operativa,Transporte principal,
+F18,,MEL-SITE-A-ODF-01,13,LC,,,,Sin informacion,Sin verificar,,Extremo B pendiente

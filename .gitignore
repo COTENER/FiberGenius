@@ -19,19 +19,28 @@ venv/
 *.sqlite3
 *.db
 data_demo/
+backups/
+**/*.before-restore*
 media/
 media_pruebas/
 staticfiles/
 staticfiles_pruebas/
+.tmp_pruebas/
+.tmp-review/
+.tmp-tests/
+gui-review/
+outputs/
+entregables/
 *.log
 
 # Operational exports and internal validation artifacts
 datos_v5/
 reportes_validacion/
+**/imagenes-OTUs/
+work/app/mapas/static/img/01*.png
 
 # Editors and OS
 .idea/
 .vscode/
 .DS_Store
 Thumbs.db
-

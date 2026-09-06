@@ -1,0 +1,3 @@
+Ruta,OTU,OLT,SLOT OLT,PUERTO OLT,PON,Enlace PON Traxium
+Lampa OLT1 Primario 42,OTU-1,Lampa OLT 01,3,2,PON-3-2,
+Recoleta OLT2 Secundario 15,OTU-2,Recoleta OLT 02,1,5,PON-1-5,

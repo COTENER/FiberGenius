@@ -1,0 +1,261 @@
+{% load l10n %}
+<section class="inv-dashboard" aria-labelledby="inventory-dashboard-title" data-dashboard-user="{{ request.user.pk|default:'anonymous' }}">
+    <header class="inv-dashboard__heading">
+        <div>
+            <span class="inv-dashboard__eyebrow">Capacidad y disponibilidad de la red</span>
+            <h1 id="inventory-dashboard-title">Dashboard de Inventario</h1>
+            <p>Vista consolidada de infraestructura, capacidad y reservas físicas de cable.</p>
+        </div>
+        <div class="inv-dashboard__heading-actions">
+            <span class="inv-dashboard__quality {% if inventario_con_datos %}is-ready{% endif %}">
+                <span aria-hidden="true"></span>
+                {% if inventario_con_datos %}Inventario operativo{% else %}Sin datos cargados{% endif %}
+            </span>
+            <button class="inv-dashboard__customize" id="dashboard-layout-edit" type="button">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10M14 4v6M6 14v6"/></svg>
+                Personalizar
+            </button>
+        </div>
+    </header>
+
+    <form class="inv-filterbar inv-filterbar--inventory" method="get" aria-label="Filtros del dashboard">
+        <label class="inv-filter">
+            <span class="inv-filter__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M6 21V7l6-4 6 4v14M9 10h.01M9 14h.01M9 18h.01M15 10h.01M15 14h.01M15 18h.01"/></svg>
+            </span>
+            <span class="inv-filter__copy"><small>Site</small>
+                <select name="site" onchange="this.form.submit()">
+                    <option value="">Todos los sites</option>
+                    {% for site in sites_disponibles %}<option value="{{ site.nombre }}" {% if site_seleccionado == site.nombre %}selected{% endif %}>{{ site.nombre }}</option>{% endfor %}
+                </select>
+            </span>
+        </label>
+        <label class="inv-filter">
+            <span class="inv-filter__icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17V7m0 5h16M20 7v10"/><circle cx="4" cy="7" r="2"/><circle cx="20" cy="17" r="2"/></svg>
+            </span>
+            <span class="inv-filter__copy"><small>Tipo de trazado</small>
+                <select name="trazado" onchange="this.form.submit()">
+                    <option value="">Todos los tipos</option>
+                    <option value="AEREO" {% if trazado_seleccionado == 'AEREO' %}selected{% endif %}>Aéreo</option>
+                    <option value="SOTERRADO" {% if trazado_seleccionado == 'SOTERRADO' %}selected{% endif %}>Soterrado</option>
+                    <option value="HIBRIDO" {% if trazado_seleccionado == 'HIBRIDO' %}selected{% endif %}>Híbrido</option>
+                </select>
+            </span>
+        </label>
+        {% if site_seleccionado or trazado_seleccionado %}
+        <a class="inv-filterbar__clear" data-clear-site-context="true" href="{% url 'dashboard_inventario' %}">Limpiar filtros</a>
+        {% endif %}
+        <details class="inv-export">
+            <summary><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>Exportar inventario</summary>
+            <div class="inv-export__menu">
+                <a href="{% url 'exportar_inventario' 'fibras' 'xlsx' %}">Fibras · Excel</a>
+                <a href="{% url 'exportar_inventario' 'puertos' 'xlsx' %}">Puertos · Excel</a>
+                <a href="{% url 'exportar_inventario' 'odfs' 'xlsx' %}">ODF · Excel</a>
+            </div>
+        </details>
+    </form>
+
+    <div class="inv-kpi-grid" aria-label="Totales y capacidad de inventario">
+        <article class="inv-kpi inv-kpi--blue inv-kpi--capacity">
+            <span class="inv-kpi__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M6 21V7l6-4 6 4v14M9 10h.01M9 14h.01M15 10h.01M15 14h.01"/></svg></span>
+            <div class="inv-kpi__body">
+                <span>Sites / Hubs</span>
+                <strong>{{ total_sites }}</strong>
+                <small>{{ sites_georreferenciados }} georreferenciados · {{ sites_georreferenciados_pct }}%</small>
+                <span class="inv-kpi__progress" aria-hidden="true"><i style="width: {{ sites_georreferenciados_pct|unlocalize }}%"></i></span>
+            </div>
+        </article>
+        <article class="inv-kpi inv-kpi--teal inv-kpi--capacity">
+            <span class="inv-kpi__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8h10M7 12h10M7 16h10"/></svg></span>
+            <div class="inv-kpi__body">
+                <span>ODF</span>
+                <strong>{{ total_odfs }}</strong>
+                <small>{{ total_salas }} salas · {{ total_racks }} racks</small>
+                <span class="inv-kpi__progress" aria-hidden="true"><i style="width: {{ odfs_disponibilidad_pct|unlocalize }}%"></i></span>
+            </div>
+        </article>
+        <article class="inv-kpi inv-kpi--purple inv-kpi--capacity">
+            <span class="inv-kpi__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 3v18M16 3v18M3 9h18M3 15h18"/></svg></span>
+            <div class="inv-kpi__body">
+                <span>Puertos ODF</span>
+                <strong>{{ total_puertos }}</strong>
+                <small><b>{{ utilizacion_puertos_pct }}%</b> comprometidos</small>
+                <span class="inv-kpi__progress" aria-hidden="true"><i style="width: {{ utilizacion_puertos_pct|unlocalize }}%"></i></span>
+            </div>
+        </article>
+        <article class="inv-kpi inv-kpi--orange inv-kpi--capacity">
+            <span class="inv-kpi__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="5" r="2"/><circle cx="19" cy="12" r="2"/><path d="m7 11 3.5-4.5M13.5 6.5 17 11M7 13h10"/></svg></span>
+            <div class="inv-kpi__body">
+                <span>Rutas / Tramos</span>
+                <strong>{{ total_rutas }} / {{ total_tramos }}</strong>
+                <small>{{ total_km }} km desplegados</small>
+                <span class="inv-kpi__progress" aria-hidden="true"><i style="width: {{ rutas_disponibilidad_pct|unlocalize }}%"></i></span>
+            </div>
+        </article>
+        <article class="inv-kpi inv-kpi--sky inv-kpi--capacity">
+            <span class="inv-kpi__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 17c4-8 12-8 16 0M6 20c3-5 9-5 12 0M8 14c2-4 6-4 8 0"/></svg></span>
+            <div class="inv-kpi__body">
+                <span>Fibras</span>
+                <strong>{{ total_fibras }}</strong>
+                <small><b>{{ utilizacion_fibras_pct }}%</b> comprometidas</small>
+                <span class="inv-kpi__progress" aria-hidden="true"><i style="width: {{ utilizacion_fibras_pct|unlocalize }}%"></i></span>
+            </div>
+        </article>
+        <article class="inv-kpi inv-kpi--green" title="Excedentes físicos de cable registrados en cámaras, postes u otros puntos de la ruta">
+            <span class="inv-kpi__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><path d="M20 12h2M2 12h2"/></svg></span>
+            <div class="inv-kpi__body">
+                <span>Reservas de cable</span>
+                <strong>{{ total_reservas }}</strong>
+                <small>Puntos georreferenciados</small>
+            </div>
+        </article>
+    </div>
+
+    <div class="inv-dashboard-main">
+        <article class="inv-panel inv-panel--network-map">
+            <header class="inv-panel__header">
+                <div><h2>Mapa del inventario</h2><p>Sites, ODF, rutas y reservas de cable según los filtros activos.</p></div>
+                <a href="{% url 'mapa_inventario' %}">Abrir mapa completo</a>
+            </header>
+            <div class="inv-map-shell">
+                <label class="inv-map-search" for="dashboard-map-search">
+                    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+                    <input id="dashboard-map-search" type="search" list="dashboard-map-suggestions" placeholder="Buscar Site o ruta..." autocomplete="off">
+                    <datalist id="dashboard-map-suggestions"></datalist>
+                </label>
+                <div id="dashboardInventoryMap"
+                    class="inv-network-map"
+                    data-api-url="{% url 'api_datos_inventario' %}"
+                    data-site="{{ site_seleccionado }}"
+                    data-trazado="{{ trazado_seleccionado }}"
+                    data-tile-light="{{ MAP_TILE_URL_LIGHT }}"
+                    data-tile-dark="{{ MAP_TILE_URL_DARK }}"
+                    data-attribution="{{ MAP_TILE_ATTRIBUTION }}">
+                    <div class="inv-map-loading" role="status"><span></span>Cargando inventario geográfico…</div>
+                </div>
+            </div>
+            <footer class="inv-map-legend" aria-label="Leyenda del mapa">
+                <span><i class="is-aerial"></i>Aéreo</span>
+                <span><i class="is-underground"></i>Soterrado</span>
+                <span><i class="is-hybrid"></i>Híbrido</span>
+                <span><i class="is-site"></i>Site</span>
+                <span><i class="is-odf"></i>ODF en Site</span>
+                <span><i class="is-reserve"></i>Reserva de cable</span>
+            </footer>
+        </article>
+
+        <aside class="inv-dashboard-side">
+            <article class="inv-panel inv-panel--gauges">
+                <header class="inv-panel__header"><div><h2>Disponibilidad general</h2><p>Capacidad libre sobre el total registrado.</p></div></header>
+                <div class="inv-gauge-grid">
+                    <div class="inv-gauge-card">
+                        <strong>Puertos ODF</strong>
+                        <div class="inv-gauge inv-gauge--green" role="img" aria-label="{{ disponibilidad_puertos_pct }} por ciento de puertos libres">
+                            <svg viewBox="0 0 120 68" aria-hidden="true" focusable="false">
+                                <path class="inv-gauge__track" pathLength="100" d="M 10 60 A 50 50 0 0 1 110 60"></path>
+                                <path class="inv-gauge__value" pathLength="100" stroke-dasharray="{{ disponibilidad_puertos_pct|unlocalize }} 100" d="M 10 60 A 50 50 0 0 1 110 60"></path>
+                            </svg>
+                            <span><b>{{ disponibilidad_puertos_pct }}%</b><small>Libres</small></span>
+                        </div>
+                        <p>{{ puertos_libres }} / {{ total_puertos }}</p>
+                        <small>{{ utilizacion_puertos_pct }}% comprometidos</small>
+                    </div>
+                    <div class="inv-gauge-card">
+                        <strong>Fibras</strong>
+                        <div class="inv-gauge inv-gauge--blue" role="img" aria-label="{{ disponibilidad_fibras_pct }} por ciento de fibras disponibles">
+                            <svg viewBox="0 0 120 68" aria-hidden="true" focusable="false">
+                                <path class="inv-gauge__track" pathLength="100" d="M 10 60 A 50 50 0 0 1 110 60"></path>
+                                <path class="inv-gauge__value" pathLength="100" stroke-dasharray="{{ disponibilidad_fibras_pct|unlocalize }} 100" d="M 10 60 A 50 50 0 0 1 110 60"></path>
+                            </svg>
+                            <span><b>{{ disponibilidad_fibras_pct }}%</b><small>Disponibles</small></span>
+                        </div>
+                        <p>{{ fibras_libres }} / {{ total_fibras }}</p>
+                        <small>{{ utilizacion_fibras_pct }}% comprometidas</small>
+                    </div>
+                </div>
+            </article>
+
+            <article class="inv-panel inv-panel--capacity-state">
+                <header class="inv-panel__header"><div><h2>Estado de capacidad</h2><p>Resumen técnico, sin alarmas operacionales.</p></div></header>
+                <div class="inv-capacity-state">
+                    <a href="{{ capacity_links.odfs_disponibles }}"><span class="is-free"></span><div><strong>ODF con puertos libres</strong><small>Capacidad utilizable</small></div><b>{{ odfs_con_disponibilidad }}</b></a>
+                    <a href="{{ capacity_links.odfs_sin_disponibilidad }}"><span class="is-full"></span><div><strong>ODF sin puertos libres</strong><small>Capacidad comprometida al 100%</small></div><b>{{ odfs_sin_disponibilidad }}</b></a>
+                    <a href="{{ capacity_links.rutas_disponibles }}"><span class="is-free"></span><div><strong>Rutas con fibras disponibles</strong><small>Con al menos un hilo libre</small></div><b>{{ rutas_con_disponibilidad }}</b></a>
+                    <a href="{{ capacity_links.rutas_atencion }}"><span class="is-attention"></span><div><strong>Rutas entre 80% y 99,9%</strong><small>Capacidad próxima al límite</small></div><b>{{ rutas_capacidad_atencion }}</b></a>
+                    <a href="{% url 'planta_externa' %}?tab=reservas"><span class="is-reserve"></span><div><strong>Reservas de cable</strong><small>Puntos físicos georreferenciados</small></div><b>{{ total_reservas }}</b></a>
+                </div>
+            </article>
+        </aside>
+    </div>
+
+    <div class="inv-layout-toolbar" id="dashboard-layout-toolbar" hidden>
+        <div>
+            <strong>Personalizar paneles</strong>
+            <span>Arrastra, usa las flechas o cambia el ancho. Los indicadores y el mapa permanecen fijos.</span>
+        </div>
+        <div class="inv-layout-toolbar__actions">
+            <button id="dashboard-layout-reset" type="button">Restablecer</button>
+            <button id="dashboard-layout-cancel" type="button">Cancelar</button>
+            <button id="dashboard-layout-save" class="is-primary" type="button">Guardar diseño</button>
+        </div>
+    </div>
+
+    <div class="inv-dashboard-lower" id="dashboard-customizable-grid">
+        <article class="inv-panel inv-panel--compact-chart inv-dashboard-widget" data-dashboard-widget="ports" data-dashboard-size="normal">
+            <header class="inv-panel__header"><div><h2>Uso de puertos ODF</h2><p>Distribución por estado.</p></div><a href="{% url 'planta_interna' %}">Ver puertos</a></header>
+            {% if total_puertos %}
+            <div class="inv-chart inv-chart--compact inv-chart--donut">
+                <canvas id="portStatusChartV3" data-free="{{ puertos_libres }}" data-used="{{ puertos_ocupados }}" data-reserved="{{ puertos_reservados }}" data-total="{{ total_puertos }}" data-free-label="Libres"></canvas>
+            </div>
+            {% else %}{% include "mapa_inventario/partials/dashboard_empty.html" with empty_title="Sin puertos registrados" empty_text="Los estados aparecerán al cargar puertos ODF." %}{% endif %}
+        </article>
+
+        <article class="inv-panel inv-panel--compact-chart inv-dashboard-widget" data-dashboard-widget="fibers" data-dashboard-size="normal">
+            <header class="inv-panel__header"><div><h2>Uso de fibras</h2><p>Distribución por estado.</p></div><a href="{% url 'planta_externa' %}?tab=fibras">Ver fibras</a></header>
+            {% if total_fibras %}
+            <div class="inv-chart inv-chart--compact inv-chart--donut">
+                <canvas id="fiberStatusChartV3" data-free="{{ fibras_libres }}" data-used="{{ fibras_ocupadas }}" data-reserved="{{ fibras_reservadas }}" data-unknown="{{ fibras_sin_estado }}" data-total="{{ total_fibras }}" data-free-label="Disponibles"></canvas>
+            </div>
+            {% else %}{% include "mapa_inventario/partials/dashboard_empty.html" with empty_title="Sin fibras registradas" empty_text="Los estados aparecerán al cargar fibras." %}{% endif %}
+        </article>
+
+        <article class="inv-panel inv-panel--compact-ranking inv-dashboard-widget" data-dashboard-widget="routes" data-dashboard-size="normal">
+            <header class="inv-panel__header"><div><h2>Top rutas por uso de fibras</h2><p>Ocupadas y reservadas.</p></div><a href="{% url 'inventario_externo' %}?tab=troncales">Ver todas</a></header>
+            {% if top_rutas_capacidad %}
+            <ol class="inv-capacity-list inv-capacity-list--compact">
+                {% for ruta in top_rutas_capacidad %}
+                <li>
+                    <div class="inv-capacity-list__heading">
+                        <div><strong title="{{ ruta.nombre }}">{{ ruta.nombre }}</strong><small>{{ ruta.hilos_ocupados }} ocupadas · {{ ruta.hilos_reservados }} reservadas · {{ ruta.hilos_libres }} libres</small></div>
+                        <b>{{ ruta.utilizacion_hilos }}%</b>
+                    </div>
+                    <span class="inv-capacity-list__bar {% if ruta.utilizacion_hilos >= 100 %}is-saturated{% elif ruta.utilizacion_hilos >= 80 %}is-attention{% endif %}" role="progressbar" aria-label="Uso de fibras en {{ ruta.nombre }}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ ruta.utilizacion_hilos|unlocalize }}"><i style="width: {{ ruta.utilizacion_hilos|unlocalize }}%"></i></span>
+                </li>
+                {% endfor %}
+            </ol>
+            {% else %}{% include "mapa_inventario/partials/dashboard_empty.html" with empty_title="Sin capacidad por ruta" empty_text="Las rutas aparecerán cuando tengan fibras asociadas." %}{% endif %}
+        </article>
+
+        <article class="inv-panel inv-panel--compact-ranking inv-dashboard-widget" data-dashboard-widget="odfs" data-dashboard-size="normal">
+            <header class="inv-panel__header"><div><h2>Top ODF por uso de puertos</h2><p>Ocupados y reservados.</p></div><a href="{% url 'inventario_interno' %}">Ver todos</a></header>
+            {% if top_odfs_capacidad %}
+            <ol class="inv-capacity-list inv-capacity-list--compact">
+                {% for odf in top_odfs_capacidad %}
+                <li>
+                    <div class="inv-capacity-list__heading">
+                        <div><strong title="{{ odf.odf }}">{{ odf.odf }}</strong><small>{{ odf.ocupados }} ocupados · {{ odf.reservados }} reservados · {{ odf.libres }} libres</small></div>
+                        <b>{{ odf.utilizacion_pct }}%</b>
+                    </div>
+                    <span class="inv-capacity-list__bar {% if odf.utilizacion_pct >= 100 %}is-saturated{% elif odf.utilizacion_pct >= 80 %}is-attention{% endif %}" role="progressbar" aria-label="Uso de puertos en {{ odf.odf }}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ odf.utilizacion_pct|unlocalize }}"><i style="width: {{ odf.utilizacion_pct|unlocalize }}%"></i></span>
+                </li>
+                {% endfor %}
+            </ol>
+            {% else %}{% include "mapa_inventario/partials/dashboard_empty.html" with empty_title="Sin capacidad por ODF" empty_text="Los ODF aparecerán cuando tengan puertos registrados." %}{% endif %}
+        </article>
+    </div>
+
+    {{ odf_list|json_script:"dashboard-odfs-map-data" }}
+    {{ rutas_dashboard_nombres|json_script:"dashboard-route-names" }}
+    <p class="inv-dashboard__note">“Reservas de cable” representa puntos físicos de holgura. Las fibras y los puertos reservados se muestran por separado en sus respectivos gráficos.</p>
+</section>

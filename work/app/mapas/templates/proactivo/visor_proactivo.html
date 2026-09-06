@@ -1,0 +1,900 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Análisis Proactivo - {{ ruta.nombre }}{% endblock %}
+
+{% block extra_css %}
+    <style>
+        .header-bar {
+            background: var(--bg-surface);
+            border-bottom: 1px solid var(--border-color);
+            padding: 12px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+    
+        .header-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .dashboard-layout {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            height: calc(100vh - 120px);
+        }
+    
+        .topbar-setup {
+            background: var(--bg-surface);
+            border-bottom: 1px solid var(--border-color);
+            padding: 16px 24px;
+            display: flex;
+            align-items: center;
+            gap: 24px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+            z-index: 10;
+        }
+
+        .chart-container {
+            flex: 1;
+            padding: 20px;
+            background: var(--bg-body);
+            display: flex;
+            flex-direction: column;
+            min-height: 350px;
+            max-height: 50vh;
+        }
+    
+        #echarts-visor {
+            flex: 1;
+            background: var(--bg-surface);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .status-critical { background: rgba(239, 68, 68, 0.1); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
+        .status-normal { background: rgba(16, 185, 129, 0.1); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.3); }
+        .status-warning { background: rgba(245, 158, 11, 0.1); color: var(--warning); border: 1px solid rgba(245, 158, 11, 0.3); }
+        
+        .result-box {
+            background: var(--bg-body);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 10px 16px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .result-label {
+            font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px;
+        }
+        .result-value {
+            font-size: 15px; font-weight: 700; color: var(--text-primary);
+        }
+
+        /* Botón Láser Moderno y Llamativo */
+        .btn-laser {
+            background: linear-gradient(135deg, #0ea5e9 0%, #2563eb 100%);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            padding: 12px 24px;
+            font-size: 14px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            box-shadow: 0 0 15px rgba(37, 99, 235, 0.5), inset 0 2px 4px rgba(255, 255, 255, 0.3);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+        }
+
+        .btn-laser::before {
+            content: '';
+            position: absolute;
+            top: 0; left: -100%;
+            width: 50%; height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+            transform: skewX(-20deg);
+            transition: all 0.6s ease;
+        }
+
+        .btn-laser:hover {
+            transform: translateY(-2px) scale(1.02);
+            box-shadow: 0 0 25px rgba(37, 99, 235, 0.8), inset 0 2px 4px rgba(255, 255, 255, 0.4);
+            background: linear-gradient(135deg, #38bdf8 0%, #2563eb 100%);
+        }
+
+        .btn-laser:hover::before {
+            left: 150%;
+        }
+
+        .btn-laser:active {
+            transform: translateY(1px);
+            box-shadow: 0 0 10px rgba(37, 99, 235, 0.4);
+        }
+
+        .btn-laser:disabled {
+            background: var(--bg-surface-2);
+            color: var(--text-secondary);
+            border-color: var(--border-color);
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(255, 255, 255, 0); }
+            100% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
+        }
+
+        .btn-laser .icon-pulse {
+            border-radius: 50%;
+            animation: pulse-ring 2s infinite;
+            display: inline-flex;
+        }
+
+        /* Modal Láser */
+        .laser-modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(15, 23, 42, 0.7);
+            backdrop-filter: blur(5px);
+            -webkit-backdrop-filter: blur(5px);
+            z-index: 9999;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            visibility: hidden;
+            opacity: 0;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
+        }
+        
+        .laser-modal-overlay.active {
+            visibility: visible;
+            opacity: 1;
+        }
+
+        .laser-modal-content {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 40px;
+            text-align: center;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            max-width: 400px;
+            width: 90%;
+            transform: translateY(20px) scale(0.95);
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .laser-modal-overlay.active .laser-modal-content {
+            transform: translateY(0) scale(1);
+        }
+
+        .laser-modal-content h3 {
+            margin: 0 0 12px 0;
+            color: var(--text-primary);
+            font-size: 20px;
+            font-weight: 700;
+        }
+
+        .laser-modal-content p {
+            margin: 0 0 24px 0;
+            color: var(--text-secondary);
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        @keyframes blink-critical {
+            0% { background-color: rgba(239, 68, 68, 0.1); color: var(--text-primary); box-shadow: 0 0 0 rgba(239, 68, 68, 0); }
+            50% { background-color: rgba(239, 68, 68, 0.9); color: white; box-shadow: 0 0 20px rgba(239, 68, 68, 1); }
+            100% { background-color: rgba(239, 68, 68, 0.1); color: var(--text-primary); box-shadow: 0 0 0 rgba(239, 68, 68, 0); }
+        }
+        .blink-critical {
+            animation: blink-critical 1.2s infinite alternate;
+            border: 1px solid rgba(239, 68, 68, 1);
+        }
+    </style>
+{% endblock %}
+
+{% block content %}
+<div class="header-bar">
+    <div class="header-title">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="color: var(--accent)"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+        Análisis Proactivo: {{ ruta.nombre }}
+    </div>
+    <div>
+        <button class="btn btn-primary" onclick="window.close()" style="background:var(--border-color); border:none; color: white; padding: 8px 16px; border-radius: 6px; cursor: pointer;">Cerrar Visor</button>
+    </div>
+</div>
+
+<div class="dashboard-layout">
+    <div class="topbar-setup" style="flex-wrap: wrap;">
+        <!-- Info Contextual -->
+        <div style="min-width: 180px; border-right: 1px solid var(--border-color); padding-right: 20px; display: flex; flex-direction: column; gap: 8px;">
+            <div>
+                <label style="font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">RFTS (OTU)</label>
+                <div style="font-size: 13px; font-weight: 600; color: var(--text-primary); white-space: nowrap;">{{ ruta.otu|default:"No Asignado" }}</div>
+            </div>
+            <div>
+                <label style="font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Puerto</label>
+                <div style="font-size: 13px; font-weight: 600; color: var(--text-primary);">
+                    {% if ruta.puerto %}
+                        Puerto {{ ruta.puerto.numero }}
+                    {% else %}
+                        No Asignado
+                    {% endif %}
+                </div>
+            </div>
+            
+            {% if referencia_actual %}
+            <div>
+                <label style="font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Traza Referencia</label>
+                <div style="font-size: 13px; color: var(--purple-ref); font-weight: 700; white-space: nowrap;">{{ referencia_actual.nombre }}</div>
+            </div>
+            <div>
+                <span style="color: var(--danger); display: inline-flex; align-items: center; gap: 4px; font-size: 11px; background: rgba(239, 68, 68, 0.05); padding: 4px 8px; border-radius: 4px; white-space: nowrap;">
+                    Corte: <strong>+{{ perfil_activo.margen_corte_fibra_db|default:"2.0" }}dB</strong>
+                    <button id="toggleMargenBtn" onclick="toggleMargenCorte()" style="background: none; border: 1px solid var(--danger); color: var(--danger); border-radius: 4px; padding: 2px 6px; cursor: pointer; font-size: 10px; margin-left: 4px;" title="Ocultar/Mostrar línea de corte">Ocultar</button>
+                </span>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Resultados del Análisis en vivo -->
+        <div style="display: flex; gap: 16px; align-items: stretch; flex: 1;">
+            <div class="result-box" style="min-width: 120px; align-items: center;">
+                <div class="result-label">SEVERIDAD</div>
+                <div id="ui-estado"><span class="status-badge" style="background: var(--bg-surface-2); color: var(--text-secondary);">Analizando...</span></div>
+            </div>
+            
+            <div class="result-box" style="align-items: center; padding: 12px 16px;">
+                <div class="result-label">Eventos Activos</div>
+                <div id="ui-eventos-count" class="result-value" style="font-size: 20px; font-weight: 700; color: #d97706;">--</div>
+            </div>
+            
+            <div class="result-box" style="align-items: center; padding: 12px 16px;">
+                <div class="result-label">Link Loss</div>
+                <div id="ui-link-loss" class="result-value" style="font-size: 20px; font-weight: 700; color: #3b82f6;">--</div>
+            </div>
+            
+            <div class="result-box" style="min-width: 250px; max-width: 550px; padding: 12px 16px;">
+                <div id="ui-eventos-list" style="display: flex; flex-direction: column; gap: 6px; max-height: 52px; overflow-y: auto; padding-right: 4px;">
+                    <div style="color: var(--text-secondary); font-size: 13px; font-style: italic;">Esperando análisis...</div>
+                </div>
+            </div>
+            {% if referencia_actual %}
+            <div style="display: flex; flex-direction: column; justify-content: center; align-items: flex-end; padding-left: 10px; margin-left: auto;">
+                <button class="btn-laser" id="btnDisparar" onclick="ejecutarAnalisis()">
+                    <span class="icon-pulse">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    </span>
+                    Lanzar Láser
+                </button>
+                <div id="ui-ultima-medicion" style="margin-top: 6px; font-size: 11px; color: var(--text-secondary); text-align: right; line-height: 1.3;"></div>
+            </div>
+            {% else %}
+            <div class="result-box" style="border-color: var(--warning); background: rgba(245, 158, 11, 0.05);">
+                <div class="result-label" style="color: var(--warning);">Atención</div>
+                <div class="result-value" style="font-size: 12px;">Sin Traza de Referencia</div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="chart-container">
+        <div id="echarts-visor"></div>
+    </div>
+</div>
+
+<!-- Modal de Disparo de Láser -->
+<div id="laserModal" class="laser-modal-overlay">
+    <div class="laser-modal-content" style="text-align: center;">
+        <h3 id="laserModalTitle">Disparando Láser</h3>
+        <p id="laserModalDesc">Iniciando...</p>
+        
+        <div style="width: 100%; height: 10px; background: var(--bg-surface-2); border-radius: 5px; margin-top: 20px; overflow: hidden; position: relative; border: 1px solid var(--border-color);">
+            <div id="laserProgressBar" style="height: 100%; width: 0%; background: #3b82f6; transition: width 1s linear;"></div>
+        </div>
+        <div id="laserProgressText" style="margin-top: 10px; font-size: 16px; color: var(--text-primary); font-weight: bold; font-family: monospace;">0%</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'vendor/echarts/echarts-5.5.0.min.js' %}"></script>
+<script>
+    let myChart; // Make myChart available globally for other functions
+    let showMargenCorte = true;
+    let laserTimerInterval = null;
+    let laserStartTime = 0;
+
+    function showLaserModal(title, desc) {
+        document.getElementById('laserModalTitle').textContent = title;
+        if(desc) document.getElementById('laserModalDesc').textContent = desc;
+        
+        const overlay = document.getElementById('laserModal');
+        overlay.classList.add('active');
+        
+        if(!laserTimerInterval) {
+            let progress = 0;
+            const bar = document.getElementById('laserProgressBar');
+            const text = document.getElementById('laserProgressText');
+            bar.style.transition = 'width 1s linear';
+            bar.style.width = '0%';
+            text.textContent = '0%';
+            
+            laserTimerInterval = setInterval(() => {
+                if (progress < 85) progress += 2;
+                else if (progress < 95) progress += 0.5;
+                
+                bar.style.width = progress + '%';
+                text.textContent = Math.floor(progress) + '%';
+            }, 1000);
+        }
+    }
+
+    function hideLaserModal() {
+        const overlay = document.getElementById('laserModal');
+        overlay.classList.remove('active');
+        if(laserTimerInterval) {
+            clearInterval(laserTimerInterval);
+            laserTimerInterval = null;
+        }
+    }
+
+    function toggleMargenCorte() {
+        showMargenCorte = !showMargenCorte;
+        const btn = document.getElementById('toggleMargenBtn');
+        if(btn) {
+            btn.textContent = showMargenCorte ? 'Ocultar' : 'Mostrar';
+            btn.style.background = showMargenCorte ? 'none' : 'var(--danger)';
+            btn.style.color = showMargenCorte ? 'var(--danger)' : 'white';
+        }
+        if (window.referenceData) {
+            renderBothCurves(window.referenceData, window.actualData || null);
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        // Inicializar ECharts
+        const chartDom = document.getElementById('echarts-visor');
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        myChart = echarts.init(chartDom, isDark ? 'dark' : null, { renderer: 'canvas' });
+        
+        // Simulación de carga de datos
+        myChart.showLoading({ text: 'Cruzar datos con Traza de Referencia...', color: '#3b82f6', textColor: isDark ? '#f8fafc' : '#0f172a', maskColor: 'transparent' });
+
+        const observer = new MutationObserver(function(mutations) {
+            mutations.forEach(function(mutation) {
+                if (mutation.attributeName === "data-theme") {
+                    const newTheme = document.documentElement.getAttribute('data-theme');
+                    const opts = myChart.getOption();
+                    myChart.dispose();
+                    myChart = echarts.init(chartDom, newTheme === 'dark' ? 'dark' : null, { renderer: 'canvas' });
+                    
+                    // Si ya hay datos cargados, redibujar para recalcular los colores (ej: Gris a Verde)
+                    if (window.referenceData && window.actualData) {
+                        renderBothCurves(window.referenceData, window.actualData);
+                    } else if (window.referenceData) {
+                        renderBothCurves(window.referenceData, null);
+                    } else {
+                        myChart.setOption(opts);
+                    }
+                }
+            });
+        });
+        observer.observe(document.documentElement, {attributes: true});
+
+        {% if referencia_actual %}
+        // Cargar inmediatamente la curva de referencia
+        myChart.showLoading({ text: 'Cargando Traza de Referencia...', color: '#3b82f6', textColor: isDark ? '#f8fafc' : '#0f172a', maskColor: 'transparent' });
+        fetch(`/api/proactivo/referencia-datos/{{ referencia_actual.id }}/`)
+        .then(res => res.json())
+        .then(res => {
+            if(res.status === 'success') {
+                window.referenceData = res.data;
+                renderBothCurves(res.data, null);
+            } else {
+                myChart.hideLoading();
+                alert('Error al cargar la referencia.');
+            }
+        });
+        {% else %}
+        myChart.showLoading({ text: 'Esperando Traza de Referencia...', color: '#3b82f6', textColor: isDark ? '#f8fafc' : '#0f172a', maskColor: 'transparent' });
+        {% endif %}
+    });
+
+    function ejecutarAnalisis() {
+        const btn = document.getElementById('btnDisparar');
+        btn.disabled = true;
+        btn.innerHTML = `<svg style="animation: spin 1s linear infinite; margin-right:8px;" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" stroke-opacity="0.25"></circle><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg> Disparando...`;
+
+        showLaserModal('Conectando con Equipo VeEX', 'Enviando configuración de láser y preparando medición en vivo...');
+
+        // 1. Iniciar OnDemand Traza física
+        fetch("{% url 'iniciar_traza_ondemand' %}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: JSON.stringify({ route_name: "{{ ruta.nombre }}" })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if(data.status === 'success') {
+                showLaserModal('Midiendo Enlace Físico', 'El láser ha sido disparado. Esto puede tardar entre 30 segundos a 1 minuto según la longitud de la fibra...');
+                pollStatus(data.traza_id);
+            } else {
+                alert('Error iniciando traza: ' + data.message);
+                resetBtn();
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error de conexión al iniciar traza.');
+            resetBtn();
+        });
+    }
+
+    function pollStatus(trazaId) {
+        let attempts = 0;
+        const maxAttempts = 40; 
+        
+        const checkStatus = () => {
+            fetch(`/api/traza-en-vivo/status/${trazaId}/`)
+            .then(res => res.json())
+            .then(data => {
+                if(data.status.toLowerCase() === 'completed' && data.has_file) {
+                    showLaserModal('Analizando Resultados', 'Descargando curvas e identificando posibles anomalías o cortes en la fibra...');
+                    document.getElementById('laserProgressBar').style.width = '100%';
+                    document.getElementById('laserProgressText').textContent = '100%';
+                    fetch(`/api/proactivo/ondemand-datos/${trazaId}/`)
+                    .then(r => r.json())
+                    .then(resData => {
+                        if(resData.status === 'success') {
+                            window.actualData = resData.data;
+                            renderBothCurves(window.referenceData, resData.data);
+                            let now = new Date();
+                            const ultimaDiv = document.getElementById('ui-ultima-medicion');
+                            if(ultimaDiv) {
+                                const ultimaFecha = document.createElement('strong');
+                                ultimaFecha.style.color = 'var(--text-primary)';
+                                ultimaFecha.textContent = `${now.toLocaleDateString()} ${now.toLocaleTimeString()}`;
+                                ultimaDiv.replaceChildren(
+                                    document.createTextNode('Última medición:'),
+                                    document.createElement('br'),
+                                    ultimaFecha
+                                );
+                            }
+                        } else {
+                            alert('Error leyendo traza resultante.');
+                        }
+                        resetBtn();
+                    });
+                } else if(data.status.toLowerCase() === 'failed') {
+                    alert('Error en disparo VeEX: ' + data.error_message);
+                    resetBtn();
+                } else {
+                    attempts++;
+                    if(attempts < maxAttempts) {
+                        setTimeout(checkStatus, 5000);
+                    } else {
+                        alert('El disparo tomó demasiado tiempo y fue cancelado.');
+                        resetBtn();
+                    }
+                }
+            })
+            .catch(() => {
+                alert('Error verificando estado.');
+                resetBtn();
+            });
+        };
+        setTimeout(checkStatus, 5000);
+    }
+
+    function resetBtn() {
+        hideLaserModal();
+        const btn = document.getElementById('btnDisparar');
+        btn.disabled = false;
+        btn.innerHTML = `<span class="icon-pulse"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg></span> Lanzar Láser`;
+    }
+
+    function renderBothCurves(refData, actualData) {
+        myChart.hideLoading();
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        const refEndPoints = refData.y && refData.y.length > 0 ? refData.y.slice(-300) : [0];
+        const noiseCeiling = Math.max(...refEndPoints);
+        
+        const margenCorteStr = "{{ margen_corte|default:'2.0' }}".replace(',', '.');
+        const margenCorte = parseFloat(margenCorteStr) || 2.0; 
+        const umbralCorteY = noiseCeiling === -Infinity ? -15 : noiseCeiling + margenCorte;
+        
+        const valMinor = parseFloat('{{ perfil_activo.atenuacion_minor_min|default:"1.0" }}');
+        const valMajor = parseFloat('{{ perfil_activo.atenuacion_major_min|default:"3.0" }}');
+        const valCritical = parseFloat('{{ perfil_activo.atenuacion_critical_min|default:"5.0" }}');
+
+        let eventosRaw = [];
+        let isCorte = false;
+        let corteDist = 0;
+        let diffHistory = [];
+        let currentEvent = null;
+        
+        let endOfFiberDist = Infinity;
+        if (refData.events && refData.events.length > 0) {
+            const eventDistances = refData.events.map(e => e.distance);
+            endOfFiberDist = Math.max(...eventDistances);
+        }
+
+        const refSeriesData = refData.x.map((xVal, idx) => [xVal, refData.y[idx]]);
+        let actualSeriesData = [];
+        if (actualData && actualData.x && actualData.y) {
+            actualSeriesData = actualData.x.map((xVal, idx) => [xVal, actualData.y[idx]]);
+            
+            if (actualSeriesData.length > 0 && refSeriesData.length > 0) {
+                const lastActualX = actualSeriesData[actualSeriesData.length - 1][0];
+                const lastRefX = refSeriesData[refSeriesData.length - 1][0];
+                
+                if (lastActualX < lastRefX) {
+                    const sampleCount = Math.min(400, actualSeriesData.length);
+                    let actualNoiseChunk = actualSeriesData.slice(-sampleCount).map(p => p[1]);
+                    let sorted = [...actualNoiseChunk].sort((a,b) => a-b);
+                    let median = sorted[Math.floor(sorted.length / 2)];
+                    
+                    actualNoiseChunk = actualNoiseChunk.filter(y => y < median + 8);
+                    if (actualNoiseChunk.length === 0) actualNoiseChunk = [median]; 
+
+                    let noiseIdx = 0;
+                    for (let i = 0; i < refSeriesData.length; i++) {
+                        const refX = refSeriesData[i][0];
+                        if (refX > lastActualX) {
+                            let simulatedY = actualNoiseChunk[noiseIdx % actualNoiseChunk.length];
+                            actualSeriesData.push([refX, simulatedY]);
+                            noiseIdx++;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (actualData && refData && actualData.y && refData.y) {
+            let j = 0;
+            const actualLen = actualData.x.length;
+            for(let i = 0; i < refData.x.length; i++) {
+                const currentX = refData.x[i];
+                while (j < actualLen - 1 && actualData.x[j] < currentX) {
+                    j++;
+                }
+                const currentActualY = actualData.y[j];
+                let maxActualYInWindow = currentActualY;
+                let tempJ = j;
+                
+                // Buscar hacia adelante (hasta 40 metros)
+                while (tempJ < actualData.x.length && (actualData.x[tempJ] - actualData.x[j]) <= 40) {
+                    if (actualData.y[tempJ] > maxActualYInWindow) {
+                        maxActualYInWindow = actualData.y[tempJ];
+                    }
+                    tempJ++;
+                }
+
+                if (currentX < (endOfFiberDist - 20) && refData.y[i] >= umbralCorteY) {
+                    if (currentActualY < umbralCorteY && !isCorte) {
+                        isCorte = true;
+                        corteDist = currentX;
+                        eventosRaw.push({
+                            tipo: 'Corte de Fibra',
+                            distancia: currentX,
+                            atenuacion: Infinity,
+                            severidad: 'Critical'
+                        });
+                        break;
+                    }
+                    
+                    let diff = refData.y[i] - maxActualYInWindow;
+                    
+                    diffHistory.push({x: currentX, diff: diff});
+                    while (diffHistory.length > 0 && currentX - diffHistory[0].x > 100) {
+                        diffHistory.shift();
+                    }
+                    
+                    let pastDiff = diffHistory[0].diff;
+                    let jump = diff - pastDiff;
+                    
+                    // Solo consideramos un "Evento" si hay una caída brusca (salto > 0.5 dB en menos de 100m)
+                    if (jump >= 0.5) {
+                        if (currentEvent == null || (currentX - currentEvent.lastUpdateX > 400)) {
+                            // Nuevo evento
+                            currentEvent = {
+                                tipo: 'Atenuación',
+                                distancia: currentX,
+                                atenuacion: diff,
+                                lastUpdateX: currentX
+                            };
+                            eventosRaw.push(currentEvent);
+                        } else {
+                            // Actualizar evento existente
+                            if (diff > currentEvent.atenuacion) {
+                                currentEvent.atenuacion = diff;
+                                currentEvent.lastUpdateX = currentX;
+                            }
+                        }
+                    } else {
+                        // Si no hay salto brusco, podríamos estar en la "cola" del evento. 
+                        // Actualizamos su atenuación máxima hasta 400m después de su último pico.
+                        if (currentEvent != null && currentX - currentEvent.lastUpdateX < 400) {
+                            if (diff > currentEvent.atenuacion) {
+                                currentEvent.atenuacion = diff;
+                                currentEvent.lastUpdateX = currentX;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Filtrar y asignar severidad final
+        let eventos = [];
+        eventosRaw.forEach(ev => {
+            if (ev.tipo === 'Corte de Fibra') {
+                eventos.push(ev);
+            } else if (ev.atenuacion >= valMinor) {
+                if (ev.atenuacion >= valCritical) ev.severidad = 'Critical';
+                else if (ev.atenuacion >= valMajor) ev.severidad = 'Major';
+                else ev.severidad = 'Minor';
+                eventos.push(ev);
+            }
+        });
+        
+        let globalSeverity = 'Normal';
+        if (eventos.length > 0) {
+            let hasCritical = eventos.some(e => e.severidad === 'Critical');
+            let hasMajor = eventos.some(e => e.severidad === 'Major');
+            if (hasCritical) globalSeverity = 'Critical';
+            else if (hasMajor) globalSeverity = 'Major';
+            else globalSeverity = 'Minor';
+        }
+        
+        // Actualizar Eventos Activos
+        document.getElementById('ui-eventos-count').textContent = eventos.length;
+        
+        // Actualizar Link Loss (si la API lo envía)
+        let linkLoss = '-- dB';
+        if (actualData && actualData.link_loss !== undefined && actualData.link_loss !== null) {
+            linkLoss = parseFloat(actualData.link_loss).toFixed(2) + ' dB';
+        }
+        document.getElementById('ui-link-loss').textContent = linkLoss;
+
+        let listContainer = document.getElementById('ui-eventos-list');
+        let estadoClass = 'status-normal';
+        if (globalSeverity === 'Critical') estadoClass = 'status-critical blink-critical';
+        else if (globalSeverity === 'Major') estadoClass = 'status-major';
+        else if (globalSeverity === 'Minor') estadoClass = 'status-minor';
+
+        if (actualData) {
+            const estadoBadge = document.createElement('span');
+            estadoBadge.className = `status-badge ${estadoClass}`;
+            estadoBadge.textContent = globalSeverity;
+            document.getElementById('ui-estado').replaceChildren(estadoBadge);
+            
+            const listContainer = document.getElementById('ui-eventos-list');
+            listContainer.replaceChildren();
+            
+            if (eventos.length === 0) {
+                const emptyState = document.createElement('div');
+                emptyState.style.cssText = 'color: #22c55e; font-size: 13px; font-weight: 600;';
+                emptyState.textContent = 'Traza Normal (Sin eventos)';
+                listContainer.appendChild(emptyState);
+            } else {
+                // Agregar cabecera de columnas
+                listContainer.innerHTML = `
+                    <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-secondary); margin-bottom: 6px; padding-bottom: 4px; border-bottom: 1px dashed var(--border-color); font-weight: 600;">
+                        <span style="min-width: 140px;">EVENTO</span>
+                        <span style="width: 60px; text-align: right;">ATENUACIÓN</span>
+                        <span style="width: 90px; text-align: right;">DISTANCIA</span>
+                        <span style="width: 150px; text-align: right;">📍 COORDENADAS</span>
+                    </div>
+                `;
+                
+                eventos.forEach((ev, idx) => {
+                    let evColor = '#3b82f6';
+                    if (ev.severidad === 'Critical') evColor = '#ef4444';
+                    else if (ev.severidad === 'Major') evColor = '#f97316';
+                    
+                    let atenuacionText = ev.tipo === 'Corte de Fibra' ? '--' : ev.atenuacion.toFixed(2) + ' dB';
+
+                    const eventRow = document.createElement('div');
+                    eventRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center; font-size: 13px; margin-bottom: 6px;';
+
+                    const eventType = document.createElement('span');
+                    eventType.style.cssText = `color: ${evColor}; font-weight: 600; min-width: 140px;`;
+                    const eventDot = document.createElement('span');
+                    eventDot.style.cssText = `display:inline-block; width:8px; height:8px; border-radius:50%; background:${evColor}; margin-right:6px;`;
+                    eventType.append(eventDot, document.createTextNode(String(ev.tipo || 'Evento desconocido')));
+
+                    const attenuation = document.createElement('span');
+                    attenuation.style.cssText = 'color: var(--text-secondary); width: 60px; text-align: right; font-weight: 500;';
+                    attenuation.textContent = atenuacionText;
+
+                    const distance = document.createElement('span');
+                    distance.style.cssText = 'color: var(--text-primary); font-family: monospace; width: 90px; text-align: right;';
+                    distance.textContent = `${ev.distancia.toFixed(2)} m`;
+
+                    const coordinates = document.createElement('span');
+                    coordinates.id = `coord-ev-${idx}`;
+                    coordinates.style.cssText = 'color: var(--text-secondary); width: 150px; text-align: right; font-family: monospace; font-size: 11px;';
+                    coordinates.textContent = 'Calculando...';
+
+                    eventRow.append(eventType, attenuation, distance, coordinates);
+                    listContainer.appendChild(eventRow);
+                });
+
+                // Obtener coordenadas de los eventos en background
+                if ("{{ ruta.id|default:'' }}" !== "") {
+                    const qs = eventos.map(e => `d=${e.distancia}`).join('&');
+                    fetch(`/api/proactivo/coordenadas/{{ ruta.id }}/?${qs}`)
+                    .then(r => r.json())
+                    .then(res => {
+                        if (res.coordenadas) {
+                            res.coordenadas.forEach((coord, idx) => {
+                                const coordSpan = document.getElementById(`coord-ev-${idx}`);
+                                if (coordSpan) {
+                                    coordSpan.textContent = `${coord.lat.toFixed(5)}, ${coord.lng.toFixed(5)}`;
+                                }
+                            });
+                        }
+                    })
+                    .catch(e => console.error("Error fetching coords:", e));
+                }
+            }
+        }
+        
+        const colorLineaActual = (globalSeverity === 'Normal') ? (isDark ? '#22c55e' : '#94a3b8') : '#ef4444';
+
+        let markPointData = [];
+        let effectScatterData = [];
+        if (actualData) {
+            markPointData = eventos.map(ev => {
+                let color = '#3b82f6';
+                if (ev.severidad === 'Critical') color = '#ef4444';
+                else if (ev.severidad === 'Major') color = '#f97316';
+                
+                let y = 0;
+                const idx = actualData.x.findIndex(x => x >= ev.distancia);
+                if (idx !== -1) y = actualData.y[idx];
+                
+                if (ev.severidad === 'Critical') {
+                    effectScatterData.push({
+                        value: [ev.distancia, y],
+                        itemStyle: { color: color }
+                    });
+                }
+                
+                return {
+                    coord: [ev.distancia, y],
+                    value: ev.tipo.charAt(0),
+                    itemStyle: {
+                        color: color,
+                        borderColor: '#fff',
+                        borderWidth: 2,
+                        shadowColor: 'rgba(0, 0, 0, 0.5)',
+                        shadowBlur: 8
+                    }
+                };
+            });
+        }
+
+        const axisColor = isDark ? '#94a3b8' : '#475569';
+        const gridColor = isDark ? '#334155' : '#e2e8f0';
+
+        const option = {
+            backgroundColor: 'transparent',
+            tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+            legend: { data: ['Traza Actual', 'Traza Referencia'], textStyle: { color: axisColor }, top: 10 },
+            toolbox: {
+                feature: {
+                    dataZoom: { yAxisIndex: 'none' },
+                    restore: {},
+                    saveAsImage: {}
+                },
+                iconStyle: { borderColor: axisColor }
+            },
+            dataZoom: [
+                { type: 'inside', start: 0, end: 100 },
+                { type: 'slider', start: 0, end: 100, bottom: 10 }
+            ],
+            grid: { left: '4%', right: '4%', bottom: '15%', containLabel: true },
+            xAxis: { 
+                type: 'value', 
+                axisLabel: { formatter: (val) => Number(val).toLocaleString() + ' m', color: axisColor },
+                axisLine: { lineStyle: { color: gridColor } },
+                splitLine: { show: true, lineStyle: { color: gridColor, type: 'dashed' } }
+            },
+            yAxis: { 
+                type: 'value', 
+                axisLabel: { formatter: '{value} dB', color: axisColor }, 
+                axisLine: { lineStyle: { color: gridColor } },
+                splitLine: { show: true, lineStyle: { color: gridColor, opacity: 0.5 } }
+            },
+            series: [
+                {
+                    name: 'Traza Referencia',
+                    type: 'line',
+                    data: refSeriesData,
+                    lineStyle: { color: '#0ea5e9', width: 2 },
+                    symbol: 'none',
+                    markLine: showMargenCorte ? {
+                        symbol: ['none', 'none'],
+                        label: { formatter: `Umbral Corte: ${margenCorte.toFixed(1)} dB sobre piso`, color: '#eab308', position: 'insideStartTop' },
+                        lineStyle: { color: '#eab308', type: 'solid', width: 2, opacity: 0.8 },
+                        data: [{ yAxis: umbralCorteY }]
+                    } : null
+                }
+            ]
+        };
+
+        if (actualData) {
+            option.series.push({
+                name: 'Traza Actual',
+                type: 'line',
+                data: actualSeriesData,
+                symbol: 'none',
+                lineStyle: { color: colorLineaActual, width: 2 },
+                itemStyle: { color: colorLineaActual },
+                markPoint: markPointData.length > 0 ? {
+                    symbol: 'circle',
+                    symbolSize: 24,
+                    label: {
+                        show: true,
+                        position: 'inside',
+                        formatter: function(params) { return params.data.value; },
+                        color: '#fff',
+                        fontWeight: 'bold',
+                        fontSize: 12
+                    },
+                    data: markPointData
+                } : null
+            });
+            
+            if (effectScatterData.length > 0) {
+                option.series.push({
+                    name: 'Alertas Críticas',
+                    type: 'effectScatter',
+                    coordinateSystem: 'cartesian2d',
+                    data: effectScatterData,
+                    symbolSize: 30, // Suficientemente grande para verse
+                    showEffectOn: 'render',
+                    rippleEffect: { color: '#ef4444', brushType: 'fill', scale: 2.5, period: 2.5 },
+                    itemStyle: { color: 'transparent' }, // Centro transparente para no tapar la letra
+                    zlevel: 0 // Atrás del markPoint
+                });
+            }
+        }
+
+            myChart.setOption(option, true);
+        }
+</script>
+{% endblock %}

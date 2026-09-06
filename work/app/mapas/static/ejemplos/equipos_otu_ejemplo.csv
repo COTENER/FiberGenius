@@ -1,0 +1,4 @@
+Latitude,Longitude,Descripcion,OTU,Modelo,Puerto monitoreados,Puertos libres,Puerto,Estado,Enlaces
+-33.4041276,-70.6712350,Hub Independencia odf TR02,OTU-1,NQI-5000,16,12,1,Libre,
+-33.4042727,-70.6711975,Hub Independencia odf TR02,OTU-1,NQI-5000,16,12,2,Ocupado,Lampa OLT1 Primario 42
+-33.4044071,-70.6712623,Hub Recoleta odf TR01,OTU-2,NQI-5000,16,10,1,Ocupado,Recoleta OLT2 Secundario 15

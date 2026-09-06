@@ -1,0 +1,214 @@
+/* Reset de márgenes y rellenos para el cuerpo y todos los elementos */
+body, html, *, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+/* Estilo para la sección de inicio de sesión */
+.login {
+    height: 100vh; /* Utiliza toda la altura de la pantalla */
+    width: 100%; /* Ancho de la sección de inicio de sesión */
+    background: radial-gradient(circle at center, #ffffff, #c5c3c7); /* Fondo degradado radial */
+    position: relative; /* Posición relativa para los elementos absolutos internos */
+}
+
+
+/* Estilo para el contenedor principal de inicio de sesión */
+.login_box {
+    width: 1050px; /* Ancho del contenedor de inicio de sesión */
+    height: 600px; /* Altura del contenedor de inicio de sesión */
+    position: absolute; /* Posicionamiento absoluto */
+    top: 50%; /* Alineación vertical */
+    left: 50%; /* Alineación horizontal */
+    transform: translate(-50%,-50%); /* Centrar el contenedor */
+    background: #fff; /* Fondo blanco */
+    border-radius: 10px; /* Borde redondeado */
+    box-shadow: 1px 4px 22px -8px #0004; /* Sombra */
+    display: flex; /* Display flexible para alinear los elementos secundarios */
+    overflow: hidden; /* Ocultar desbordamiento */
+}
+
+/* Estilo para la sección izquierda del contenedor */
+.login_box .left{
+    width: 41%; /* Ancho de la sección izquierda */
+    height: 100%; /* Altura de la sección izquierda */
+    padding: 25px 25px; /* Relleno */
+}
+
+/* Estilo para la sección derecha del contenedor */
+.login_box .right{
+    width: 59%; /* Ancho de la sección derecha */
+    height: 100%; /* Altura de la sección derecha */
+}
+
+/* Estilo para la sección de contacto (formulario de inicio de sesión) */
+.left .contact {
+    display: flex;
+    flex-direction: column; /* Cambia la dirección a columna */
+    justify-content: center;
+    height: 100%;
+    width: 90%;
+    margin: auto;
+}
+
+
+/* Estilo para los campos de entrada del formulario */
+.left input {
+    border: none; /* Sin borde */
+    width: 100%; /* Ancho completo */
+    margin: 15px 0px; /* Margen */
+    border-bottom: 1px solid #4f30677d; /* Borde inferior */
+    padding: 7px 9px; /* Relleno */
+    overflow: hidden; /* Ocultar desbordamiento */
+    background: transparent; /* Fondo transparente */
+    font-weight: 500; /* Grosor de la fuente */
+    font-size: 16px; /* Tamaño de la fuente */
+}
+
+/* Estilo para la sección izquierda del contenedor */
+.left{
+    background: #ffffff; /* Fondo blanco */
+}
+
+/* Estilo para el botón de envío */
+.submit {
+    border: none; /* Sin borde */
+    padding: 12px 60px; /* Relleno */
+    border-radius: 8px; /* Borde redondeado */
+    display: block; /* Display de bloque */
+    margin: auto; /* Margen automático */
+    margin-top: 20px; /* Margen superior */
+    background: #bd0606; /* Fondo del botón */
+    color: #fff; /* Color del texto */
+    font-weight: bold; /* Grosor de la fuente */
+    font-size: 20px; /* Tamaño de la fuente */
+    cursor: pointer;
+    transition: background-color 0.3s ease; /* Transición suave del color de fondo */
+}
+
+/* Cambio de color al pasar el cursor sobre el botón */
+.submit:hover {
+    background-color: #c75757; /* Cambia el color de fondo al pasar el cursor */
+}
+
+/* Estilo para la sección derecha del contenedor */
+.right {
+    
+    position: relative; /* Posicionamiento relativo */
+    background-image: url(../img/noc.png); /* Agrega la imagen de fondo solo a esta sección */
+    background-size: contain; /* Ajusta el tamaño de la imagen de fondo para cubrir completamente el contenedor */
+    background-repeat: no-repeat; /* Evita la repetición de la imagen de fondo */
+    background-position: center; /* Centra la imagen de fondo */
+}
+
+.input-container input[type="text"],
+.input-container input[type="password"] {
+    font-size: 15px; /* Tamaño de la fuente deseado */
+}
+
+/* Agrega el estilo para centrar iconos  username y password */
+.centered-img {
+    display: block;
+    margin: 0 auto; 
+    margin-left: auto;
+    margin-right: auto;
+    margin-bottom: 0; 
+    width: 330px;
+    height: auto;
+}
+
+.form-title {
+    text-align: center; /* Centra el texto */
+    color: #333; /* Color de texto oscuro, puedes cambiarlo */
+    font-size: 18px;
+    font-family: var(--font-sans);
+    font-weight: 700;
+    margin-top: -28px; /* Un poco más grueso que el normal */
+    margin-bottom: 30px; /* Espacio entre el título y el campo de usuario */
+    line-height: 1.3; /* Mejora la legibilidad si el texto ocupa dos líneas */
+}
+
+.input-container {
+    position: relative;
+    margin-bottom: 15px;
+}
+
+.input-container i {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #777;
+}
+
+.input-container input {
+    padding-left: 30px;
+}
+
+/* Estilo para los iconos sociales */
+.social-icons {
+    display: flex;
+    justify-content: center; /* Centrar horizontalmente */
+    margin-top: 50px; /* Espacio entre el botón y los iconos */
+
+}
+
+.social-icons a {
+    color: #333; /* Color de los iconos */
+    font-size: 18px; /* Tamaño de los iconos */
+    margin: 0 16px; /* Espacio entre los iconos */
+    transition: color 0.3s ease; /* Transición suave del color */
+    cursor: pointer; /* Cambia el cursor a una mano */
+}
+
+.social-icons a:hover {
+    color: #0acaec; /* Cambia el color al pasar el cursor */
+}
+
+@media (max-width: 1049px) {
+    .login_box {
+        width: 100%;
+    }
+}
+
+/* Estilos para los mensajes de error */
+.messages {
+    margin: 10px 0; /* Espaciado alrededor de la lista */
+}
+
+.error {
+    color: #D32F2F; /* Color rojo claro */
+    font-size: 14px; /* Tamaño de fuente */
+    list-style: none; /* Elimina el estilo de viñeta */
+    padding: 8px; /* Espaciado interno para separar el texto del borde */
+    margin: 8px 0; /* Espaciado externo entre mensajes */
+    text-align: center; /* Alineación del texto */
+    background-color: transparent; /* Fondo transparente */
+}
+
+/* Responsive para celulares */
+@media (max-width: 768px) {
+    .login_box {
+        width: 90%; /* Mantiene un buen ancho en todos los celulares */
+        max-width: 400px; /* Ajusta para celulares con menos ancho */
+        height: auto;
+        flex-direction: column;
+        padding: 20px;
+    }
+    .login_box .left, .login_box .right {
+        width: 100%;
+        height: auto;
+    }
+    .right {
+        display: none; /* Oculta la imagen en móviles */
+    }
+    .left .contact {
+        width: 100%;
+    }
+    .submit {
+        width: 100%;
+    }
+    .social-icons a {
+        font-size: 16px;
+    }
+}
