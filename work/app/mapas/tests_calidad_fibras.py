@@ -146,7 +146,7 @@ class CalidadFibraTests(CalidadFixtureMixin, TestCase):
             item for item in calidad['hallazgos']
             if item['codigo'] == 'FIBRA_TRAMO_FALTANTE'
         )
-        self.assertEqual(hallazgo['severidad'], 'ERROR')
+        self.assertEqual(hallazgo['severidad'], 'ADVERTENCIA')
         self.assertEqual(hallazgo['tramos'], [tramos[2].codigo_tramo])
 
     def test_ruta_de_un_tramo_sin_detalle_no_es_cobertura_completa(self):

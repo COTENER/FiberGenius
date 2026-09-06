@@ -400,7 +400,7 @@
 .port-management-fiber-result small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .port-management-fiber-result strong { color: var(--text-primary); font-size: 10px; }
 .port-management-fiber-result span { font-size: 9px; }
-.port-management-fiber-result small { color: var(--text-tertiary); font-size: 8px; }
+.port-management-fiber-result small { color: var(--text-secondary); font-size: 9px; line-height: 1.35; white-space: normal; }
 .port-management-connect-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; align-items: start; }
 .port-management-connect-action { display: flex; align-items: flex-start; min-height: 0; padding-top: 21px; }
 .port-management-connect-action .ports-btn { width: 100%; min-height: 39px; }

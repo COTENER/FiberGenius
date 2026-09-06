@@ -29,6 +29,10 @@ ENCABEZADOS = [
     'Site', 'ODF', 'Puerto', 'Acción', 'Troncal', 'Fibra', 'Extremo',
     'Sincronizar fibra', 'Permitir mover',
 ]
+ENCABEZADOS_OFICIALES = [
+    'ODF', 'Puerto', 'Acción', 'Codigo Fibra', 'Extremo',
+    'Sincronizar fibra', 'Permitir mover',
+]
 
 
 class ImportacionOperacionesPuertosTests(TestCase):
@@ -79,6 +83,7 @@ class ImportacionOperacionesPuertosTests(TestCase):
         cls.fibra = InventarioFibra.objects.create(
             ruta=ruta,
             fibra_numero='F12',
+            codigo_fibra='FGF-EXCEL-F012',
             estado='DISPONIBLE',
             origen_estado='INFORMADO',
         )
@@ -105,21 +110,21 @@ class ImportacionOperacionesPuertosTests(TestCase):
     def setUp(self):
         self.client.force_login(self.admin)
 
-    def _excel(self, filas):
+    def _excel(self, filas, encabezados=ENCABEZADOS):
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = 'Operaciones'
-        sheet.append(ENCABEZADOS)
+        sheet.append(encabezados)
         for fila in filas:
             sheet.append(fila)
         buffer = io.BytesIO()
         workbook.save(buffer)
         return buffer.getvalue()
 
-    def _post(self, filas, modo='validar'):
+    def _post(self, filas, modo='validar', encabezados=ENCABEZADOS):
         archivo = SimpleUploadedFile(
             'operaciones.xlsx',
-            self._excel(filas),
+            self._excel(filas, encabezados),
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
         return self.client.post(
@@ -151,10 +156,25 @@ class ImportacionOperacionesPuertosTests(TestCase):
         )
         self.assertEqual(
             [celda.value for celda in workbook['Operaciones'][1]],
-            ENCABEZADOS,
+            ENCABEZADOS_OFICIALES,
         )
         self.assertEqual(len(workbook['Operaciones'].data_validations.dataValidation), 3)
         self.assertEqual(workbook['Operaciones'].freeze_panes, 'A2')
+
+    def test_formato_oficial_conecta_por_codigo_fibra_sin_troncal_ni_site(self):
+        fila = [
+            self.odf_a.odf, '2', 'Conectar', self.fibra.codigo_fibra,
+            'A', 'No', 'No',
+        ]
+        respuesta = self._post(
+            [fila], 'aplicar', encabezados=ENCABEZADOS_OFICIALES
+        )
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertTrue(TerminacionFibra.objects.filter(
+            fibra=self.fibra,
+            extremo='A',
+            puerto_odf=self.puertos[1],
+        ).exists())
 
     def test_validacion_revierte_y_aplicacion_confirma_todo_el_archivo(self):
         filas = [

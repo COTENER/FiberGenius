@@ -149,7 +149,9 @@ class IntegridadODFTests(TransactionTestCase):
         self.assertEqual(puerto.estado_puerto, 'RESERVADO')
         self.assertEqual(odf.puertos_reservados, 1)
         self.assertEqual(odf.puertos_ocupados, 0)
-        self.assertEqual(odf.puertos_libres, 3)
+        # La capacidad no inventa estados para posiciones aún no materializadas.
+        self.assertEqual(odf.puertos_libres, 0)
+        self.assertEqual(odf.puertos_detalle.count(), 1)
 
     def test_importacion_no_infiere_reserva_desde_el_destino(self):
         hub, _, _, odf = crear_jerarquia_odf(nombre='ODF-RESERVA-LEGADA', capacidad=4)
@@ -220,13 +222,19 @@ class IntegridadRutaTests(TestCase):
 
 
 class InventarioFisicoTests(TransactionTestCase):
-    def test_fibra_duplicada_en_la_misma_troncal_es_rechazada(self):
+    def test_numero_es_unico_en_la_troncal_aun_con_codigo_global_distinto(self):
         ruta = Ruta.objects.create(nombre='TRONCAL-FIBRAS')
-        InventarioFibra.objects.create(ruta=ruta, fibra_numero='1')
-        with self.assertRaises(IntegrityError), transaction.atomic():
-            InventarioFibra.objects.bulk_create([
-                InventarioFibra(ruta=ruta, fibra_numero='1'),
-            ])
+        InventarioFibra.objects.create(
+            ruta=ruta, fibra_numero='F17', codigo_fibra='FGF-CABLE-A-F017'
+        )
+        with self.assertRaises(ValidationError):
+            InventarioFibra.objects.create(
+                ruta=ruta, fibra_numero='F17', codigo_fibra='FGF-CABLE-B-F017'
+            )
+        self.assertEqual(
+            InventarioFibra.objects.filter(ruta=ruta, fibra_numero='F17').count(),
+            1,
+        )
 
     def test_reserva_reutiliza_la_tabla_de_planta_externa(self):
         ruta = Ruta.objects.create(nombre='TRONCAL-ELEMENTO')
@@ -337,16 +345,17 @@ class ImportacionV5Tests(TestCase):
         self.assertIsNone(ruta.enlace)
         self.assertEqual(resultado['creadas'], 1)
 
-    def test_reservas_homonimas_con_coordenadas_distintas_no_colapsan(self):
+    def test_reservas_homonimas_se_distinguen_por_codigo_estable(self):
         Ruta.objects.create(nombre='RUTA-P57')
         archivo = io.BytesIO(
-            b'Enlace,Landmark name,Connection type,Reserva (m),Latitud,Longitud\n'
-            b'RUTA-P57,P57,Poste,0,-24.2724030,-69.0920510\n'
-            b'RUTA-P57,P57,Poste,0,-24.2716100,-69.0920390\n'
+            b'Codigo,Ruta,Nombre,Tipo,Reserva (m),Latitud,Longitud\n'
+            b'RES-P57-A,RUTA-P57,P57,Poste,,-24.2724030,-69.0920510\n'
+            b'RES-P57-B,RUTA-P57,P57,Poste,0,-24.2716100,-69.0920390\n'
         )
         resultado = _procesar_reservas(archivo)
         self.assertEqual(Reserva.objects.filter(ruta__nombre='RUTA-P57').count(), 2)
         self.assertEqual(resultado['creadas'], 2)
+        self.assertIsNone(Reserva.objects.get(codigo='RES-P57-A').reserva_m)
 
     def test_zip_segmentado_reemplaza_geografia_sin_tocar_tramos_tecnicos(self):
         ruta = Ruta.objects.create(nombre='RUTA-ZIP')
@@ -394,7 +403,7 @@ class ImportacionV5Tests(TestCase):
             coordenada.tramo_id is None for coordenada in coordenadas
         ))
 
-    def test_csv_geografico_crea_ruta_sin_inventario_tramo(self):
+    def test_csv_geografico_no_crea_rutas_por_error_tipografico(self):
         archivo = io.BytesIO(
             (
                 'ruta,latitude,longitude,tipo_trazado,new_seg\n'
@@ -403,11 +412,9 @@ class ImportacionV5Tests(TestCase):
             ).encode()
         )
 
-        _procesar_coordenadas_csv(archivo)
-
-        ruta = Ruta.objects.get(nombre='RUTA-NUEVA')
-        self.assertEqual(ruta.coordenadas.count(), 2)
-        self.assertFalse(ruta.tramos_inventario.exists())
+        with self.assertRaisesMessage(ValueError, "La ruta 'RUTA-NUEVA' no existe"):
+            _procesar_coordenadas_csv(archivo)
+        self.assertFalse(Ruta.objects.filter(nombre='RUTA-NUEVA').exists())
 
     def test_recargar_csv_geografico_preserva_inventario_tecnico(self):
         ruta = Ruta.objects.create(nombre='RUTA-CSV-EXISTENTE')
@@ -539,19 +546,13 @@ class ImportacionV5Tests(TestCase):
             b'ruta,distancia,mufas,splitters,reservas_m,hilos_ocupados,hilos_libres\n'
             b'RUTA-METRICAS,300,2,1,50,3,9\n'
         )
-        resultado = _procesar_tramos_inventario(archivo)
+        with self.assertRaisesRegex(ValueError, 'no identifica'):
+            _procesar_tramos_inventario(archivo)
         ruta.refresh_from_db()
         tramos = list(ruta.tramos_inventario.order_by('tramo_secuencia'))
         self.assertIsNone(ruta.distancia_m)
         self.assertEqual([tramo.distancia_m for tramo in tramos], [100, 200])
         self.assertEqual([tramo.mufas for tramo in tramos], [0, 0])
-        self.assertEqual(resultado['rechazadas'], 1)
-        self.assertTrue(
-            any(
-                'no identifica' in advertencia
-                for advertencia in resultado['advertencias']
-            )
-        )
 
     def test_carga_tecnica_crea_registro_inicial_si_la_ruta_no_tiene_tramos(self):
         ruta = Ruta.objects.create(nombre='RUTA-TECNICA-NUEVA')
@@ -608,6 +609,7 @@ class ImportacionV5Tests(TestCase):
         self.assertEqual(tramo.distancia_m, 9999)
 
     def test_trazado_exige_al_menos_dos_coordenadas(self):
+        Ruta.objects.create(nombre='RUTA-UN-PUNTO')
         archivo = io.BytesIO(
             (
                 'ruta,latitude,longitude,tipo_trazado\n'
@@ -618,9 +620,7 @@ class ImportacionV5Tests(TestCase):
         with self.assertRaisesRegex(ValueError, 'al menos dos'):
             _procesar_coordenadas_csv(archivo)
 
-        self.assertFalse(Ruta.objects.filter(
-            nombre='RUTA-UN-PUNTO'
-        ).exists())
+        self.assertTrue(Ruta.objects.filter(nombre='RUTA-UN-PUNTO').exists())
 
     def test_carga_web_registra_lote_con_contadores_y_origen(self):
         usuario = User.objects.create_user('importador', password='clave')
@@ -649,7 +649,7 @@ class ImportacionV5Tests(TestCase):
         self.assertEqual(lote.filas_rechazadas, 0)
         self.assertEqual(Ruta.objects.get(nombre='RUTA-LOTE').lote_importacion, lote)
 
-    def test_carga_parcial_se_registra_como_completada_con_errores(self):
+    def test_archivo_invalido_falla_completo_y_no_deja_carga_parcial(self):
         usuario = User.objects.create_user('importador-parcial', password='clave')
         usuario.user_permissions.add(*Permission.objects.filter(
             codename__in=['add_ruta', 'change_ruta', 'add_otu']
@@ -672,10 +672,12 @@ class ImportacionV5Tests(TestCase):
 
         self.assertEqual(respuesta.status_code, 302)
         lote = LoteImportacion.objects.get()
-        self.assertEqual(lote.estado, 'COMPLETADO_CON_ERRORES')
-        self.assertEqual(lote.total_filas, 2)
-        self.assertEqual(lote.filas_creadas, 1)
-        self.assertEqual(lote.filas_rechazadas, 1)
+        self.assertEqual(lote.estado, 'FALLIDO')
+        self.assertEqual(lote.total_filas, 0)
+        self.assertEqual(lote.filas_creadas, 0)
+        self.assertEqual(lote.filas_rechazadas, 0)
+        self.assertFalse(Ruta.objects.filter(nombre='RUTA-VALIDA').exists())
+        self.assertTrue(lote.detalle_errores)
 
 
 class AutorizacionTests(TestCase):
@@ -2141,8 +2143,8 @@ class SeguridadYRendimientoTests(TestCase):
             response,
             "Cargar Fibras por Tramo (.csv)",
         )
-        self.assertContains(response, "Archivo A")
-        self.assertContains(response, "Archivo B")
+        self.assertContains(response, "Topología 2")
+        self.assertContains(response, "Topología 3")
         self.assertContains(
             response,
             "Importación guiada del inventario",
@@ -2180,7 +2182,7 @@ class SeguridadYRendimientoTests(TestCase):
             html_tramos,
         )
         self.assertIn(
-            'Requisitos del CSV: inventario de fibras ópticas (Archivo B)',
+            'Requisitos del CSV: Fibras por Tramo',
             html_fibras,
         )
         self.assertIn(
@@ -2232,7 +2234,7 @@ class SeguridadYRendimientoTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(InventarioFibra.objects.filter(ruta=ruta).count(), 1)
 
-    def test_importacion_reservas_omite_coordenadas_invalidas_sin_crear_cero_cero(self):
+    def test_importacion_reservas_invalida_revierte_el_archivo_completo(self):
         ruta = Ruta.objects.create(nombre='RUTA-RESERVAS-VALIDADAS')
         archivo = SimpleUploadedFile(
             'reservas.csv',
@@ -2249,11 +2251,9 @@ class SeguridadYRendimientoTests(TestCase):
             {'archivo': archivo, 'ruta_nombre': ruta.nombre},
         )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()['status'], 'success')
-        self.assertTrue(response.json()['warning'])
-        self.assertEqual(response.json()['rechazadas'], 1)
-        self.assertEqual(Reserva.objects.filter(ruta=ruta).count(), 1)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['status'], 'error')
+        self.assertEqual(Reserva.objects.filter(ruta=ruta).count(), 0)
         self.assertFalse(Reserva.objects.filter(ruta=ruta, latitud=0, longitud=0).exists())
 
     def test_tablas_operativas_declaran_encabezados_y_el_mapa_tiene_titulo(self):

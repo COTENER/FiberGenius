@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Permission
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.urls import reverse
@@ -228,7 +229,7 @@ class SincronizacionFibraPuertoTests(TestCase):
         )
         return fibra, asignaciones, puerto
 
-    def test_confirmar_conexion_solo_sincroniza_tramo_en_ruta_unica(self):
+    def test_confirmar_conexion_cambia_global_sin_alterar_tramos(self):
         for cantidad in (1, 2, 4):
             with self.subTest(tramos=cantidad):
                 fibra, asignaciones, puerto = self._crear_recorrido(
@@ -249,12 +250,10 @@ class SincronizacionFibraPuertoTests(TestCase):
                             pk__in=[item.pk for item in asignaciones]
                         ).values_list('estado', flat=True)
                     ),
-                    [
-                        'OCUPADO' if cantidad == 1 else 'DISPONIBLE'
-                    ] * cantidad,
+                    ['DISPONIBLE'] * cantidad,
                 )
 
-    def test_confirmar_desconexion_solo_sincroniza_tramo_en_ruta_unica(self):
+    def test_confirmar_desconexion_cambia_global_sin_alterar_tramos(self):
         for cantidad in (1, 2, 4):
             with self.subTest(tramos=cantidad):
                 fibra, asignaciones, puerto = self._crear_recorrido(
@@ -275,9 +274,7 @@ class SincronizacionFibraPuertoTests(TestCase):
                             pk__in=[item.pk for item in asignaciones]
                         ).values_list('estado', flat=True)
                     ),
-                    [
-                        'DISPONIBLE' if cantidad == 1 else 'OCUPADO'
-                    ] * cantidad,
+                    ['OCUPADO'] * cantidad,
                 )
 
     def test_sin_confirmacion_solo_cambia_el_puerto(self):
@@ -392,7 +389,7 @@ class GestionPuertosApiTests(TestCase):
         asignacion.refresh_from_db()
         self.assertEqual(self.fibra.estado, 'OCUPADO')
         self.assertEqual(self.fibra.origen_estado, 'INFORMADO')
-        self.assertEqual(asignacion.estado, 'OCUPADO')
+        self.assertEqual(asignacion.estado, 'DISPONIBLE')
 
     def test_edicion_generica_no_cambia_estado(self):
         respuesta = self.client.post(
@@ -438,6 +435,7 @@ class GestionPuertosApiTests(TestCase):
         self.assertContains(respuesta, 'Conectar fibra')
         self.assertContains(respuesta, 'Desconectar fibra')
         self.assertContains(respuesta, 'Troncal (opcional)')
+        self.assertContains(respuesta, 'data-can-create-fiber="true"')
         self.assertNotContains(respuesta, 'id="port-management-free-fiber"')
         script = (
             Path(__file__).resolve().parent
@@ -448,7 +446,40 @@ class GestionPuertosApiTests(TestCase):
         self.assertIn('estado global como Ocupado', script)
         self.assertNotIn('estado global de ${fiberNumber} como Disponible', script)
         self.assertIn('sincronizar_fibra: sincronizarFibra', script)
+        self.assertIn("root.dataset.canCreateFiber === 'true'", script)
+        self.assertIn('fiberTerminationContext(fiber)', script)
+        self.assertIn("terminationLabel(fiber.terminacion_a, 'A')", script)
         self.assertNotIn('todos sus tramos como Ocupado', script)
+
+    def test_operador_sin_permiso_no_recibe_opcion_de_crear_hilo(self):
+        operador = get_user_model().objects.create_user(
+            username='operador-solo-conexion',
+            password='clave-segura',
+        )
+        operador.user_permissions.add(*Permission.objects.filter(
+            codename__in=(
+                'view_detallepuertoodf',
+                'change_detallepuertoodf',
+                'add_terminacionfibra',
+            ),
+        ))
+        self.client.force_login(operador)
+
+        respuesta = self.client.get(reverse('planta_interna'))
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, 'data-can-create-fiber="false"')
+        intento = self._post({
+            'accion': 'conectar',
+            'puerto_id': self.puerto.pk,
+            'fibra_numero': 'F99',
+            'extremo': 'A',
+        })
+        self.assertEqual(intento.status_code, 403)
+        self.assertFalse(InventarioFibra.objects.filter(
+            ruta__isnull=True,
+            fibra_numero='F99',
+        ).exists())
 
     def test_api_paginada_expone_la_conexion_oficial(self):
         conectar_puerto(
@@ -463,6 +494,45 @@ class GestionPuertosApiTests(TestCase):
         self.assertEqual(puerto['conexion']['ruta'], self.ruta.nombre)
         self.assertEqual(puerto['conexion']['fibra'], 'F1')
         self.assertEqual(puerto['conexion']['extremo'], 'A')
+
+    def test_busqueda_distingue_hilos_repetidos_por_terminacion_odf(self):
+        odf = self.puerto.odf_obj
+        odf.capacidad_puertos = 3
+        odf.save(update_fields=['capacidad_puertos'])
+        puerto_2 = DetallePuertoODF.objects.create(
+            odf_obj=odf,
+            puerto_odf='2',
+            estado_puerto='LIBRE',
+        )
+        fibra_2 = InventarioFibra.objects.create(
+            fibra_numero='F1',
+            estado='SIN_INFORMACION',
+            origen_estado='NO_INFORMADO',
+        )
+        conectar_puerto(
+            puerto_id=self.puerto.pk,
+            fibra_id=self.fibra.pk,
+            extremo='A',
+        )
+        conectar_puerto(
+            puerto_id=puerto_2.pk,
+            fibra_id=fibra_2.pk,
+            extremo='B',
+        )
+
+        respuesta = self.client.get(
+            reverse('api_fibras_paginadas'),
+            {'q': 'F1', 'page_size': 25},
+        )
+
+        self.assertEqual(respuesta.status_code, 200)
+        por_id = {item['id']: item for item in respuesta.json()['data']}
+        self.assertEqual(por_id[self.fibra.pk]['terminacion_a']['odf'], odf.odf)
+        self.assertEqual(por_id[self.fibra.pk]['terminacion_a']['puerto'], '1')
+        self.assertFalse(por_id[self.fibra.pk]['terminacion_b']['confirmado'])
+        self.assertEqual(por_id[fibra_2.pk]['terminacion_b']['odf'], odf.odf)
+        self.assertEqual(por_id[fibra_2.pk]['terminacion_b']['puerto'], '2')
+        self.assertFalse(por_id[fibra_2.pk]['terminacion_a']['confirmado'])
 
     def test_api_crea_hilo_provisional_y_ocupa_el_puerto(self):
         respuesta = self._post({

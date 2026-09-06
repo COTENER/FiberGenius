@@ -5,7 +5,7 @@
 {% block page_title %}Inventario / Puertos ODF{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/puertos-odf.css' %}?v=20260816-fiber-results-3">
+<link rel="stylesheet" href="{% static 'css/puertos-odf.css' %}?v=20260825-fiber-context-1">
 <link rel="stylesheet" href="{% static 'css/network-inventory.css' %}?v=20260816-ranking-toggle-1">
 <link rel="stylesheet" href="{% static 'css/inventory-filters.css' %}?v=20260723-1">
 {% endblock %}
@@ -27,6 +27,7 @@
     data-can-add="{% if perms.mapas.add_detallepuertoodf %}true{% else %}false{% endif %}"
     data-can-edit="{% if perms.mapas.change_detallepuertoodf %}true{% else %}false{% endif %}"
     data-can-connect="{% if perms.mapas.add_terminacionfibra or perms.mapas.change_terminacionfibra %}true{% else %}false{% endif %}"
+    data-can-create-fiber="{% if perms.mapas.add_inventariofibra %}true{% else %}false{% endif %}"
     data-can-disconnect="{% if perms.mapas.delete_terminacionfibra %}true{% else %}false{% endif %}"
     data-can-view-history="{% if perms.mapas.view_auditoriapuertoodf %}true{% else %}false{% endif %}"
 >
@@ -271,5 +272,6 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/planta-interna-paginada.js' %}?v=20260816-ranking-toggle-1"></script>
+<script src="{% static 'js/inventory-edit.js' %}?v=20260905"></script>
+<script src="{% static 'js/planta-interna-paginada.js' %}?v=20260905-safe-edit"></script>
 {% endblock %}

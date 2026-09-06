@@ -18,6 +18,7 @@
     data-export-url="{% url 'exportar_inventario' 'odfs' 'xlsx' %}"
     data-create-url="{% url 'api_create_odf' %}"
     data-update-url="{% url 'api_update_odf' %}"
+    data-can-resize="{{ request.user.is_superuser|yesno:'true,false' }}"
     data-delete-url="{% url 'api_delete_odf' %}"
     data-can-add="{% if perms.mapas.add_inventarioodf %}true{% else %}false{% endif %}"
     data-can-edit="{% if perms.mapas.change_inventarioodf %}true{% else %}false{% endif %}"
@@ -109,9 +110,9 @@
             <section class="odf-dialog__section">
                 <div class="odf-dialog__section-title"><span>1</span><div><h3>Ubicación física</h3><p>Indica exactamente dónde está instalado el ODF.</p></div></div>
                 <div class="odf-dialog__grid">
-                    <label><span>Site *</span><input id="odf-editor-site" list="odf-sites-list" maxlength="150" placeholder="Ej. HUB-001" required><small>Nodo o sede principal.</small></label>
-                    <label><span>Sala técnica *</span><input id="odf-editor-room" list="odf-rooms-list" maxlength="100" placeholder="Ej. SALA-FO-01" required><small>Sala donde se encuentra el rack.</small></label>
-                    <label class="odf-dialog__wide"><span>Rack *</span><input id="odf-editor-rack" list="odf-racks-list" maxlength="100" placeholder="Ej. RACK-03" required><small>Bastidor físico que contiene el ODF.</small></label>
+                    <label><span>Site</span><input id="odf-editor-site" list="odf-sites-list" maxlength="150" placeholder="Ej. HUB-001"><small>Ubicación completa o los tres campos vacíos si está pendiente.</small></label>
+                    <label><span>Sala técnica</span><input id="odf-editor-room" list="odf-rooms-list" maxlength="100" placeholder="Ej. SALA-FO-01"><small>Sala donde se encuentra el rack.</small></label>
+                    <label class="odf-dialog__wide"><span>Rack</span><input id="odf-editor-rack" list="odf-racks-list" maxlength="100" placeholder="Ej. RACK-03"><small>Bastidor físico que contiene el ODF.</small></label>
                 </div>
             </section>
             <section class="odf-dialog__section">
@@ -135,5 +136,6 @@
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/odf-inventory.js' %}?v=20260816-ranking-toggle-1"></script>
+<script src="{% static 'js/inventory-edit.js' %}?v=20260905"></script>
+<script src="{% static 'js/odf-inventory.js' %}?v=20260905-safe-edit"></script>
 {% endblock %}

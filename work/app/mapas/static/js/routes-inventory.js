@@ -488,9 +488,9 @@
         if (trigger) trigger.addEventListener('click', () => { form.reset(); message.textContent = ''; if (beforeOpen) beforeOpen(form); dialog.showModal(); });
         form.addEventListener('submit', async (event) => {
             event.preventDefault(); message.className = 'odf-dialog__message'; message.textContent = 'Guardando…';
-            const payload = Object.fromEntries(new FormData(form).entries());
+            let payload = Object.fromEntries(new FormData(form).entries());
             const editing = id === 'route-editor' && Boolean(payload.nombre_original);
-            if (editing && form.dataset.preserved) Object.assign(payload, JSON.parse(form.dataset.preserved));
+            if (editing) payload = InventoryEdit.formPatch(form, ['nombre_original']);
             try {
                 const response = await fetch(editing ? root.dataset.updateRoute : submitUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf(), 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify(payload) });
                 const result = await response.json(); if (!response.ok || result.status !== 'success') throw new Error(result.message || 'No fue posible guardar');
@@ -499,15 +499,25 @@
             } catch (error) { message.classList.add('is-error'); message.textContent = error.message; }
         }); return { dialog, form, message };
     }
-    const routeEditor = dialogSetup('route-editor', 'route-new', root.dataset.createRoute, (form) => { form.elements.nombre_original.value = ''; form.dataset.preserved = ''; document.getElementById('route-editor-title').textContent = 'Nueva troncal'; });
+    const routeEditor = dialogSetup('route-editor', 'route-new', root.dataset.createRoute, (form) => { form.elements.nombre_original.value = ''; [...form.elements].forEach(input => { input.disabled = false; }); document.getElementById('route-editor-title').textContent = 'Nueva troncal'; });
     dialogSetup('tramo-editor', 'tramo-new', root.dataset.createTramo);
     function openRouteEditor(item) {
         if (!routeEditor) return; const form = routeEditor.form; form.reset(); routeEditor.message.textContent = '';
         document.getElementById('route-editor-title').textContent = 'Editar troncal';
         const typeMap = { 'AÉREO': 'AEREO', 'HÍBRIDO': 'HIBRIDO' };
         const values = { nombre_original: item.nombre, nombre: item.nombre, hub_origen: item.origen === '—' ? '' : item.origen, destino: item.destino === '—' ? '' : item.destino, estado: item.estado, distancia_km: item.distancia_km, capacidad: item.capacidad === '—' ? '' : item.capacidad, tipo_fibra: item.tipo_fibra === '—' ? '' : item.tipo_fibra, odf_nombre: item.odf === '—' ? '' : item.odf, tipo_trazado: typeMap[item.tipo] || item.tipo, reserva_km: item.reserva_km };
-        form.dataset.preserved = JSON.stringify({ marca_modelo: item.marca_modelo === '—' ? '' : item.marca_modelo, serial: item.serial === '—' ? '' : item.serial, mufas: item.mufas, splitters: item.splitters, hilos_ocupados: item.hilos_ocupados, hilos_libres: item.hilos_libres, reserva_km: item.reserva_km });
-        Object.entries(values).forEach(([key, value]) => { if (form.elements[key]) form.elements[key].value = value; }); routeEditor.dialog.showModal();
+        Object.assign(values, item.edicion || {});
+        [...form.elements].forEach(input => {
+            input.disabled = Boolean(item.edicion) && input.name in values && input.name !== 'nombre_original' && !(input.name in item.edicion);
+        });
+        Object.entries(values).forEach(([key, value]) => {
+            const input = form.elements[key];
+            if (!input) return;
+            if (input.tagName === 'SELECT' && ![...input.options].some(option => option.value === String(value ?? ''))) input.add(new Option(value || 'Sin información', value ?? ''));
+            input.value = value;
+        });
+        InventoryEdit.snapshot(form);
+        routeEditor.dialog.showModal();
     }
 
     const tables = { troncales: routesTable, tramos: tramosTable }; const tabs = [...root.querySelectorAll('[role="tab"]')];

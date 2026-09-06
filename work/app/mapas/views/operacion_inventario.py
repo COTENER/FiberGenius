@@ -597,6 +597,7 @@ def _valor_nodo(tramo, extremo):
 
 
 def _serializar_troncales(troncales):
+    from ..services.edicion import valores_edicion_troncal
     troncales = list(troncales)
     capacidades = resumen_rutas(troncales)
     resultado = []
@@ -610,6 +611,7 @@ def _serializar_troncales(troncales):
             {
                 "id": troncal.pk,
                 "nombre": troncal.nombre,
+                "edicion": valores_edicion_troncal(troncal, tramos),
                 "origen": _texto(
                     (
                         primero.hub_site

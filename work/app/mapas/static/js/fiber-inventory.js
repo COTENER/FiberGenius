@@ -524,7 +524,8 @@
         const dialog = document.getElementById(id); if (!dialog) return null; const form = dialog.querySelector('form'); const message = form.querySelector('[data-form-message]'); const trigger = document.getElementById(triggerId);
         dialog.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', () => dialog.close())); if (trigger) trigger.addEventListener('click', () => { form.reset(); if (form.elements.id) form.elements.id.value = ''; message.textContent = ''; if (onReset) onReset(form); dialog.showModal(); });
         form.addEventListener('submit', async (event) => {
-            event.preventDefault(); message.className = 'odf-dialog__message'; message.textContent = 'Guardando…'; const payload = Object.fromEntries(new FormData(form).entries()); const editing = id === 'fiber-editor' && Boolean(payload.id);
+            event.preventDefault(); message.className = 'odf-dialog__message'; message.textContent = 'Guardando…'; let payload = Object.fromEntries(new FormData(form).entries()); const editing = id === 'fiber-editor' && Boolean(payload.id);
+            if (editing) payload = InventoryEdit.formPatch(form, ['id']);
             try { const response = await fetch(editing ? root.dataset.updateFiber : createUrl, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf(), 'X-Requested-With': 'XMLHttpRequest' }, body: JSON.stringify(payload) }); const result = await response.json(); if (!response.ok || result.status !== 'success') throw new Error(result.message || 'No fue posible guardar'); message.classList.add('is-success'); message.textContent = result.message; setTimeout(() => dialog.close(), 550); if (fibers) fibers.loaded = false; if (reserves) reserves.loaded = false; if (id === 'fiber-editor' && fibers) fibers.load(); if (id === 'reserve-editor' && reserves) reserves.load(); }
             catch (error) { message.classList.add('is-error'); message.textContent = error.message; }
         }); return { dialog, form, message };
@@ -534,7 +535,9 @@
     function openFiberEditor(item) {
         if (!fiberEditor) return; const form = fiberEditor.form; form.reset(); fiberEditor.message.textContent = ''; document.getElementById('fiber-editor-title').textContent = 'Editar fibra';
         const values = { id: item.id, ruta_nombre: item.troncal_pendiente ? '' : item.troncal, fibra_numero: item.numero, estado: item.estado, condicion_fisica: item.condicion_fisica || 'SIN_VERIFICAR', nombre_fibra: item.servicio === '—' ? '' : item.servicio, tipo_conector: item.conector === '—' ? '' : item.conector, observaciones: item.observaciones || '' };
-        Object.entries(values).forEach(([key, value]) => { if (form.elements[key]) form.elements[key].value = value; }); form.elements.ruta_nombre.disabled = !item.troncal_pendiente; fiberEditor.dialog.showModal();
+        Object.entries(values).forEach(([key, value]) => { if (form.elements[key]) form.elements[key].value = value; }); form.elements.ruta_nombre.disabled = !item.troncal_pendiente;
+        InventoryEdit.snapshot(form);
+        fiberEditor.dialog.showModal();
     }
 
     const tables = { fibras: fibers, reservas: reserves }; const tabs = [...root.querySelectorAll('[role="tab"]')];

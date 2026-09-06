@@ -487,10 +487,16 @@
         editorValue('odf-editor-rack').value = odf?.rack === '—' ? '' : (odf?.rack || '');
         editorValue('odf-editor-name').value = odf?.odf || '';
         editorValue('odf-editor-capacity').value = odf?.capacidad ?? 0;
+        editorValue('odf-editor-capacity').readOnly = Boolean(odf) && root.dataset.canResize !== 'true';
+        editorValue('odf-editor-capacity').min = odf ? '0' : '1';
         editorValue('odf-editor-connector').value = odf?.conector === '—' ? '' : (odf?.conector || '');
-        editorValue('odf-editor-status').value = odf?.estado === 'Sin estado' ? 'Operativo' : (odf?.estado || 'Operativo');
+        const statusInput = editorValue('odf-editor-status');
+        const statusValue = odf ? (odf.estado === 'Sin estado' ? '' : (odf.estado || '')) : 'Operativo';
+        if (![...statusInput.options].some(option => option.value === statusValue)) statusInput.add(new Option(statusValue || 'Sin estado', statusValue));
+        statusInput.value = statusValue;
         editorValue('odf-editor-message').textContent = '';
         editorValue('odf-editor-message').classList.remove('is-success');
+        elements.editorForm.dataset.original = JSON.stringify(editorPayload());
         elements.editor.showModal();
         editorValue('odf-editor-site').focus();
     }
@@ -499,20 +505,33 @@
         if (elements.editor?.open) elements.editor.close();
     }
 
-    async function saveEditor(event) {
-        event.preventDefault();
-        if (!elements.editorForm.reportValidity()) return;
-        const id = editorValue('odf-editor-id').value;
-        const payload = {
-            id,
+    function editorPayload() {
+        return {
+            id: editorValue('odf-editor-id').value,
             hub_site: editorValue('odf-editor-site').value.trim(),
             sala: editorValue('odf-editor-room').value.trim(),
             rack: editorValue('odf-editor-rack').value.trim(),
             odf: editorValue('odf-editor-name').value.trim(),
             capacidad_puertos: editorValue('odf-editor-capacity').value,
             tipo_conector: editorValue('odf-editor-connector').value.trim(),
-            estado: editorValue('odf-editor-status').value.trim() || 'Operativo',
+            estado: editorValue('odf-editor-status').value.trim(),
         };
+    }
+
+    async function saveEditor(event) {
+        event.preventDefault();
+        if (!elements.editorForm.reportValidity()) return;
+        const id = editorValue('odf-editor-id').value;
+        const original = JSON.parse(elements.editorForm.dataset.original || '{}');
+        const payload = id ? InventoryEdit.patch(editorPayload(), original, ['id']) : editorPayload();
+        if (id && 'capacidad_puertos' in payload) {
+            if (!window.confirm(`¿Cambiar la capacidad de ${original.capacidad_puertos} a ${payload.capacidad_puertos} puertos? Es una operación excepcional; no se retirarán puertos con uso o información.`)) return;
+            payload.confirmar_capacidad = true;
+        }
+        if (id && ['hub_site', 'sala', 'rack'].some(key => key in payload)) {
+            if (!window.confirm('¿Confirmar la nueva ubicación de este ODF? Se conservarán sus puertos y conexiones.')) return;
+            payload.confirmar_ubicacion = true;
+        }
         const message = editorValue('odf-editor-message');
         message.textContent = 'Guardando…';
         const csrf = elements.editorForm.querySelector('[name="csrfmiddlewaretoken"]').value;

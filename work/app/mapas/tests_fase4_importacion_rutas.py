@@ -78,7 +78,7 @@ class ImportacionRutasFase4Tests(TestCase):
         self.assertEqual(ruta.hilos_libres_declarados, 24)
         self.assertEqual(ruta.reservas_declaradas_m, 0)
 
-    def test_fila_inconsistente_se_rechaza_sin_perder_filas_validas(self):
+    def test_fila_inconsistente_revierte_el_archivo_completo(self):
         contenido = "\n".join([
             (
                 "Ruta,Capacidad,Hilos Ocupados,Hilos Reservados,"
@@ -88,13 +88,11 @@ class ImportacionRutasFase4Tests(TestCase):
             "RUTA-INVALIDA,24,20,10,0",
         ])
 
-        resultado = _procesar_ruta_otu(_csv(contenido))
+        with self.assertRaisesRegex(ValueError, "No se realiz"):
+            _procesar_ruta_otu(_csv(contenido))
 
-        self.assertEqual(resultado["creadas"], 1)
-        self.assertEqual(resultado["rechazadas"], 1)
-        self.assertTrue(Ruta.objects.filter(nombre="RUTA-VALIDA").exists())
+        self.assertFalse(Ruta.objects.filter(nombre="RUTA-VALIDA").exists())
         self.assertFalse(Ruta.objects.filter(nombre="RUTA-INVALIDA").exists())
-        self.assertIn("Fila 3", resultado["advertencias"][0])
 
     def test_columnas_omitidas_no_borran_declaraciones_previas(self):
         ruta = Ruta.objects.create(

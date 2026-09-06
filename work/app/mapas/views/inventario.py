@@ -55,6 +55,23 @@ def _mensaje_limite_archivo():
     limite = int(getattr(settings, 'FIBERGENIUS_MAX_UPLOAD_BYTES', 25 * 1024 * 1024))
     return f'El archivo supera el limite permitido de {limite // (1024 * 1024)} MB.'
 
+
+def _importar_coordenadas_adjuntas(csv_file, ruta, tipo_trazado='DESCONOCIDO'):
+    """Valida el CSV adjunto de la GUI con el mismo lector geográfico oficial."""
+    if not _archivo_dentro_del_limite(csv_file):
+        raise ValueError(_mensaje_limite_archivo())
+    from .importacion import _leer_csv_normalizado, _reemplazar_geografia_ruta
+
+    df = _leer_csv_normalizado(csv_file, aliases={
+        'latitud': 'latitude',
+        'longitud': 'longitude',
+        'tipo': 'tipo_trazado',
+        'nuevo_segmento': 'new_seg',
+    })
+    if 'tipo_trazado' not in df.columns:
+        df['tipo_trazado'] = tipo_trazado or 'DESCONOCIDO'
+    return _reemplazar_geografia_ruta(ruta, df)
+
 def calculate_coordinate_distance(coordenadas):
     import math
     if not coordenadas or len(coordenadas) < 2:
@@ -1382,6 +1399,7 @@ def create_detalle_fibra(request):
                 asignar_fibra_a_tramos(
                     fibra=fibra,
                     tramos=tramos_seleccionados,
+                    usuario=request.user,
                     numero_hilo=fibra_numero,
                     estado=estado,
                     observaciones=(
@@ -1431,8 +1449,9 @@ def create_detalle_fibra(request):
         )
 
 @login_required
-@permission_required('mapas.add_inventariofibra', raise_exception=True)
 @permission_required('mapas.change_inventariofibra', raise_exception=True)
+@permission_required('mapas.add_fibratramo', raise_exception=True)
+@permission_required('mapas.change_fibratramo', raise_exception=True)
 @require_POST
 @transaction.atomic
 def import_fibras_csv(request):
@@ -1440,7 +1459,10 @@ def import_fibras_csv(request):
     try:
         import io
         import pandas as pd
-        from .importacion import _procesar_fibras_inventario
+        from .importacion import (
+            _procesar_fibras_inventario,
+            ejecutar_importacion_sincrona_auditada,
+        )
 
         csv_file = request.FILES.get('csv_fibras')
         ruta_nombre = request.POST.get('ruta_nombre', '').strip()
@@ -1497,7 +1519,13 @@ def import_fibras_csv(request):
             df.insert(0, 'Ruta', ruta.nombre)
 
         contenido = io.BytesIO(df.to_csv(index=False).encode('utf-8-sig'))
-        resultado = _procesar_fibras_inventario(contenido)
+        _, resultado = ejecutar_importacion_sincrona_auditada(
+            csv_file,
+            'fibras_inventario',
+            request.user,
+            _procesar_fibras_inventario,
+            archivo_ejecucion=contenido,
+        )
         advertencias = resultado.get('advertencias') or []
         mensaje = (
             f"Procesadas {resultado.get('total', 0)} filas; "
@@ -1564,6 +1592,11 @@ def update_detalle_fibra(request):
                 status=404,
             )
 
+        from ..services.edicion import verificar_edicion
+        verificar_edicion(data, {campo: getattr(fibra, campo) for campo in (
+            'fibra_numero', 'estado', 'condicion_fisica', 'nombre_fibra',
+            'tipo_conector', 'observaciones',
+        )})
         if 'fibra_numero' in data:
             numero_logico, _ = normalizar_numero_hilo(data.get('fibra_numero'))
         else:
@@ -1834,6 +1867,10 @@ def update_detalle_puerto(request):
                     )
 
             campos_actualizados = []
+            from ..services.edicion import verificar_edicion
+            verificar_edicion(data, {campo: getattr(puerto_actualizado, campo) for campo in (
+                'bandeja', 'tipo_conector', 'patchcord', 'destino', 'observaciones',
+            )})
             campos_texto = {
                 'bandeja': ('bandeja',),
                 'tipo_conector': ('tipo_conector', 'conector'),
@@ -1862,8 +1899,10 @@ def update_detalle_puerto(request):
                     if campos_actualizados else "No se solicitaron cambios en el puerto"
                 )
             })
-        except ERRORES_DATOS_ENTRADA:
-            return JsonResponse({"status": "error", "message": "Los datos del puerto no son válidos."}, status=400)
+        except ERRORES_DATOS_ENTRADA as exc:
+            transaction.set_rollback(True)
+            mensaje = '; '.join(exc.messages) if isinstance(exc, ValidationError) else 'Los datos del puerto no son válidos.'
+            return JsonResponse({"status": "error", "message": mensaje}, status=400)
         except Exception:
             logger.exception("Error inesperado al actualizar un puerto ODF")
             return JsonResponse({"status": "error", "message": "No se pudo actualizar el puerto."}, status=500)
@@ -2023,7 +2062,7 @@ def create_ruta_manual(request):
             return JsonResponse({'status': 'error', 'message': 'El nombre de la ruta es obligatorio'})
 
         # Validación de duplicado
-        ruta_existente = Ruta.objects.filter(nombre=nombre).first()
+        ruta_existente = Ruta.objects.select_for_update().filter(nombre=nombre).first()
         
         if ruta_existente:
             if InventarioTramo.objects.filter(ruta=ruta_existente).exists():
@@ -2034,7 +2073,7 @@ def create_ruta_manual(request):
                     nueva_ruta.olt = data.get('hub_origen', '')
                 if nueva_ruta.distancia_m is None or nueva_ruta.distancia_m == 0:
                     nueva_ruta.distancia_m = float(data.get('distancia_km', 0) or 0) * 1000
-                nueva_ruta.save()
+                nueva_ruta.save(update_fields=['olt', 'distancia_m'])
         else:
             # Crear Ruta
             nueva_ruta = Ruta.objects.create(
@@ -2110,33 +2149,23 @@ def create_ruta_manual(request):
         # Procesar archivo CSV si se adjuntó
         csv_file = request.FILES.get('csv_coordenadas')
         if csv_file:
-            import pandas as pd
-            import io
-            from ..models import CoordenadaRuta
-            
-            decoded_file = csv_file.read().decode('utf-8')
-            df = pd.read_csv(io.StringIO(decoded_file))
-            df.columns = [c.strip().lower() for c in df.columns]
-            
-            if 'latitude' in df.columns and 'longitude' in df.columns:
-                from .importacion import _reemplazar_geografia_ruta
+            _importar_coordenadas_adjuntas(
+                csv_file,
+                nueva_ruta,
+                data.get('tipo_trazado', 'DESCONOCIDO'),
+            )
 
-                if 'tipo_trazado' not in df.columns:
-                    df['tipo_trazado'] = data.get(
-                        'tipo_trazado',
-                        'DESCONOCIDO',
-                    )
-                _reemplazar_geografia_ruta(nueva_ruta, df)
-
-                distancia_ingresada = float(data.get('distancia_km', 0) or 0) * 1000
-                if distancia_ingresada > 0:
-                    nueva_ruta.distancia_m = distancia_ingresada
-                    nueva_ruta.save(update_fields=['distancia_m'])
+            distancia_ingresada = float(data.get('distancia_km', 0) or 0) * 1000
+            if distancia_ingresada > 0:
+                nueva_ruta.distancia_m = distancia_ingresada
+                nueva_ruta.save(update_fields=['distancia_m'])
 
         return JsonResponse({'status': 'success', 'message': 'Ruta creada correctamente'})
     except ERRORES_DATOS_ENTRADA:
+        transaction.set_rollback(True)
         return JsonResponse({'status': 'error', 'message': 'Los datos de la ruta no son válidos.'}, status=400)
     except Exception:
+        transaction.set_rollback(True)
         logger.exception("Error inesperado al crear una ruta")
         return JsonResponse({'status': 'error', 'message': 'No se pudo crear la ruta.'}, status=500)
 
@@ -2180,6 +2209,8 @@ def create_odf_manual(request):
 
         rack_obj = resolver_rack(hub, sala, rack)
         capacidad = int(data.get('capacidad_puertos', 0) or 0)
+        if capacidad <= 0:
+            raise ValidationError('La capacidad del ODF debe ser mayor que cero.')
         # Crear el ODF y materializar todas sus posiciones físicas.
         odf = InventarioODF.objects.create(
             rack_obj=rack_obj,
@@ -2195,9 +2226,12 @@ def create_odf_manual(request):
             'status': 'success',
             'message': f'ODF creado correctamente con {capacidad} puertos libres.',
         })
-    except ERRORES_DATOS_ENTRADA:
-        return JsonResponse({'status': 'error', 'message': 'Los datos del ODF no son válidos.'}, status=400)
+    except ERRORES_DATOS_ENTRADA as exc:
+        transaction.set_rollback(True)
+        mensaje = '; '.join(exc.messages) if isinstance(exc, ValidationError) else 'Los datos del ODF no son válidos.'
+        return JsonResponse({'status': 'error', 'message': mensaje}, status=400)
     except Exception:
+        transaction.set_rollback(True)
         logger.exception("Error inesperado al crear un ODF")
         return JsonResponse({'status': 'error', 'message': 'No se pudo crear el ODF.'}, status=500)
 
@@ -2313,169 +2347,88 @@ def vaciar_inventario_odf(request):
 @require_POST
 @transaction.atomic
 def update_ruta_manual(request):
-    import json
-    if request.method != 'POST':
-        return JsonResponse({'status': 'error', 'message': 'Método no permitido'}, status=405)
-    
+    """Edita únicamente los campos solicitados, sin perder datos del tramo."""
+    from ..services.edicion import verificar_edicion, valores_edicion_troncal
+    from ..services.topologia import inferir_tipo_nodo, resolver_nodo
     try:
-        from ..models import Ruta, InventarioTramo
-        
-        if request.content_type == 'application/json':
-            data = json.loads(request.body)
-        else:
-            data = request.POST
-
-        nombre_original = data.get('nombre_original', '').strip()
-        nuevo_nombre = data.get('nombre', '').strip()
-        
-        if not nombre_original or not nuevo_nombre:
-            return JsonResponse({'status': 'error', 'message': 'El nombre de la ruta es obligatorio'})
-            
-        ruta = (
-            Ruta.objects.select_for_update()
-            .filter(nombre=nombre_original)
-            .first()
-        )
-        if not ruta:
-            return JsonResponse({'status': 'error', 'message': 'Ruta no encontrada'})
-        tramos_ruta = list(
-            InventarioTramo.objects.select_for_update()
-            .select_related('origen_nodo', 'destino_nodo')
-            .filter(ruta=ruta)
-            .order_by('tramo_secuencia', 'pk')
-        )
-            
-        # Si cambia el nombre, verificar que el nuevo no exista
-        if (
-            nombre_original.casefold() != nuevo_nombre.casefold()
-            and Ruta.objects.filter(nombre__iexact=nuevo_nombre).exists()
-        ):
-            return JsonResponse({'status': 'error', 'message': f'La ruta "{nuevo_nombre}" ya existe.'})
-            
-        # Actualizar Ruta
-        ruta.nombre = nuevo_nombre
-        ruta.olt = data.get('hub_origen', '')
-        ruta.distancia_m = float(data.get('distancia_km', 0) or 0) * 1000
-        ruta.save()
-        
-        capacidad_raw = data.get('capacidad', '').strip()
-        if capacidad_raw.isdigit():
-            capacidad_raw = f"{capacidad_raw} Hilos"
-        import re
-        capacidad_match = re.search(r'\d+(?:[.,]\d+)?', capacidad_raw)
-        capacidad_hilos = None
-        if capacidad_match:
-            capacidad_numero = float(
-                capacidad_match.group().replace(',', '.')
-            )
-            if capacidad_numero > 0 and capacidad_numero.is_integer():
-                capacidad_hilos = int(capacidad_numero)
-
-        # El editor histórico representa una troncal consolidada. En rutas
-        # multitramos solo actualiza los datos generales para no convertir
-        # accidentalmente el primer tramo en el resumen de toda la ruta.
-        tramo = tramos_ruta[0] if len(tramos_ruta) == 1 else None
+        data = json.loads(request.body) if request.content_type == 'application/json' else request.POST
+        original = str(data.get('nombre_original', '')).strip()
+        ruta = Ruta.objects.select_for_update().filter(nombre=original).first()
+        if ruta is None:
+            return JsonResponse({'status': 'error', 'message': 'Ruta no encontrada'}, status=404)
+        tramos = list(InventarioTramo.objects.select_for_update().filter(ruta=ruta).order_by('tramo_secuencia'))
+        tramo = tramos[0] if len(tramos) == 1 else None
+        actuales = valores_edicion_troncal(ruta, tramos)
+        verificar_edicion(data, actuales)
+        campos_ruta = []
+        if 'nombre' in data:
+            nombre = str(data['nombre']).strip()
+            if not nombre:
+                raise ValidationError('El nombre de la troncal es obligatorio.')
+            ruta.nombre = nombre
+            campos_ruta.append('nombre')
+        if 'hub_origen' in data:
+            ruta.olt = data['hub_origen']
+            campos_ruta.append('olt')
+        if 'distancia_km' in data:
+            ruta.distancia_m = float(data['distancia_km'] or 0) * 1000
+            campos_ruta.append('distancia_m')
+        if campos_ruta:
+            ruta.save(update_fields=campos_ruta)
         if tramo:
-            from ..services.topologia import (
-                codigo_tramo_automatico,
-                inferir_tipo_nodo,
-                resolver_nodo,
-            )
-            # Una ruta ya segmentada no se reclasifica en bloque desde este
-            # formulario: su tipo visual pertenece ahora a cada coordenada.
-            if not ruta.coordenadas.exists():
-                tramo.tipo_trazado = data.get('tipo_trazado', '')
-                
-            tramo.estado = data.get('estado', '')
-            tramo.capacidad = capacidad_raw
-            tramo.capacidad_hilos = capacidad_hilos
-            tramo.codigo_tramo = (
-                tramo.codigo_tramo
-                or codigo_tramo_automatico(tramo.tramo_secuencia)
-            )
-            tramo.hub_site = data.get('hub_origen', '')
-            tramo.destino = data.get('destino', '')
-            origen_texto = str(data.get('hub_origen', '')).strip()
-            destino_texto = str(data.get('destino', '')).strip()
-            tramo.origen_nodo = (
-                resolver_nodo(
-                    tipo=inferir_tipo_nodo(origen_texto),
-                    codigo=origen_texto,
-                    nombre=origen_texto,
-                )
-                if origen_texto
-                else None
-            )
-            tramo.destino_nodo = (
-                resolver_nodo(
-                    tipo=inferir_tipo_nodo(destino_texto),
-                    codigo=destino_texto,
-                    nombre=destino_texto,
-                )
-                if destino_texto
-                else None
-            )
-            tramo.marca_modelo = data.get('marca_modelo', '')
-            tramo.tipo_fibra = data.get('tipo_fibra', '')
-            tramo.serial = data.get('serial', '')
-            tramo.mufas = int(data.get('mufas', 0) or 0)
-            tramo.splitters = int(data.get('splitters', 0) or 0)
-            tramo.odf_nombre = data.get('odf_nombre', '')
-            tiene_detalle_fisico = tramo.fibras_tramo.exists()
-            if not tiene_detalle_fisico:
-                tramo.hilos_ocupados = int(
-                    data.get('hilos_ocupados', 0) or 0
-                )
-                tramo.hilos_reservados = int(
-                    data.get('hilos_reservados', 0) or 0
-                )
-                tramo.hilos_libres = int(
-                    data.get('hilos_libres', 0) or 0
-                )
-            tramo.distancia_m = float(data.get('distancia_km', 0) or 0) * 1000
-            tramo.reservas_m = float(data.get('reserva_km', 0) or 0) * 1000
-            tramo.save()
-            if tiene_detalle_fisico:
-                from ..services.fibras import recalcular_cache_tramo
-                recalcular_cache_tramo(tramo)
-            
-        # Procesar archivo CSV si se adjuntó
+            campos_tramo = []
+            for campo in ('estado', 'marca_modelo', 'tipo_fibra', 'serial', 'odf_nombre'):
+                if campo in data:
+                    setattr(tramo, campo, str(data[campo] or '').strip())
+                    campos_tramo.append(campo)
+            if 'tipo_trazado' in data and not ruta.coordenadas.exists():
+                tramo.tipo_trazado = data['tipo_trazado']
+                campos_tramo.append('tipo_trazado')
+            if 'capacidad' in data:
+                raw = str(data['capacidad'] or '').strip()
+                import re
+                match = re.fullmatch(r'(\d+)\s*(?:[Hh]ilos)?', raw)
+                if raw and (not match or int(match.group(1)) <= 0):
+                    raise ValidationError('La capacidad debe ser un entero positivo.')
+                tramo.capacidad_hilos = int(match.group(1)) if match else None
+                tramo.capacidad = f'{tramo.capacidad_hilos} Hilos' if match else ''
+                campos_tramo.extend(['capacidad_hilos', 'capacidad'])
+            for payload, extremo in (('hub_origen', 'origen'), ('destino', 'destino')):
+                if payload in data:
+                    texto = str(data[payload] or '').strip()
+                    nodo = resolver_nodo(tipo=inferir_tipo_nodo(texto), codigo=texto) if texto else None
+                    setattr(tramo, extremo + '_nodo', nodo)
+                    setattr(tramo, extremo, texto)
+                    campos_tramo.extend([extremo + '_nodo', extremo])
+                    if extremo == 'origen':
+                        tramo.hub_site = texto
+                        campos_tramo.append('hub_site')
+            for payload, campo in (('distancia_km', 'distancia_m'), ('reserva_km', 'reservas_m')):
+                if payload in data:
+                    setattr(tramo, campo, float(data[payload] or 0) * 1000)
+                    campos_tramo.append(campo)
+            for campo in ('mufas', 'splitters'):
+                if campo in data:
+                    setattr(tramo, campo, int(data[campo] or 0))
+                    campos_tramo.append(campo)
+            if not tramo.fibras_tramo.exists():
+                for campo in ('hilos_ocupados', 'hilos_reservados', 'hilos_libres'):
+                    if campo in data:
+                        setattr(tramo, campo, int(data[campo] or 0))
+                        campos_tramo.append(campo)
+            if campos_tramo:
+                tramo.save(update_fields=list(set(campos_tramo)))
         csv_file = request.FILES.get('csv_coordenadas')
         if csv_file:
-            import pandas as pd
-            import io
-            from ..models import CoordenadaRuta
-            
-            decoded_file = csv_file.read().decode('utf-8')
-            df = pd.read_csv(io.StringIO(decoded_file))
-            df.columns = [c.strip().lower() for c in df.columns]
-            
-            if 'latitude' in df.columns and 'longitude' in df.columns:
-                from .importacion import _reemplazar_geografia_ruta
-
-                if 'tipo_trazado' not in df.columns:
-                    df['tipo_trazado'] = data.get(
-                        'tipo_trazado',
-                        'DESCONOCIDO',
-                    )
-                _reemplazar_geografia_ruta(ruta, df)
-
-                distancia_ingresada = float(data.get('distancia_km', 0) or 0) * 1000
-                if distancia_ingresada > 0:
-                    ruta.distancia_m = distancia_ingresada
-                    ruta.save(update_fields=['distancia_m'])
-
-        mensaje = 'Ruta actualizada correctamente'
-        if len(tramos_ruta) > 1:
-            mensaje += (
-                '. Los tramos técnicos se conservaron sin cambios y se '
-                'administran mediante Inventario Técnico de Tramos.'
-            )
-        return JsonResponse({'status': 'success', 'message': mensaje})
-    except ERRORES_DATOS_ENTRADA:
-        return JsonResponse({'status': 'error', 'message': 'Los datos de la ruta no son válidos.'}, status=400)
+            _importar_coordenadas_adjuntas(csv_file, ruta, data.get('tipo_trazado', 'DESCONOCIDO'))
+        return JsonResponse({'status': 'success', 'message': 'Troncal actualizada. Los datos no editados se conservaron.'})
+    except ERRORES_DATOS_ENTRADA as exc:
+        transaction.set_rollback(True)
+        mensaje = '; '.join(exc.messages) if isinstance(exc, ValidationError) else 'Los datos de la ruta no son válidos.'
+        return JsonResponse({'status': 'error', 'message': mensaje}, status=400)
     except Exception:
-        logger.exception("Error inesperado al actualizar una ruta")
+        transaction.set_rollback(True)
+        logger.exception('Error inesperado al actualizar una ruta')
         return JsonResponse({'status': 'error', 'message': 'No se pudo actualizar la ruta.'}, status=500)
 
 @login_required
@@ -2573,22 +2526,33 @@ def update_odf_manual(request):
                 ),
             }, status=409)
 
-        rack_obj = resolver_rack(hub, sala, rack)
-        # Actualizar campos
-        odf.rack_obj = rack_obj
-        odf.odf = odf_nombre
+        from ..services.inventario import actualizar_odf, rack_es_ubicacion_sin_asignar
+        from ..services.edicion import verificar_edicion
+        verificar_edicion(data, {
+            'hub_site': nombre_site(odf), 'sala': odf.rack_obj.sala.nombre,
+            'rack': odf.rack_obj.nombre, 'odf': odf.odf,
+            'capacidad_puertos': odf.capacidad_puertos, 'tipo_conector': odf.tipo_conector,
+            'estado': odf.estado, 'observaciones': odf.observaciones,
+        })
+        rack_obj = resolver_rack(hub, sala, rack) if any((hub, sala, rack)) else odf.rack_obj
+        if (rack_obj.pk != odf.rack_obj_id and not rack_es_ubicacion_sin_asignar(odf.rack_obj)
+                and data.get('confirmar_ubicacion') is not True):
+            raise ValidationError('Confirme explícitamente el cambio de ubicación del ODF.')
+        cambios = {'rack_obj': rack_obj, 'odf': odf_nombre}
         nueva_capacidad = int(
             data.get('capacidad_puertos', odf.capacidad_puertos) or 0
         )
         
-        if 'tipo_conector' in data:
-            odf.tipo_conector = data.get('tipo_conector') or ''
-        if 'estado' in data:
-            odf.estado = data.get('estado') or ''
-        if 'observaciones' in data:
-            odf.observaciones = data.get('observaciones') or ''
-        odf.save()
-        odf = ajustar_puertos_a_capacidad(odf, nueva_capacidad)
+        if nueva_capacidad != odf.capacidad_puertos:
+            if not request.user.is_superuser:
+                raise ValidationError('Solo un administrador puede cambiar la capacidad del ODF.')
+            if data.get('confirmar_capacidad') is not True:
+                raise ValidationError('Confirme la capacidad anterior y nueva antes de aplicar el ajuste.')
+            cambios['capacidad_puertos'] = nueva_capacidad
+        for campo in ('tipo_conector', 'estado', 'observaciones'):
+            if campo in data:
+                cambios[campo] = data[campo] or ''
+        odf = actualizar_odf(odf, cambios, usuario=request.user, origen='GUI')
         
         return JsonResponse({
             'status': 'success',
@@ -2597,9 +2561,12 @@ def update_odf_manual(request):
                 'puertos físicos.'
             ),
         })
-    except ERRORES_DATOS_ENTRADA:
-        return JsonResponse({'status': 'error', 'message': 'Los datos del ODF no son válidos.'}, status=400)
+    except ERRORES_DATOS_ENTRADA as exc:
+        transaction.set_rollback(True)
+        mensaje = '; '.join(exc.messages) if isinstance(exc, ValidationError) else 'Los datos del ODF no son válidos.'
+        return JsonResponse({'status': 'error', 'message': mensaje}, status=400)
     except Exception:
+        transaction.set_rollback(True)
         logger.exception("Error inesperado al actualizar un ODF")
         return JsonResponse({'status': 'error', 'message': 'No se pudo actualizar el ODF.'}, status=500)
 
@@ -2799,12 +2766,19 @@ def add_reserva_manual(request):
 
 @login_required
 @permission_required('mapas.add_reserva', raise_exception=True)
+@permission_required('mapas.change_reserva', raise_exception=True)
 @require_POST
 @transaction.atomic
 def import_reservas_archivo(request):
     try:
+        import io
         import pandas as pd
-        from ..models import Ruta, Reserva
+        from ..models import Ruta
+        from .importacion import (
+            _normalizar_dataframe_csv,
+            _procesar_reservas,
+            ejecutar_importacion_sincrona_auditada,
+        )
         
         archivo = request.FILES.get('archivo')
         ruta_nombre = request.POST.get('ruta_nombre')
@@ -2821,71 +2795,38 @@ def import_reservas_archivo(request):
         if not ruta:
             return JsonResponse({'status': 'error', 'message': 'Ruta no encontrada.'})
 
-        if archivo.name.endswith('.csv'):
+        nombre_archivo = archivo.name.casefold()
+        if nombre_archivo.endswith('.csv'):
             df = pd.read_csv(archivo)
-        elif archivo.name.endswith('.xlsx') or archivo.name.endswith('.xls'):
+        elif nombre_archivo.endswith(('.xlsx', '.xls')):
             df = pd.read_excel(archivo)
         else:
             return JsonResponse({'status': 'error', 'message': 'Formato no soportado. Use .csv o .xlsx'})
 
-        from decimal import Decimal, InvalidOperation
-
-        nuevas_reservas = []
-        rechazadas = 0
-        for index, row in df.iterrows():
-            nombre_valor = row.get('Landmark name', row.get('Nombre', f'Reserva-{index + 1}'))
-            nombre = '' if pd.isna(nombre_valor) else str(nombre_valor).strip()
-            tipo_valor = row.get('Connection type', row.get('Tipo', ''))
-            tipo = '' if pd.isna(tipo_valor) else str(tipo_valor).strip()
-            reserva_m = row.get('Reserva (m)', row.get('Reserva_m', 0))
-            lat = row.get('Latitud')
-            lon = row.get('Longitud')
-
-            try:
-                if not nombre or pd.isna(lat) or pd.isna(lon):
-                    raise ValueError
-                latitud = Decimal(str(lat).strip().replace(',', '.'))
-                longitud = Decimal(str(lon).strip().replace(',', '.'))
-                if not (Decimal('-90') <= latitud <= Decimal('90')):
-                    raise ValueError
-                if not (Decimal('-180') <= longitud <= Decimal('180')):
-                    raise ValueError
-                if pd.isna(reserva_m) or str(reserva_m).strip() == '-':
-                    reserva_m = 0
-                reserva_m = float(str(reserva_m).strip().replace(',', '.'))
-                if reserva_m < 0:
-                    raise ValueError
-            except (InvalidOperation, TypeError, ValueError):
-                rechazadas += 1
-                continue
-
-            nuevas_reservas.append(Reserva(
-                ruta=ruta,
-                nombre=nombre,
-                tipo=tipo,
-                reserva_m=reserva_m,
-                latitud=latitud,
-                longitud=longitud,
-            ))
-
-        if not nuevas_reservas and rechazadas:
-            return JsonResponse(
-                {
-                    'status': 'error',
-                    'message': 'No se importaron reservas: todas las filas tienen nombre o coordenadas inválidas.',
-                },
-                status=400,
-            )
-
-        Reserva.objects.bulk_create(nuevas_reservas, batch_size=1000)
-        mensaje = f'{len(nuevas_reservas)} reservas importadas exitosamente.'
-        if rechazadas:
-            mensaje += f' {rechazadas} filas fueron omitidas por datos inválidos.'
+        df = _normalizar_dataframe_csv(df, aliases={
+            'landmark_name': 'nombre',
+            'connection_type': 'tipo',
+            'reserva': 'reserva_m',
+            'reserva_m': 'reserva_m',
+        })
+        df['ruta'] = ruta.nombre
+        contenido = io.BytesIO(df.to_csv(index=False).encode('utf-8-sig'))
+        _, resultado = ejecutar_importacion_sincrona_auditada(
+            archivo,
+            'reservas',
+            request.user,
+            _procesar_reservas,
+            archivo_ejecucion=contenido,
+        )
+        mensaje = (
+            f"{resultado['creadas']} reservas creadas y "
+            f"{resultado['actualizadas']} actualizadas."
+        )
         return JsonResponse({
             'status': 'success',
-            'warning': bool(rechazadas),
+            'warning': False,
             'message': mensaje,
-            'rechazadas': rechazadas,
+            'rechazadas': resultado.get('rechazadas', 0),
         })
 
     except ERRORES_DATOS_ENTRADA:

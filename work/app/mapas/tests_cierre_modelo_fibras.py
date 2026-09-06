@@ -355,7 +355,7 @@ class ImportacionBhpEndurecidaTests(TestCase):
         )
         return '\n'.join((cabecera, fila))
 
-    def test_ruta_un_tramo_materializa_el_estado_definitivo(self):
+    def test_ruta_un_tramo_no_materializa_por_importar_terminacion(self):
         casos = (
             ('Disponible', 'DISPONIBLE'),
             ('Ocupado', 'OCUPADO'),
@@ -375,14 +375,10 @@ class ImportacionBhpEndurecidaTests(TestCase):
                     ruta=ruta,
                     fibra_numero=f'F{indice}',
                 )
-                asignacion = FibraTramo.objects.get(
-                    fibra=fibra,
-                    tramo=tramo,
-                )
+                self.assertFalse(FibraTramo.objects.filter(fibra=fibra, tramo=tramo).exists())
                 self.assertEqual(fibra.estado, esperado)
-                self.assertEqual(asignacion.estado, esperado)
 
-    def test_conflicto_fisico_revierte_fibra_ruta_y_terminacion(self):
+    def test_importar_terminacion_no_modifica_posicion_ocupada_del_tramo(self):
         ruta, tramo = self._ruta_un_tramo('BHP-ROLLBACK')
         ocupante = InventarioFibra.objects.create(
             ruta=ruta,
@@ -396,14 +392,14 @@ class ImportacionBhpEndurecidaTests(TestCase):
         )
         contenido = self._fila_larga(ruta.nombre, 'F6', 6, 'Ocupado')
 
-        with self.assertRaises(ValidationError):
-            _procesar_terminaciones_fibra(_csv('rollback.csv', contenido))
+        _procesar_terminaciones_fibra(_csv('sin-materializar.csv', contenido))
 
-        self.assertFalse(InventarioFibra.objects.filter(
+        self.assertTrue(InventarioFibra.objects.filter(
             ruta=ruta,
             fibra_numero='F6',
         ).exists())
-        self.assertFalse(self.puertos_a[5].terminaciones_fibra.exists())
+        self.assertTrue(self.puertos_a[5].terminaciones_fibra.exists())
+        self.assertEqual(FibraTramo.objects.get(tramo=tramo, numero_hilo='F6').fibra_id, ocupante.pk)
 
     def test_condicion_con_falla_no_altera_estado_ni_regla_uno_a_uno(self):
         ruta, tramo = self._ruta_un_tramo('BHP-CON-FALLA')
@@ -421,8 +417,8 @@ class ImportacionBhpEndurecidaTests(TestCase):
         _procesar_terminaciones_fibra(_csv('con-falla.csv', contenido))
 
         fibra = InventarioFibra.objects.get(ruta=ruta, fibra_numero='F10')
-        detalle = FibraTramo.objects.get(fibra=fibra, tramo=tramo)
-        self.assertEqual((fibra.estado, detalle.estado), ('OCUPADO', 'OCUPADO'))
+        self.assertFalse(FibraTramo.objects.filter(fibra=fibra, tramo=tramo).exists())
+        self.assertEqual(fibra.estado, 'OCUPADO')
         self.assertEqual(fibra.condicion_fisica, 'CON_FALLA')
 
     def test_site_informado_se_valida_contra_jerarquia_odf(self):
@@ -532,7 +528,7 @@ class ImportadorPuertosRetiradoTests(TestCase):
 
 
 class RutaUnTramoIdempotenteTests(TestCase):
-    def test_misma_ruta_materializa_detalle_faltante_sin_auditoria_falsa(self):
+    def test_misma_ruta_no_materializa_detalle_ni_auditoria_falsa(self):
         ruta = Ruta.objects.create(nombre='UNO-IDEMPOTENTE')
         tramo = InventarioTramo.objects.create(
             ruta=ruta,
@@ -550,8 +546,7 @@ class RutaUnTramoIdempotenteTests(TestCase):
         _, asignada, _ = asignar_ruta_fibra(fibra=fibra, ruta=ruta)
 
         self.assertFalse(asignada)
-        detalle = FibraTramo.objects.get(fibra=fibra, tramo=tramo)
-        self.assertEqual(detalle.estado, 'RESERVADO')
+        self.assertFalse(FibraTramo.objects.filter(fibra=fibra, tramo=tramo).exists())
         self.assertFalse(AuditoriaFibra.objects.filter(
             fibra=fibra,
             accion='ASIGNAR_RUTA',

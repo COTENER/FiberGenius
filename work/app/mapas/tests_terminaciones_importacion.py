@@ -350,6 +350,203 @@ class ImportacionTerminacionesFibraTests(TestCase):
         self.assertEqual(fibra.fibra_numero, 'F9')
         self.assertEqual(fibra.terminaciones.count(), 2)
 
+    def test_formato_simplificado_crea_una_fibra_provisional_con_a_y_b(self):
+        contenido = '\n'.join([
+            (
+                'Fibra,Ruta,ODF A,Puerto A,Conector A,'
+                'ODF B,Puerto B,Conector B,Estado,Condicion'
+            ),
+            'F17,,ODF-A,1,LC,ODF-B,1,SC,Ocupado,Operativa',
+        ])
+
+        resultado = _procesar_terminaciones_fibra(
+            _csv('terminaciones-simplificadas.csv', contenido)
+        )
+
+        self.assertEqual(resultado['creadas'], 2)
+        fibra = InventarioFibra.objects.get(
+            ruta__isnull=True,
+            fibra_numero='F17',
+        )
+        self.assertTrue(fibra.codigo_fibra.startswith('FGF-'))
+        self.assertEqual(fibra.estado, 'OCUPADO')
+        self.assertEqual(
+            list(
+                fibra.terminaciones.order_by('extremo').values_list(
+                    'extremo',
+                    'puerto_odf__odf_obj__odf',
+                    'puerto_odf__puerto_odf',
+                    'tipo_conector',
+                )
+            ),
+            [
+                ('A', 'ODF-A', '1', 'LC'),
+                ('B', 'ODF-B', '1', 'SC'),
+            ],
+        )
+
+    def test_formato_simplificado_es_idempotente(self):
+        contenido = '\n'.join([
+            'Fibra,ODF A,Puerto A,ODF B,Puerto B',
+            'F17,ODF-A,1,ODF-B,1',
+        ])
+
+        _procesar_terminaciones_fibra(_csv('primera.csv', contenido))
+        codigo = InventarioFibra.objects.get(fibra_numero='F17').codigo_fibra
+        repeticion = _procesar_terminaciones_fibra(
+            _csv('repeticion.csv', contenido)
+        )
+
+        self.assertEqual(repeticion['creadas'], 0)
+        self.assertEqual(repeticion['actualizadas'], 2)
+        self.assertEqual(InventarioFibra.objects.filter(
+            codigo_fibra=codigo,
+        ).count(), 1)
+
+    def test_formato_simplificado_completa_b_conservando_a(self):
+        parcial = '\n'.join([
+            'Fibra,ODF A,Puerto A,ODF B,Puerto B',
+            'F18,ODF-A,2,,',
+        ])
+        completa = '\n'.join([
+            'Fibra,ODF A,Puerto A,ODF B,Puerto B',
+            'F18,ODF-A,2,ODF-B,2',
+        ])
+
+        _procesar_terminaciones_fibra(_csv('parcial.csv', parcial))
+        fibra = InventarioFibra.objects.get(fibra_numero='F18')
+        self.assertEqual(fibra.terminaciones.count(), 1)
+
+        resultado = _procesar_terminaciones_fibra(
+            _csv('completa.csv', completa)
+        )
+
+        self.assertEqual(resultado['creadas'], 1)
+        self.assertEqual(resultado['actualizadas'], 1)
+        self.assertEqual(fibra.terminaciones.count(), 2)
+
+    def test_formato_simplificado_no_mueve_un_extremo_implicitamente(self):
+        inicial = '\n'.join([
+            'Fibra,ODF A,Puerto A,ODF B,Puerto B',
+            'F17,ODF-A,1,ODF-B,1',
+        ])
+        movimiento = '\n'.join([
+            'Fibra,ODF A,Puerto A,ODF B,Puerto B',
+            'F17,ODF-A,2,ODF-B,1',
+        ])
+        _procesar_terminaciones_fibra(_csv('inicial-ancho.csv', inicial))
+
+        with self.assertRaisesRegex(ValueError, 'operaci.n de movimiento'):
+            _procesar_terminaciones_fibra(
+                _csv('movimiento-ancho.csv', movimiento)
+            )
+
+        fibra = InventarioFibra.objects.get(fibra_numero='F17')
+        self.assertEqual(
+            fibra.terminaciones.get(extremo='A').puerto_odf,
+            self.puerto_a_1,
+        )
+
+    def test_formato_simplificado_no_duplica_si_cambian_ambos_extremos(self):
+        inicial = '\n'.join([
+            'Fibra,ODF A,Puerto A,ODF B,Puerto B',
+            'F17,ODF-A,1,ODF-B,1',
+        ])
+        ambos_nuevos = '\n'.join([
+            'Fibra,ODF A,Puerto A,ODF B,Puerto B',
+            'F17,ODF-A,2,ODF-B,2',
+        ])
+        _procesar_terminaciones_fibra(_csv('inicial-ancho.csv', inicial))
+
+        with self.assertRaisesRegex(ValueError, 'no se cre. una fibra duplicada'):
+            _procesar_terminaciones_fibra(
+                _csv('ambos-nuevos.csv', ambos_nuevos)
+            )
+
+        self.assertEqual(InventarioFibra.objects.filter(
+            ruta__isnull=True,
+            fibra_numero='F17',
+        ).count(), 1)
+        self.assertEqual(TerminacionFibra.objects.count(), 2)
+
+    def test_formato_simplificado_no_duplica_una_provisional_sin_puertos(self):
+        fibra = InventarioFibra.objects.create(
+            ruta=None,
+            fibra_numero='F17',
+        )
+        contenido = '\n'.join([
+            'Fibra,ODF A,Puerto A,ODF B,Puerto B',
+            'F17,ODF-A,1,ODF-B,1',
+        ])
+
+        with self.assertRaisesRegex(ValueError, 'plantilla t.cnica precargada'):
+            _procesar_terminaciones_fibra(
+                _csv('provisional-existente.csv', contenido)
+            )
+
+        self.assertEqual(InventarioFibra.objects.filter(
+            ruta__isnull=True,
+            fibra_numero='F17',
+        ).count(), 1)
+        self.assertFalse(fibra.terminaciones.exists())
+
+    def test_formato_simplificado_rechaza_un_extremo_incompleto(self):
+        contenido = '\n'.join([
+            'Fibra,ODF A,Puerto A,ODF B,Puerto B',
+            'F17,ODF-A,,ODF-B,1',
+        ])
+
+        with self.assertRaisesRegex(ValueError, 'declarar juntos ODF y puerto'):
+            _procesar_terminaciones_fibra(
+                _csv('incompleto-ancho.csv', contenido)
+            )
+
+    def test_rechaza_mezclar_formato_simplificado_y_tecnico(self):
+        contenido = '\n'.join([
+            (
+                'Fibra,ODF A,Puerto A,ODF B,Puerto B,'
+                'Codigo Fibra,Extremo,ODF,Puerto'
+            ),
+            'F17,ODF-A,1,ODF-B,1,,A,,',
+        ])
+
+        with self.assertRaisesRegex(ValueError, 'no mezcle columnas'):
+            _procesar_terminaciones_fibra(
+                _csv('formatos-mezclados.csv', contenido)
+            )
+
+    def test_formato_simplificado_distingue_f17_sin_troncal_por_sus_puertos(self):
+        contenido = '\n'.join([
+            'Fibra,Ruta,ODF A,Puerto A,ODF B,Puerto B',
+            'F17,,ODF-A,1,ODF-B,1',
+            'F17,,ODF-A,2,ODF-B,2',
+        ])
+
+        resultado = _procesar_terminaciones_fibra(
+            _csv('dos-f17.csv', contenido)
+        )
+
+        self.assertEqual(resultado['creadas'], 4)
+        fibras = InventarioFibra.objects.filter(
+            ruta__isnull=True,
+            fibra_numero='F17',
+        )
+        self.assertEqual(fibras.count(), 2)
+        self.assertEqual(
+            set(
+                TerminacionFibra.objects.filter(fibra__in=fibras)
+                .values_list('puerto_odf__puerto_odf', flat=True)
+            ),
+            {'1', '2'},
+        )
+
+        repeticion = _procesar_terminaciones_fibra(
+            _csv('dos-f17-recarga.csv', contenido)
+        )
+        self.assertEqual(repeticion['creadas'], 0)
+        self.assertEqual(repeticion['actualizadas'], 4)
+        self.assertEqual(fibras.count(), 2)
+
 
 class GuiTerminacionesFibraTests(TestCase):
     @classmethod
@@ -397,18 +594,22 @@ class GuiTerminacionesFibraTests(TestCase):
         respuesta = self.client.get(reverse('configuracion'))
 
         self.assertContains(respuesta, 'Cargar Terminaciones de Fibra')
-        self.assertContains(respuesta, 'Descargar plantilla precargada')
+        self.assertContains(respuesta, 'Plantilla técnica precargada')
         self.assertContains(
             respuesta,
-            'Codigo Fibra (opcional en primera carga)',
+            'una fila por fibra con sus extremos A y B',
         )
         self.assertContains(
             respuesta,
-            'Nunca se reconcilia solamente por F1/F2',
+            'no desconecta ni mueve terminaciones existentes',
         )
         self.assertContains(
             respuesta,
             '/static/ejemplos/terminaciones_fibra_ejemplo.csv',
+        )
+        self.assertContains(
+            respuesta,
+            '/static/ejemplos/plantilla_terminaciones_simplificada.csv',
         )
 
     def test_descarga_plantilla_precargada(self):
@@ -418,12 +619,11 @@ class GuiTerminacionesFibraTests(TestCase):
         contenido = respuesta.content.decode('utf-8-sig')
 
         self.assertEqual(respuesta.status_code, 200)
-        self.assertIn('Extremo,Site,ODF,Puerto,Conector', contenido)
-        self.assertIn('ID Fibra', contenido)
-        self.assertIn('Estado Global,Condicion Fisica,Servicio,Observaciones', contenido)
+        self.assertIn('Codigo Fibra,Extremo,ODF,Puerto,Conector', contenido)
+        self.assertNotIn('ID Fibra', contenido)
+        self.assertNotIn('Estado Global', contenido)
         self.assertIn(
-            f'RUTA-PLANTILLA,{self.fibra.pk},F1,'
-            f'{self.fibra.codigo_fibra},',
+            f'{self.fibra.codigo_fibra},A,',
             contenido,
         )
 
@@ -438,7 +638,7 @@ class GuiTerminacionesFibraTests(TestCase):
         )
 
         self.fibra.refresh_from_db()
-        self.assertEqual(resultado['total'], 1)
+        self.assertEqual(resultado['total'], 2)
         self.assertEqual(resultado['actualizadas'], 1)
         self.assertEqual(self.fibra.codigo_fibra, codigo_original)
         self.assertTrue(TerminacionFibra.objects.filter(

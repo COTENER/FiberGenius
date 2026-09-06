@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import re
 import unicodedata
+from collections import defaultdict
 from dataclasses import dataclass
 
 from django.core.exceptions import ValidationError
@@ -54,6 +55,8 @@ ALIASES_COLUMNAS = {
     "ruta": "troncal",
     "fibra": "fibra",
     "hilo": "fibra",
+    "codigo_fibra": "codigo_fibra",
+    "codigo_de_fibra": "codigo_fibra",
     "extremo": "extremo",
     "sincronizar_fibra": "sincronizar_fibra",
     "sincronizar": "sincronizar_fibra",
@@ -71,6 +74,7 @@ class OperacionPuerto:
     puerto_id: int
     troncal: str = ""
     fibra: str = ""
+    codigo_fibra: str = ""
     fibra_id: int | None = None
     extremo: str = ""
     sincronizar_fibra: bool = False
@@ -85,6 +89,7 @@ class OperacionPuerto:
             "puerto": self.puerto,
             "troncal": self.troncal,
             "fibra": self.fibra,
+            "codigo_fibra": self.codigo_fibra,
             "extremo": self.extremo,
             "sincronizar_fibra": self.sincronizar_fibra,
             "permitir_mover": self.permitir_mover,
@@ -149,7 +154,7 @@ def leer_operaciones_excel(contenido, *, max_filas=5000):
             raise ValidationError(
                 "Hay columnas equivalentes repetidas: " + ", ".join(sorted(repetidos)) + "."
             )
-        obligatorias = {"site", "odf", "puerto", "accion"}
+        obligatorias = {"odf", "puerto", "accion"}
         faltantes = obligatorias - set(encabezados)
         if faltantes:
             raise ValidationError(
@@ -197,39 +202,78 @@ def preparar_operaciones(filas):
     puertos_vistos = {}
     extremos_vistos = {}
 
+    # La resolución es masiva: el costo de consultas no debe crecer por cada
+    # fila del Excel. También mantiene una fotografía coherente durante toda
+    # la validación previa.
+    odfs_por_nombre = defaultdict(list)
+    for odf_obj in InventarioODF.objects.select_related(
+        "rack_obj__sala__hub_site"
+    ).order_by("pk"):
+        odfs_por_nombre[odf_obj.odf.casefold()].append(odf_obj)
+    odf_ids = {
+        odf_obj.pk
+        for _, registro in filas
+        for odf_obj in odfs_por_nombre.get(
+            _texto(registro.get("odf")).casefold(),
+            (),
+        )
+    }
+    puertos_por_identidad = defaultdict(list)
+    for puerto_obj in DetallePuertoODF.objects.filter(
+        odf_obj_id__in=odf_ids
+    ).select_related("odf_obj"):
+        puertos_por_identidad[
+            (puerto_obj.odf_obj_id, puerto_obj.puerto_odf.casefold())
+        ].append(puerto_obj)
+    rutas_por_nombre = {
+        ruta.nombre.casefold(): ruta for ruta in Ruta.objects.all()
+    }
+    fibras_por_codigo = defaultdict(list)
+    fibras_por_ruta_numero = defaultdict(list)
+    for fibra_obj in InventarioFibra.objects.select_related("ruta"):
+        fibras_por_codigo[fibra_obj.codigo_fibra.casefold()].append(fibra_obj)
+        if fibra_obj.ruta_id:
+            fibras_por_ruta_numero[
+                (fibra_obj.ruta_id, fibra_obj.fibra_numero.casefold())
+            ].append(fibra_obj)
+
     for numero_fila, registro in filas:
         try:
             site = _texto(registro.get("site"))
             odf_nombre = _texto(registro.get("odf"))
             puerto_nombre = _texto(registro.get("puerto"))
             accion = ALIASES_ACCION.get(_normalizar(registro.get("accion")))
-            if not site or not odf_nombre or not puerto_nombre:
-                raise ValidationError("Site, ODF y Puerto son obligatorios.")
+            if not odf_nombre or not puerto_nombre:
+                raise ValidationError("ODF y Puerto son obligatorios.")
             if not accion:
                 raise ValidationError(
                     "Acción no válida. Use Conectar, Desconectar, Reservar o Cancelar reserva."
                 )
 
-            odfs = list(
-                InventarioODF.objects.filter(
-                    rack_obj__sala__hub_site__nombre__iexact=site,
-                    odf__iexact=odf_nombre,
-                ).order_by("pk")[:2]
-            )
+            odfs = odfs_por_nombre.get(odf_nombre.casefold(), [])
             if not odfs:
-                raise ValidationError(f"No existe el ODF {odf_nombre} en el Site {site}.")
+                raise ValidationError(f"No existe el ODF {odf_nombre}.")
             if len(odfs) > 1:
+                raise ValidationError(f"El ODF {odf_nombre} es ambiguo.")
+            site_real = nombre_site(odfs[0])
+            if site and site.casefold() != site_real.casefold():
                 raise ValidationError(
-                    f"El ODF {odf_nombre} es ambiguo dentro del Site {site}."
+                    f"El Site {site} no corresponde al ODF {odf_nombre}; "
+                    f"pertenece a {site_real}."
                 )
-            puerto = DetallePuertoODF.objects.filter(
-                odf_obj=odfs[0],
-                puerto_odf__iexact=puerto_nombre,
-            ).first()
-            if puerto is None:
+            puertos = puertos_por_identidad.get(
+                (odfs[0].pk, puerto_nombre.casefold()),
+                [],
+            )
+            if not puertos:
                 raise ValidationError(
                     f"No existe el puerto {puerto_nombre} en {site} / {odf_nombre}."
                 )
+            if len(puertos) > 1:
+                raise ValidationError(
+                    f"El puerto {puerto_nombre} es ambiguo en el ODF {odf_nombre}."
+                )
+            puerto = puertos[0]
             if puerto.pk in puertos_vistos:
                 raise ValidationError(
                     f"El puerto ya fue incluido en la fila {puertos_vistos[puerto.pk]}."
@@ -237,24 +281,69 @@ def preparar_operaciones(filas):
 
             troncal = _texto(registro.get("troncal"))
             fibra_numero = _texto(registro.get("fibra")).upper()
+            codigo_fibra = _texto(registro.get("codigo_fibra")).upper()
             extremo = _texto(registro.get("extremo")).upper()
             fibra = None
             if accion == "conectar":
-                if not troncal or not fibra_numero or extremo not in {"A", "B"}:
+                if extremo not in {"A", "B"}:
                     raise ValidationError(
-                        "Conectar requiere Troncal, Fibra y Extremo A o B."
+                        "Conectar requiere Extremo A o B."
                     )
-                ruta = Ruta.objects.filter(nombre__iexact=troncal).first()
-                if ruta is None:
-                    raise ValidationError(f"No existe la troncal {troncal}.")
-                fibra = InventarioFibra.objects.filter(
-                    ruta=ruta,
-                    fibra_numero__iexact=fibra_numero,
-                ).first()
-                if fibra is None:
-                    raise ValidationError(
-                        f"No existe la fibra {fibra_numero} en la troncal {troncal}."
+                if codigo_fibra:
+                    candidatas_codigo = fibras_por_codigo.get(
+                        codigo_fibra.casefold(),
+                        [],
                     )
+                    if not candidatas_codigo:
+                        raise ValidationError(
+                            f"No existe el Codigo Fibra {codigo_fibra}."
+                        )
+                    if len(candidatas_codigo) > 1:
+                        raise ValidationError(
+                            f"El Codigo Fibra {codigo_fibra} es ambiguo."
+                        )
+                    fibra = candidatas_codigo[0]
+                    if (
+                        troncal
+                        and fibra.ruta_id
+                        and fibra.ruta.nombre.casefold() != troncal.casefold()
+                    ):
+                        raise ValidationError(
+                            f"El Codigo Fibra {codigo_fibra} pertenece a "
+                            f"{fibra.ruta.nombre}, no a {troncal}."
+                        )
+                    if (
+                        fibra_numero
+                        and fibra.fibra_numero.casefold()
+                        != fibra_numero.casefold()
+                    ):
+                        raise ValidationError(
+                            f"El Codigo Fibra {codigo_fibra} corresponde a "
+                            f"{fibra.fibra_numero}, no a {fibra_numero}."
+                        )
+                else:
+                    if not troncal or not fibra_numero:
+                        raise ValidationError(
+                            "Conectar requiere Codigo Fibra. Troncal + Fibra "
+                            "se acepta solo por compatibilidad legacy."
+                        )
+                    ruta = rutas_por_nombre.get(troncal.casefold())
+                    if ruta is None:
+                        raise ValidationError(f"No existe la troncal {troncal}.")
+                    candidatas = fibras_por_ruta_numero.get(
+                        (ruta.pk, fibra_numero.casefold()),
+                        [],
+                    )
+                    if not candidatas:
+                        raise ValidationError(
+                            f"No existe la fibra {fibra_numero} en la troncal {troncal}."
+                        )
+                    if len(candidatas) > 1:
+                        raise ValidationError(
+                            f"{troncal} / {fibra_numero} es ambiguo; informe Codigo Fibra."
+                        )
+                    fibra = candidatas[0]
+                    codigo_fibra = fibra.codigo_fibra
                 clave_extremo = (fibra.pk, extremo)
                 if clave_extremo in extremos_vistos:
                     raise ValidationError(
@@ -286,6 +375,7 @@ def preparar_operaciones(filas):
                 puerto_id=puerto.pk,
                 troncal=troncal,
                 fibra=fibra_numero,
+                codigo_fibra=codigo_fibra,
                 fibra_id=fibra.pk if fibra else None,
                 extremo=extremo,
                 sincronizar_fibra=sincronizar_fibra,

@@ -144,6 +144,52 @@ class PuertosAutomaticosODFTests(TestCase):
             {"LIBRE"},
         )
 
+    def test_importar_odf_sin_ubicacion_usa_placeholder_y_luego_permite_completarlo(self):
+        _procesar_odfs_inventario(SimpleUploadedFile(
+            "odf-pendiente.csv",
+            b"odf,capacidad_puertos\nODF-PENDIENTE,3\n",
+            content_type="text/csv",
+        ))
+        odf = InventarioODF.objects.get(odf="ODF-PENDIENTE")
+        self.assertEqual(odf.hub_site, "SIN ASIGNAR")
+        self.assertEqual(odf.sala, "SIN ASIGNAR")
+        self.assertEqual(odf.rack, "SIN ASIGNAR")
+        self.assertEqual(odf.puertos_detalle.count(), 3)
+
+        _procesar_odfs_inventario(SimpleUploadedFile(
+            "odf-ubicado.csv",
+            (
+                "odf,hub_site,sala,rack,capacidad_puertos\n"
+                "ODF-PENDIENTE,SITE-REAL,SALA-REAL,RACK-REAL,\n"
+            ).encode(),
+            content_type="text/csv",
+        ))
+        odf.refresh_from_db()
+        self.assertEqual(odf.hub_site, "SITE-REAL")
+        self.assertEqual(odf.sala, "SALA-REAL")
+        self.assertEqual(odf.rack, "RACK-REAL")
+        self.assertEqual(odf.capacidad_puertos, 3)
+        self.assertEqual(odf.puertos_detalle.count(), 3)
+
+    def test_recarga_odf_sin_capacidad_conserva_la_existente(self):
+        odf = self._crear_odf(4)
+        _procesar_odfs_inventario(SimpleUploadedFile(
+            "odf-parcial.csv",
+            b"odf,capacidad_puertos\nODF-AUTO,\n",
+            content_type="text/csv",
+        ))
+        odf.refresh_from_db()
+        self.assertEqual(odf.capacidad_puertos, 4)
+        self.assertEqual(odf.puertos_detalle.count(), 4)
+
+    def test_importar_odf_rechaza_ubicacion_parcial(self):
+        with self.assertRaisesMessage(ValueError, "deben informarse juntos"):
+            _procesar_odfs_inventario(SimpleUploadedFile(
+                "odf-incompleto.csv",
+                b"odf,hub_site,capacidad_puertos\nODF-INCOMPLETO,SITE-A,4\n",
+                content_type="text/csv",
+            ))
+
     def test_archivo_de_puertos_no_crea_ocupacion_sin_terminacion(self):
         odf = self._crear_odf(2)
         archivo = SimpleUploadedFile(
@@ -160,6 +206,26 @@ class PuertosAutomaticosODFTests(TestCase):
             "un puerto no se importa como Ocupado",
         ):
             _procesar_puertos_odf_inventario(archivo)
+
+    def test_metadatos_puerto_no_exigen_site_y_rechazan_numero_fuera_de_capacidad(self):
+        odf = self._crear_odf(2)
+        resultado = _procesar_puertos_odf_inventario(SimpleUploadedFile(
+            "puerto-metadato.csv",
+            b"odf,puerto_odf,observaciones\nODF-AUTO,1,Revisado\n",
+            content_type="text/csv",
+        ))
+        self.assertEqual(resultado["actualizadas"], 1)
+        self.assertEqual(
+            odf.puertos_detalle.get(puerto_odf="1").observaciones,
+            "Revisado",
+        )
+
+        with self.assertRaisesMessage(ValueError, "supera la capacidad"):
+            _procesar_puertos_odf_inventario(SimpleUploadedFile(
+                "puerto-fuera.csv",
+                b"odf,puerto_odf\nODF-AUTO,3\n",
+                content_type="text/csv",
+            ))
 
     def test_reducir_capacidad_no_elimina_un_puerto_en_uso(self):
         odf = self._crear_odf(6)

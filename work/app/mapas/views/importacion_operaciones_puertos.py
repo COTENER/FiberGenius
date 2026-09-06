@@ -61,12 +61,10 @@ def descargar_plantilla_operaciones_puertos(request):
     operaciones = workbook.active
     operaciones.title = "Operaciones"
     encabezados = [
-        "Site",
         "ODF",
         "Puerto",
         "Acción",
-        "Troncal",
-        "Fibra",
+        "Codigo Fibra",
         "Extremo",
         "Sincronizar fibra",
         "Permitir mover",
@@ -74,20 +72,19 @@ def descargar_plantilla_operaciones_puertos(request):
     operaciones.append(encabezados)
     _estilo_encabezado(operaciones[1])
     operaciones.freeze_panes = "A2"
-    operaciones.auto_filter.ref = "A1:I1"
+    operaciones.auto_filter.ref = "A1:G1"
     operaciones.sheet_view.showGridLines = False
     operaciones.row_dimensions[1].height = 28
-    anchos = (24, 28, 13, 22, 30, 14, 13, 22, 18)
+    anchos = (28, 13, 22, 36, 13, 22, 18)
     for indice, ancho in enumerate(anchos, start=1):
         operaciones.column_dimensions[chr(64 + indice)].width = ancho
 
     ayudas = {
-        "D1": "Conectar, Desconectar, Reservar o Cancelar reserva.",
-        "E1": "Obligatoria solamente para Conectar.",
-        "F1": "Obligatoria solamente para Conectar; debe existir en la Troncal.",
-        "G1": "A o B. Obligatorio solamente para Conectar.",
-        "H1": "Sí informa también el estado global de InventarioFibra.",
-        "I1": "Sí autoriza mover un extremo ya conectado a otro puerto.",
+        "C1": "Conectar, Desconectar, Reservar o Cancelar reserva.",
+        "D1": "Obligatorio solamente para Conectar; identifica la fibra sin ambigüedad.",
+        "E1": "A o B. Obligatorio solamente para Conectar.",
+        "F1": "Sí informa también el estado global de InventarioFibra.",
+        "G1": "Sí autoriza mover un extremo ya conectado a otro puerto.",
     }
     for referencia, texto in ayudas.items():
         operaciones[referencia].comment = Comment(texto, "Fiber Genius")
@@ -102,9 +99,9 @@ def descargar_plantilla_operaciones_puertos(request):
     operaciones.add_data_validation(validacion_accion)
     operaciones.add_data_validation(validacion_extremo)
     operaciones.add_data_validation(validacion_si_no)
-    validacion_accion.add("D2:D5001")
-    validacion_extremo.add("G2:G5001")
-    validacion_si_no.add("H2:I5001")
+    validacion_accion.add("C2:C5001")
+    validacion_extremo.add("E2:E5001")
+    validacion_si_no.add("F2:G5001")
 
     instrucciones = workbook.create_sheet("Instrucciones")
     instrucciones.sheet_view.showGridLines = False
@@ -128,8 +125,8 @@ def descargar_plantilla_operaciones_puertos(request):
     instrucciones["A11"] = "Reglas"
     instrucciones["A11"].font = Font(bold=True, color="173B68", size=12)
     reglas = [
-        "Site + ODF + Puerto identifican el puerto físico.",
-        "Conectar exige Troncal, Fibra y Extremo.",
+        "ODF + Puerto identifican el puerto físico.",
+        "Conectar exige Codigo Fibra y Extremo.",
         "Sincronizar fibra y Permitir mover asumen No cuando están vacíos.",
         "El archivo no puede repetir el mismo puerto ni el mismo extremo de una fibra.",
         "Las operaciones reutilizan las mismas reglas transaccionales de la GUI.",
@@ -142,9 +139,9 @@ def descargar_plantilla_operaciones_puertos(request):
     ejemplo = workbook.create_sheet("Ejemplo - no importar")
     ejemplo.append(encabezados)
     _estilo_encabezado(ejemplo[1])
-    ejemplo.append(["CP4", "ODF-01", "1", "Desconectar", "", "", "", "No", "No"])
-    ejemplo.append(["CP4", "ODF-01", "2", "Reservar", "", "", "", "No", "No"])
-    ejemplo.append(["CP4", "ODF-01", "3", "Conectar", "RUTA-01", "F12", "A", "Sí", "No"])
+    ejemplo.append(["ODF-01", "1", "Desconectar", "", "", "No", "No"])
+    ejemplo.append(["ODF-01", "2", "Reservar", "", "", "No", "No"])
+    ejemplo.append(["ODF-01", "3", "Conectar", "FGF-000012", "A", "Sí", "No"])
     ejemplo.freeze_panes = "A2"
     ejemplo.sheet_view.showGridLines = False
     for indice, ancho in enumerate(anchos, start=1):
@@ -346,7 +343,7 @@ def descargar_resultado_operaciones_puertos(request, codigo):
     sheet.title = "Resultado"
     encabezados = [
         "Fila", "Resultado", "Acción", "Site", "ODF", "Puerto",
-        "Troncal", "Fibra", "Extremo", "Mensaje",
+        "Troncal", "Fibra", "Codigo Fibra", "Extremo", "Mensaje",
     ]
     sheet.append(encabezados)
     _estilo_encabezado(sheet[1])
@@ -368,12 +365,13 @@ def descargar_resultado_operaciones_puertos(request, codigo):
             item.get("puerto"),
             item.get("troncal"),
             item.get("fibra"),
+            item.get("codigo_fibra"),
             item.get("extremo"),
             item.get("mensaje"),
         ]])
     sheet.freeze_panes = "A2"
-    sheet.auto_filter.ref = f"A1:J{max(sheet.max_row, 1)}"
+    sheet.auto_filter.ref = f"A1:K{max(sheet.max_row, 1)}"
     sheet.sheet_view.showGridLines = False
-    for columna, ancho in zip("ABCDEFGHIJ", (9, 16, 20, 24, 28, 13, 30, 14, 12, 70)):
+    for columna, ancho in zip("ABCDEFGHIJK", (9, 16, 20, 24, 28, 13, 30, 14, 36, 12, 70)):
         sheet.column_dimensions[columna].width = ancho
     return _respuesta_excel(workbook, f"FiberGenius_Resultado_{lote.codigo}")

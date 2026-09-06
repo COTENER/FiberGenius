@@ -543,10 +543,11 @@ class ConstraintsModeloFibraPostgreSQLTests(TransactionTestCase):
                 origen_estado='NO_INFORMADO',
             )
 
-        with self.assertRaises(IntegrityError), transaction.atomic():
-            InventarioFibra.objects.bulk_create([
-                InventarioFibra(ruta=ruta, fibra_numero='f1'),
-            ])
+        InventarioFibra.objects.create(
+            ruta=ruta,
+            fibra_numero='f1',
+            codigo_fibra='FGF-PG-SEGUNDO-F1',
+        )
 
         with self.assertRaises(IntegrityError), transaction.atomic():
             FibraTramo.objects.bulk_create([

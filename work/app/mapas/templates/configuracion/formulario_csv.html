@@ -165,16 +165,15 @@
     </div>
     {% elif tipo_csv == 'fibras_inventario' %}
     <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
-        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: inventario de fibras ópticas (Archivo B)</h4>
-        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Sube un <code>.csv</code> con el estado individual de cada fibra óptica dentro de las troncales. Columnas requeridas:</p>
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Fibras por Tramo</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Ubica una fibra global existente en una posición local de un tramo. Columnas oficiales:</p>
         <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
-            <span class="badge badge--accent">Ruta</span> <span class="badge badge--accent">Fibra</span>
-            <span class="badge badge--accent">Tipo de fibra</span> <span class="badge badge--accent">Estado</span>
-            <span class="badge badge--accent">Origen</span> <span class="badge badge--accent">Empalme</span>
-            <span class="badge badge--accent">Patch</span> <span class="badge badge--accent">Destino</span>
+            <span class="badge badge--accent">Ruta</span> <span class="badge badge--accent">Secuencia</span>
+            <span class="badge badge--accent">Codigo Fibra</span> <span class="badge badge--accent">Fibra</span>
+            <span class="badge badge--info">Estado (opcional)</span> <span class="badge badge--info">Observaciones</span>
         </div>
 
-        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo</h5>
+        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Referencia de formato antiguo (solo compatibilidad)</h5>
         <div style="overflow-x: auto; margin-top: 8px;">
             <table style="width:100%;border-collapse:collapse;font-size:12px;background:var(--bg-surface);min-width: 800px;">
                 <thead style="border-bottom:1px solid var(--border-color);color:var(--text-secondary);">
@@ -226,34 +225,31 @@
     {% elif tipo_csv == 'terminaciones_fibra' %}
     <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
         <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Terminaciones de Fibra</h4>
-        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Una fila por terminación física. Ruta y Codigo Fibra pueden quedar vacíos en la primera carga si el puerto identifica la fibra sin ambigüedad:</p>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Formato recomendado: una fila por fibra con los extremos A y B. El sistema genera la identidad interna al crear una fibra nueva:</p>
         <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
-            <span class="badge badge--info">Ruta (opcional)</span>
             <span class="badge badge--accent">Fibra</span>
-            <span class="badge badge--info">Codigo Fibra (opcional en primera carga)</span>
-            <span class="badge badge--accent">Extremo A/B</span>
-            <span class="badge badge--accent">ODF</span>
-            <span class="badge badge--accent">Puerto</span>
-            <span class="badge badge--info">Conector (opcional)</span>
+            <span class="badge badge--accent">ODF A / Puerto A</span>
+            <span class="badge badge--accent">ODF B / Puerto B</span>
+            <span class="badge badge--info">Ruta y conectores (opcionales)</span>
         </div>
         <div style="display:flex;flex-wrap:wrap;gap:8px;">
-            <a href="{% url 'plantilla_terminaciones_fibra' %}" download class="btn btn--sm btn--secondary">Descargar plantilla precargada</a>
-            <a href="/static/ejemplos/terminaciones_fibra_ejemplo.csv" download class="btn btn--sm btn--secondary">Descargar CSV de ejemplo</a>
+            <a href="/static/ejemplos/plantilla_terminaciones_simplificada.csv" download class="btn btn--sm btn--secondary">Descargar plantilla simplificada</a>
+            <a href="{% url 'plantilla_terminaciones_fibra' %}" download class="btn btn--sm btn--secondary">Plantilla técnica precargada</a>
+            <a href="/static/ejemplos/terminaciones_fibra_ejemplo.csv" download class="btn btn--sm btn--secondary">Ver ejemplo completo</a>
         </div>
     </div>
     {% elif tipo_csv == 'odf_inventario' %}
     <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
-        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Inventario de ODFs (Archivo D)</h4>
-        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Sube la información de infraestructura de los ODFs. Columnas requeridas:</p>
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Inventario de ODFs</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">ODF y capacidad son obligatorios al crear. Site, sala y rack pueden quedar los tres vacíos:</p>
         <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
-            <span class="badge badge--accent">hub_site</span> <span class="badge badge--accent">sala</span>
-            <span class="badge badge--accent">rack</span> <span class="badge badge--accent">odf</span>
-            <span class="badge badge--accent">troncal</span> <span class="badge badge--accent">capacidad_puertos</span>
-            <span class="badge badge--accent">tipo_conector</span> <span class="badge badge--accent">estado</span>
-            <span class="badge badge--accent">observaciones</span>
+            <span class="badge badge--accent">odf</span> <span class="badge badge--accent">capacidad_puertos</span>
+            <span class="badge badge--info">hub_site</span> <span class="badge badge--info">sala</span>
+            <span class="badge badge--info">rack</span> <span class="badge badge--info">tipo_conector</span>
+            <span class="badge badge--info">estado</span> <span class="badge badge--info">observaciones</span>
         </div>
         
-        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo</h5>
+        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Referencia de formato antiguo (solo compatibilidad)</h5>
         <div style="overflow-x: auto; margin-top: 8px;">
             <table style="width:100%;border-collapse:collapse;font-size:12px;background:var(--bg-surface);min-width: 1000px;">
                 <thead style="border-bottom:1px solid var(--border-color);color:var(--text-secondary);">
@@ -287,17 +283,16 @@
     </div>
     {% elif tipo_csv == 'puertos_odf_inventario' %}
     <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);margin-bottom:var(--space-5);">
-        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Detalle de Puertos ODF (Archivo E)</h4>
-        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Sube los datos físicos de cada puerto. <strong>estado_puerto</strong> acepta Libre o Reservado; Ocupado se determina al cargar una terminación oficial. Columnas requeridas:</p>
+        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Detalle de Puertos ODF</h4>
+        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">ODF y puerto identifican el registro. La ocupación se determina únicamente mediante una terminación oficial:</p>
         <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
-            <span class="badge badge--accent">hub_site</span> <span class="badge badge--accent">odf</span> <span class="badge badge--accent">bandeja</span>
-            <span class="badge badge--accent">puerto_odf</span>
-            <span class="badge badge--accent">estado_puerto</span> <span class="badge badge--accent">tipo_conector</span>
-            <span class="badge badge--accent">patchcord</span> <span class="badge badge--accent">destino</span>
-            <span class="badge badge--accent">observaciones</span>
+            <span class="badge badge--accent">odf</span> <span class="badge badge--accent">puerto_odf</span>
+            <span class="badge badge--info">bandeja</span> <span class="badge badge--info">tipo_conector</span>
+            <span class="badge badge--info">patchcord</span> <span class="badge badge--info">destino</span>
+            <span class="badge badge--info">observaciones</span>
         </div>
         
-        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo</h5>
+        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Referencia de formato antiguo (solo compatibilidad)</h5>
         <div style="overflow-x: auto; margin-top: 8px;">
             <table style="width:100%;border-collapse:collapse;font-size:12px;background:var(--bg-surface);min-width: 1200px;">
                 <thead style="border-bottom:1px solid var(--border-color);color:var(--text-secondary);">

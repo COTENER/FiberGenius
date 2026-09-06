@@ -1009,7 +1009,7 @@ class InventarioFibra(models.Model):
         ordering = ['ruta', 'fibra_numero']
         constraints = [
             models.UniqueConstraint(
-                F('ruta'), Lower('fibra_numero'),
+                'ruta', Lower('fibra_numero'),
                 condition=Q(ruta__isnull=False),
                 name='uq_fibra_ruta_numero_ci',
             ),
@@ -1239,11 +1239,12 @@ class InventarioODF(models.Model):
         self.odf = (self.odf or '').strip()
         self.full_clean()
         super().save(*args, **kwargs)
-        NodoRed.objects.filter(odf_obj=self).update(
-            tipo='ODF',
-            codigo=self.odf.upper(),
-            nombre=self.odf,
-        )
+        if kwargs.get('update_fields') is None or 'odf' in kwargs['update_fields']:
+            NodoRed.objects.filter(odf_obj=self).update(
+                tipo='ODF',
+                codigo=self.odf.upper(),
+                nombre=self.odf,
+            )
 
     def actualizar_contadores(self):
         resumen = self.puertos_detalle.aggregate(
@@ -1401,11 +1402,12 @@ class HubSite(models.Model):
     def save(self, *args, **kwargs):
         self.nombre = (self.nombre or '').strip()
         resultado = super().save(*args, **kwargs)
-        NodoRed.objects.filter(hub_site_obj=self).update(
-            tipo='SITE',
-            codigo=self.nombre.upper(),
-            nombre=self.nombre,
-        )
+        if kwargs.get('update_fields') is None or 'nombre' in kwargs['update_fields']:
+            NodoRed.objects.filter(hub_site_obj=self).update(
+                tipo='SITE',
+                codigo=self.nombre.upper(),
+                nombre=self.nombre,
+            )
         return resultado
 
     class Meta:
@@ -1422,7 +1424,7 @@ class HubSite(models.Model):
 
 
 class LoteImportacion(models.Model):
-    """Audita el origen, resultado y reversibilidad de cada carga masiva."""
+    """Audita el origen y el resultado de cada carga masiva."""
 
     ORIGENES_REGISTRO = [
         ('GUI', 'Importacion ejecutada desde la GUI'),
@@ -1600,6 +1602,7 @@ class AuditoriaPuertoODF(models.Model):
         ('DESCONECTAR', 'Desconectar'),
         ('RESERVAR', 'Reservar'),
         ('CANCELAR_RESERVA', 'Cancelar reserva'),
+        ('AJUSTAR_CAPACIDAD', 'Ajustar capacidad ODF'),
     ]
     ORIGENES = [
         ('GUI', 'Interfaz web'),
@@ -1685,6 +1688,7 @@ class AuditoriaFibra(models.Model):
         ('INFERIR_ESTADO', 'Inferir estado desde tramos'),
         ('RESTABLECER_ESTADO', 'Restablecer estado'),
         ('ASIGNAR_RUTA', 'Asignar troncal'),
+        ('ASIGNAR_TRAMO', 'Actualizar asignación de tramo'),
     ]
     ORIGENES = [
         ('GUI', 'Interfaz web'),

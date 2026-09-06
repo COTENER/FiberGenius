@@ -1,4 +1,4 @@
-Ruta,Latitude,Longitude,tipo_trazado,new_seg
+Ruta,Latitud,Longitud,Tipo trazado,Inicio segmento
 Lampa OLT1 Primario 42,-33.4041276,-70.6712350,AEREO,False
 Lampa OLT1 Primario 42,-33.4042727,-70.6711975,AEREO,False
 Lampa OLT1 Primario 42,-33.4044071,-70.6712623,SOTERRADO,True

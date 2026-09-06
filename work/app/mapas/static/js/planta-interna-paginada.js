@@ -56,6 +56,7 @@
     };
     const numberFormat = new Intl.NumberFormat('es-PE');
     const percentFormat = new Intl.NumberFormat('es-PE', { maximumFractionDigits: 1 });
+    const canCreateFiber = root.dataset.canCreateFiber === 'true';
     let page = 1;
     let abortController = null;
     let debounceTimer = null;
@@ -677,6 +678,55 @@
         updateEndpointLabels();
     }
 
+    function appendNewFiberOption(select) {
+        if (canCreateFiber) {
+            select.appendChild(new Option('Registrar nuevo hilo · troncal pendiente', '__NUEVA__'));
+        }
+    }
+
+    function emptyFiberPrompt() {
+        return canCreateFiber
+            ? 'Busca una fibra o registra un hilo pendiente'
+            : 'Busca una fibra existente';
+    }
+
+    function terminationLabel(termination, endpoint) {
+        if (!termination?.confirmado) return `Extremo ${endpoint}: pendiente`;
+        const odfPort = [
+            termination.odf,
+            termination.puerto ? `Puerto ${termination.puerto}` : '',
+        ].filter(Boolean).join(' / ');
+        const location = [
+            termination.site,
+            odfPort,
+        ].filter(Boolean).join(' · ');
+        return `Extremo ${endpoint}: ${location}`;
+    }
+
+    function fiberTerminationContext(fiber) {
+        return [
+            terminationLabel(fiber.terminacion_a, 'A'),
+            terminationLabel(fiber.terminacion_b, 'B'),
+        ].join('  |  ');
+    }
+
+    function suggestMissingEndpoint() {
+        const select = managementValue('port-management-fiber');
+        const endpoint = managementValue('port-management-end');
+        const option = select?.selectedOptions?.[0];
+        if (!option || !endpoint || !option.value || option.value === '__NUEVA__') return;
+        let trace = {};
+        try {
+            trace = JSON.parse(option.dataset.trace || '{}');
+        } catch (_error) {
+            return;
+        }
+        const hasA = trace.extremo_a?.confirmado === true;
+        const hasB = trace.extremo_b?.confirmado === true;
+        if (hasA && !hasB) endpoint.value = 'B';
+        if (hasB && !hasA) endpoint.value = 'A';
+    }
+
     function setManagementMessage(text, success = false) {
         const message = managementValue('port-management-message');
         message.textContent = text || '';
@@ -727,17 +777,16 @@
             const name = document.createElement('strong');
             name.textContent = `Fibra ${fiber.numero || 'sin número'}`;
             const route = document.createElement('span');
-            route.textContent = fiber.troncal || 'Troncal pendiente';
+            route.textContent = `${fiber.troncal || 'Troncal pendiente'} · ${fiber.estado_label || fiber.estado || 'Sin información'}`;
             const locations = document.createElement('small');
-            const endpoints = [fiber.origen, fiber.destino]
-                .filter(value => value && !value.startsWith('Pendiente de orientación'));
-            locations.textContent = endpoints.length ? endpoints.join(' ↔ ') : (fiber.estado || 'Sin recorrido informado');
+            locations.textContent = fiberTerminationContext(fiber);
             button.title = `${name.textContent} · ${route.textContent} · ${locations.textContent}`;
             button.append(name, route, locations);
             button.addEventListener('click', () => {
                 const select = managementValue('port-management-fiber');
                 select.value = String(fiber.id);
                 updateProvisionalFiberField();
+                suggestMissingEndpoint();
                 syncFiberResultSelection();
             });
             list.appendChild(button);
@@ -815,8 +864,8 @@
         if (!route && !query) {
             clearFiberResults();
             select.disabled = false;
-            select.appendChild(new Option('Busca una fibra o registra un hilo pendiente', ''));
-            select.appendChild(new Option('Registrar nuevo hilo · troncal pendiente', '__NUEVA__'));
+            select.appendChild(new Option(emptyFiberPrompt(), ''));
+            appendNewFiberOption(select);
             updateProvisionalFiberField();
             return;
         }
@@ -838,14 +887,11 @@
             const fibers = payload.data || [];
             select.replaceChildren(new Option(fibers.length ? 'Seleccionar fibra' : 'No se encontraron fibras', ''));
             if (!route || route === '__PENDIENTE__') {
-                select.appendChild(new Option('Registrar nuevo hilo · troncal pendiente', '__NUEVA__'));
+                appendNewFiberOption(select);
             }
             fibers.forEach(fiber => {
-                const ubicaciones = [fiber.origen, fiber.destino]
-                    .filter(value => value && !value.startsWith('Pendiente de orientación'))
-                    .join(' ↔ ');
                 const option = new Option(
-                    `${fiber.numero} · ${fiber.troncal || 'Troncal pendiente'} · ${ubicaciones || fiber.estado_label || 'Sin información'}`,
+                    `${fiber.numero} · ${fiber.troncal || 'Troncal pendiente'} · ${fiberTerminationContext(fiber)}`,
                     String(fiber.id),
                 );
                 option.dataset.trace = JSON.stringify(fiber.trazabilidad || {});
@@ -897,9 +943,9 @@
         managementValue('port-management-route').value = '';
         clearFiberResults();
         managementValue('port-management-fiber').replaceChildren(
-            new Option('Busca una fibra o registra un hilo pendiente', ''),
-            new Option('Registrar nuevo hilo · troncal pendiente', '__NUEVA__'),
+            new Option(emptyFiberPrompt(), ''),
         );
+        appendNewFiberOption(managementValue('port-management-fiber'));
         managementValue('port-management-fiber').disabled = false;
         updateProvisionalFiberField();
         setManagementMessage('');
@@ -940,6 +986,10 @@
             return;
         }
         const creatingProvisional = fiberId === '__NUEVA__';
+        if (creatingProvisional && !canCreateFiber) {
+            setManagementMessage('No tiene permiso para registrar una fibra nueva. Seleccione una fibra existente.');
+            return;
+        }
         const provisionalNumber = managementValue('port-management-new-fiber')?.value.trim();
         if (creatingProvisional && !provisionalNumber) {
             setManagementMessage('Indique el número del hilo.');
@@ -1008,12 +1058,15 @@
         const payload = {
             id: managedPort.id,
             bandeja: managementValue('port-management-data-tray').value.trim(),
-            estado_puerto: managedPort.estado,
             tipo_conector: managementValue('port-management-data-connector').value.trim(),
             patchcord: managementValue('port-management-data-patchcord').value.trim(),
             destino: managementValue('port-management-data-destination').value.trim(),
             observaciones: managementValue('port-management-data-notes').value.trim(),
         };
+        const original = Object.fromEntries(Object.keys(payload).map(key => [key, managedPort[key] === '—' ? '' : (managedPort[key] ?? '')]));
+        original.tipo_conector = managedPort.conector === '—' ? '' : (managedPort.conector || '');
+        original.patchcord = ['—', 'No'].includes(managedPort.patchcord) ? '' : (managedPort.patchcord || '');
+        const changes = InventoryEdit.patch(payload, original, ['id']);
         if (!window.confirm(`¿Guardar los datos de ${managedPort.odf} / puerto ${managedPort.puerto}?`)) return;
         const csrf = elements.managementForm.querySelector('[name="csrfmiddlewaretoken"]').value;
         setManagementMessage('Guardando datos…');
@@ -1021,7 +1074,7 @@
             const response = await fetch(root.dataset.updateUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
-                body: JSON.stringify(payload),
+                body: JSON.stringify(changes),
             });
             const result = await response.json();
             if (!response.ok || result.status !== 'success') throw new Error(result.message || 'No se pudieron guardar los datos');
@@ -1206,6 +1259,7 @@
     });
     managementValue('port-management-fiber')?.addEventListener('change', () => {
         updateProvisionalFiberField();
+        suggestMissingEndpoint();
         syncFiberResultSelection();
     });
     managementValue('port-management-connect')?.addEventListener('click', connectManagedPort);

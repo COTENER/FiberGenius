@@ -55,6 +55,9 @@ for directory in (DATA_ROOT, LOG_ROOT, BACKUP_ROOT, STATIC_ROOT, MEDIA_ROOT):
     directory.mkdir(parents=True, exist_ok=True)
 
 BACKUP_RETENTION_DAYS = fg("BACKUP_RETENTION_DAYS", default=30, cast=int)
+FIBERGENIUS_IMPORT_RETENTION_DAYS = fg(
+    "FIBERGENIUS_IMPORT_RETENTION_DAYS", default=30, cast=int
+)
 BACKUP_PG_DUMP_PATH = fg("BACKUP_PG_DUMP_PATH", default="pg_dump")
 BACKUP_PG_RESTORE_PATH = fg("BACKUP_PG_RESTORE_PATH", default="pg_restore")
 FIBERGENIUS_ENV_FILE = ENV_FILE

@@ -1,3 +1,3 @@
-ruta,secuencia,origen,destino,estado,distancia_m,capacidad,tipo_fibra,tipo_trazado,marca_modelo,serial,mufas,splitters,reservas_m,observaciones
-TRONCAL-01,1,SITE-A,MF-001,ACTIVO,1250,64,G.652D,AEREO,Fabricante A,SN-001,1,0,20,Tramo inicial
-TRONCAL-01,2,MF-001,SITE-B,ACTIVO,980,48,G.652D,SOTERRADO,Fabricante A,SN-002,0,0,10,Tramo final
+ruta,secuencia,origen,destino,estado,distancia_m,capacidad,tipo_fibra,tipo_trazado,marca_modelo,serial,observaciones
+TRONCAL-01,1,SITE-A,MF-001,ACTIVO,1250,64,G.652D,AEREO,Fabricante A,SN-001,Tramo inicial
+TRONCAL-01,2,MF-001,SITE-B,ACTIVO,980,48,G.652D,SOTERRADO,Fabricante A,SN-002,Tramo final

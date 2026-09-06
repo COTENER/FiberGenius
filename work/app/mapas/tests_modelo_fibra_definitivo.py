@@ -186,7 +186,7 @@ class EstadoFibraDefinitivoTests(TestCase):
         self.assertEqual(fibra.estado, 'DISPONIBLE')
         self.assertEqual(fibra.origen_estado, 'INFERIDO_TRAMOS')
 
-    def test_asignar_ruta_de_un_tramo_materializa_uno_a_uno_y_audita(self):
+    def test_asignar_ruta_de_un_tramo_no_materializa_y_audita(self):
         ruta, tramos = self._ruta('RUTA-UN-TRAMO', 1)
         fibra = InventarioFibra.objects.create(
             fibra_numero='F5',
@@ -202,10 +202,7 @@ class EstadoFibraDefinitivoTests(TestCase):
 
         self.assertTrue(asignada)
         self.assertEqual(advertencia, '')
-        detalle = FibraTramo.objects.get(fibra=fibra)
-        self.assertEqual(detalle.tramo, tramos[0])
-        self.assertEqual(detalle.numero_hilo, 'F5')
-        self.assertEqual(detalle.estado, 'OCUPADO')
+        self.assertFalse(FibraTramo.objects.filter(fibra=fibra).exists())
         fibra.refresh_from_db()
         self.assertEqual(fibra.nombre_fibra, 'Servicio X')
         self.assertTrue(
@@ -233,6 +230,7 @@ class EstadoFibraDefinitivoTests(TestCase):
             asignar_ruta_fibra(
                 fibra=fibra,
                 ruta=ruta,
+                materializar_tramo_unico=True, numero_hilo='F6',
             )
 
         fibra.refresh_from_db()
@@ -335,9 +333,8 @@ class ImportacionModeloFibraDefinitivoTests(TestCase):
             (fibra.estado, fibra.origen_estado),
             ('SIN_INFORMACION', 'NO_INFORMADO'),
         )
-        asignacion = FibraTramo.objects.get(fibra=fibra, tramo=tramo)
-        asignacion.estado = 'DISPONIBLE'
-        asignacion.save(update_fields=['estado'])
+        self.assertFalse(FibraTramo.objects.filter(fibra=fibra, tramo=tramo).exists())
+        FibraTramo.objects.create(fibra=fibra, tramo=tramo, numero_hilo='F11', estado='DISPONIBLE')
         fibra.refresh_from_db()
         self.assertEqual(
             (fibra.estado, fibra.origen_estado),

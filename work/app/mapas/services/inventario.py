@@ -4,6 +4,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 
 from ..models import (
+    AuditoriaPuertoODF,
     DetallePuertoODF,
     HubSite,
     InventarioODF,
@@ -11,6 +12,22 @@ from ..models import (
     SalaTecnica,
 )
 from .ubicacion import nombre_site
+
+
+UBICACION_ODF_SIN_ASIGNAR = "SIN ASIGNAR"
+
+
+def rack_es_ubicacion_sin_asignar(rack: RackFisico) -> bool:
+    """Reconoce exclusivamente la jerarquía controlada para ODF pendientes."""
+    esperado = UBICACION_ODF_SIN_ASIGNAR.casefold()
+    return all(
+        str(valor or "").strip().casefold() == esperado
+        for valor in (
+            rack.nombre,
+            rack.sala.nombre,
+            rack.sala.hub_site.nombre,
+        )
+    )
 
 
 def recalcular_contadores_odf(odf: InventarioODF) -> dict[str, int]:
@@ -45,6 +62,8 @@ def resolver_rack(hub_nombre: str, sala_nombre: str, rack_nombre: str, lote=None
     hub_nombre = limpiar_texto(hub_nombre)
     sala_nombre = limpiar_texto(sala_nombre)
     rack_nombre = limpiar_texto(rack_nombre)
+    if not any((hub_nombre, sala_nombre, rack_nombre)):
+        hub_nombre = sala_nombre = rack_nombre = UBICACION_ODF_SIN_ASIGNAR
     faltantes = [
         etiqueta
         for etiqueta, valor in (("hub_site", hub_nombre), ("sala", sala_nombre), ("rack", rack_nombre))
@@ -73,16 +92,22 @@ def resolver_rack(hub_nombre: str, sala_nombre: str, rack_nombre: str, lote=None
 def ajustar_puertos_a_capacidad(
     odf: InventarioODF,
     capacidad: int,
+    *, usuario=None, origen="SISTEMA", lote=None,
 ) -> InventarioODF:
     """Materializa los puertos físicos declarados por la capacidad del ODF."""
     try:
+        if isinstance(capacidad, bool) or str(capacidad).strip() != str(int(capacidad)):
+            raise ValueError
         capacidad = int(capacidad)
     except (TypeError, ValueError) as exc:
         raise ValidationError("La capacidad del ODF debe ser un número entero.") from exc
-    if capacidad < 0:
-        raise ValidationError("La capacidad del ODF no puede ser negativa.")
+    if capacidad <= 0:
+        raise ValidationError("La capacidad del ODF debe ser mayor que cero.")
 
     odf = InventarioODF.objects.select_for_update().get(pk=odf.pk)
+    anterior = odf.capacidad_puertos
+    if anterior != capacidad and usuario is not None and not usuario.is_superuser:
+        raise ValidationError("Solo un administrador puede cambiar la capacidad de un ODF existente.")
     puertos = list(
         DetallePuertoODF.objects.select_for_update()
         .filter(odf_obj=odf)
@@ -94,6 +119,16 @@ def ajustar_puertos_a_capacidad(
     for puerto in puertos:
         texto = (puerto.puerto_odf or "").strip()
         numero = int(texto) if texto.isdigit() else None
+        if numero is None or numero <= 0:
+            raise ValidationError(
+                f"El puerto {texto} usa una numeración especial. No se puede ajustar "
+                "automáticamente la capacidad; sus puertos se conservaron."
+            )
+        if numero in por_numero:
+            raise ValidationError(
+                f"Los puertos {por_numero[numero].puerto_odf} y {texto} representan "
+                "la misma posición numérica. Revise la numeración antes de ajustar."
+            )
         if numero is not None and numero > 0:
             por_numero[numero] = puerto
             if numero > capacidad:
@@ -107,6 +142,8 @@ def ajustar_puertos_a_capacidad(
             or bool((puerto.destino or "").strip())
             or bool((puerto.patchcord or "").strip())
             or bool((puerto.observaciones or "").strip())
+            or bool((puerto.bandeja or "").strip())
+            or bool((puerto.tipo_conector or "").strip() not in {"", odf.tipo_conector or ""})
             or bool(puerto.terminaciones_fibra.all())
         )
     ]
@@ -152,7 +189,38 @@ def ajustar_puertos_a_capacidad(
     InventarioODF.objects.filter(pk=odf.pk).update(capacidad_puertos=capacidad)
     odf.capacidad_puertos = capacidad
     odf.actualizar_contadores()
+    if anterior != capacidad:
+        AuditoriaPuertoODF.objects.create(
+            accion="AJUSTAR_CAPACIDAD", usuario=usuario, origen=origen,
+            lote_importacion=lote,
+            referencia_puerto_anterior=odf.odf,
+            referencia_puerto_nuevo=odf.odf,
+            metadatos={"odf_id": odf.pk, "capacidad_anterior": anterior,
+                       "capacidad_nueva": capacidad,
+                       "puertos_retirados": [p.puerto_odf for p in fuera_de_rango],
+                       "puertos_creados": [p.puerto_odf for p in faltantes]},
+        )
     odf.refresh_from_db()
+    return odf
+
+
+@transaction.atomic
+def actualizar_odf(odf, cambios, *, usuario=None, origen="SISTEMA", lote=None):
+    """Guarda metadatos y capacidad como una sola operación reversible."""
+    odf = InventarioODF.objects.select_for_update().get(pk=odf.pk)
+    cambios = dict(cambios)
+    capacidad = cambios.pop("capacidad_puertos", None)
+    permitidos = {"odf", "rack_obj", "tipo_conector", "estado", "observaciones", "lote_importacion"}
+    if set(cambios) - permitidos:
+        raise ValidationError("Campos de ODF no admitidos.")
+    if capacidad is not None and int(capacidad) != odf.capacidad_puertos:
+        odf = ajustar_puertos_a_capacidad(
+            odf, capacidad, usuario=usuario, origen=origen, lote=lote,
+        )
+    for campo, valor in cambios.items():
+        setattr(odf, campo, valor)
+    if cambios:
+        odf.save(update_fields=list(cambios))
     return odf
 
 
@@ -173,19 +241,23 @@ def guardar_odf_normalizado(
     values = dict(defaults or {})
     if lote is not None:
         values["lote_importacion"] = lote
-    existente = InventarioODF.objects.filter(odf__iexact=odf_nombre).first()
+    existente = InventarioODF.objects.select_for_update().filter(odf__iexact=odf_nombre).first()
     if existente:
         if existente.rack_obj_id != rack.pk:
-            raise ValidationError(
-                f'El ODF {odf_nombre} ya existe en '
-                f'{nombre_site(existente)} / '
-                f'{existente.rack_obj.sala.nombre} / {existente.rack_obj.nombre}; '
-                'no puede reasignarse '
-                'silenciosamente a otra ubicación.'
-            )
-        for campo, valor in values.items():
-            setattr(existente, campo, valor)
-        existente.save()
+            if rack_es_ubicacion_sin_asignar(existente.rack_obj):
+                values['rack_obj'] = rack
+            else:
+                raise ValidationError(
+                    f'El ODF {odf_nombre} ya existe en '
+                    f'{nombre_site(existente)} / '
+                    f'{existente.rack_obj.sala.nombre} / {existente.rack_obj.nombre}; '
+                    'no puede reasignarse '
+                    'silenciosamente a otra ubicación.'
+                )
+        existente = actualizar_odf(
+            existente, values, usuario=getattr(lote, 'usuario', None),
+            origen='EXCEL' if lote else 'SISTEMA', lote=lote,
+        )
         return existente, False
 
     return InventarioODF.objects.create(

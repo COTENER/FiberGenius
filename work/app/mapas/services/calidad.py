@@ -42,11 +42,13 @@ def _hallazgo(codigo, severidad, mensaje, **detalle):
 
 
 def _site_de_nodo(nodo):
-    return nombre_site(nodo)
+    site = nombre_site(nodo)
+    return None if str(site or '').upper() == 'SIN ASIGNAR' else site
 
 
 def _site_de_terminacion(terminacion):
-    return nombre_site(terminacion.puerto_odf.odf_obj)
+    site = nombre_site(terminacion.puerto_odf.odf_obj)
+    return None if str(site or '').upper() == 'SIN ASIGNAR' else site
 
 
 def _relacion_precargada(objeto, nombre, atributo_precargado=None):
@@ -88,6 +90,19 @@ def evaluar_completitud_fibra(fibra):
     ]
     por_extremo = {item.extremo: item for item in terminaciones}
     hallazgos = []
+    pendientes_topologia = [_codigo_tramo(t) for t in tramos
+                           if t.origen_nodo_id is None or t.destino_nodo_id is None]
+    if pendientes_topologia:
+        hallazgos.append(_hallazgo(
+            'TOPOLOGIA_PENDIENTE', 'ADVERTENCIA',
+            'Falta definir origen/destino del recorrido: ' + ', '.join(pendientes_topologia),
+            tramos=pendientes_topologia,
+        ))
+    for anterior, siguiente in zip(tramos, tramos[1:]):
+        if (anterior.destino_nodo_id and siguiente.origen_nodo_id
+                and anterior.destino_nodo_id != siguiente.origen_nodo_id):
+            hallazgos.append(_hallazgo('RECORRIDO_DISCONTINUO', 'ERROR',
+                'El destino de un tramo no coincide con el origen del siguiente.'))
 
     if not fibra.ruta_id:
         estado = "SIN_RECORRIDO"
@@ -105,14 +120,14 @@ def evaluar_completitud_fibra(fibra):
         estado = "SIN_RECORRIDO"
         hallazgos.append(_hallazgo(
             "RUTA_SIN_TRAMOS",
-            "ERROR",
+            "ADVERTENCIA",
             "La troncal no tiene tramos técnicos registrados.",
         ))
     elif not asignados_validos:
         estado = "SIN_RECORRIDO"
         hallazgos.append(_hallazgo(
             "SIN_FIBRA_TRAMO",
-            "ERROR",
+            "ADVERTENCIA",
             "La fibra no está vinculada a ningún tramo de su recorrido.",
         ))
     elif faltantes:
@@ -120,7 +135,7 @@ def evaluar_completitud_fibra(fibra):
         codigos = [_codigo_tramo(tramo) for tramo in faltantes]
         hallazgos.append(_hallazgo(
             "FIBRA_TRAMO_FALTANTE",
-            "ERROR",
+            "ADVERTENCIA",
             "Falta FibraTramo en: " + ", ".join(codigos),
             tramos=codigos,
         ))
@@ -150,6 +165,9 @@ def evaluar_completitud_fibra(fibra):
             continue
 
         puerto = terminacion.puerto_odf
+        if not _site_de_terminacion(terminacion):
+            hallazgos.append(_hallazgo('UBICACION_PENDIENTE', 'ADVERTENCIA',
+                f'La ubicación del ODF del extremo {extremo} está pendiente.', extremo=extremo))
         if puerto.estado_puerto != "OCUPADO":
             hallazgos.append(_hallazgo(
                 "PUERTO_FIBRA_INCONSISTENTE",
@@ -175,6 +193,9 @@ def evaluar_completitud_fibra(fibra):
         if extremo in por_extremo and _site_de_terminacion(por_extremo[extremo])
     ]
     site_incorrecto = False
+    if tramos and len(sites_esperados) < 2:
+        hallazgos.append(_hallazgo('SITES_RECORRIDO_PENDIENTES', 'ADVERTENCIA',
+            'Falta información para verificar los Sites terminales del recorrido.'))
     if len(sites_esperados) == 2:
         if len(sites_reales) == 1:
             site_incorrecto = sites_reales[0] not in sites_esperados
@@ -188,6 +209,22 @@ def evaluar_completitud_fibra(fibra):
             sites_esperados=sorted(sites_esperados),
             sites_reales=sorted(sites_reales),
         ))
+    if tramos and len(terminaciones) == 2:
+        from itertools import permutations
+        esperados = (tramos[0].origen_nodo, tramos[-1].destino_nodo)
+        if any(n and n.odf_obj_id for n in esperados):
+            def coincide(nodo, terminacion):
+                if nodo is None:
+                    return True  # Desconocido, no es evidencia de contradicción.
+                if nodo.odf_obj_id:
+                    return nodo.odf_obj_id == terminacion.puerto_odf.odf_obj_id
+                site = _site_de_nodo(nodo)
+                real = _site_de_terminacion(terminacion)
+                return not site or not real or site.casefold() == real.casefold()
+            if not any(all(coincide(n, t) for n, t in zip(esperados, orden))
+                       for orden in permutations(terminaciones)):
+                hallazgos.append(_hallazgo('ODF_TERMINAL_INCORRECTO', 'ERROR',
+                    'Las terminaciones no coinciden con los ODF declarados en el recorrido.'))
 
     posiciones = sorted({
         _texto(item.numero_hilo) for item in asignaciones
@@ -215,7 +252,7 @@ def evaluar_completitud_fibra(fibra):
         len(estados_conocidos) == len(asignaciones)
     )
     estado_desde_tramos = None
-    if detalle_completo:
+    if detalle_completo or 'OCUPADO' in estados_conocidos:
         if "OCUPADO" in estados_conocidos:
             estado_desde_tramos = "OCUPADO"
         elif "RESERVADO" in estados_conocidos:
@@ -230,7 +267,7 @@ def evaluar_completitud_fibra(fibra):
         hallazgos.append(_hallazgo(
             "ESTADO_FIBRA_TRAMO_DIFERENTE",
             "ADVERTENCIA",
-            f"La fibra figura como {fibra.estado}, pero el detalle completo "
+            f"La fibra figura como {fibra.estado}, pero el detalle conocido "
             f"por Tramos indica {estado_desde_tramos}.",
             estado_fibra=fibra.estado,
             estado_tramos=estado_desde_tramos,
@@ -254,11 +291,16 @@ def evaluar_completitud_fibra(fibra):
         key=lambda item: PRIORIDAD_SEVERIDAD[item],
         default="NINGUNA",
     )
+    pendiente_verificar = any(h['codigo'] in {
+        'TOPOLOGIA_PENDIENTE', 'UBICACION_PENDIENTE', 'SITES_RECORRIDO_PENDIENTES',
+    } for h in hallazgos)
     return {
         "estado": estado,
-        "etiqueta": ESTADOS_COMPLETITUD[estado],
+        "etiqueta": ('Pendiente de validar recorrido' if estado == 'COMPLETO' and pendiente_verificar
+                     else ESTADOS_COMPLETITUD[estado]),
         "completo": estado == "COMPLETO",
-        "valido": estado == "COMPLETO" and nivel != "ERROR",
+        "valido": estado == "COMPLETO" and nivel != "ERROR" and not pendiente_verificar,
+        "pendiente_verificar": pendiente_verificar,
         "con_observaciones": bool(hallazgos),
         "nivel": nivel,
         "recorrido": {

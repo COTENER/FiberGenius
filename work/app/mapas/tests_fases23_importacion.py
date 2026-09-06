@@ -254,17 +254,10 @@ class ImportacionTramosFase2Tests(TestCase):
             "RUTA-FASE-2,Activo,1000,4,G.652D,0,24",
         ])
 
-        resultado = _procesar_tramos_inventario(
-            _csv("tecnicos_legacy.csv", contenido)
-        )
-
-        self.assertEqual(resultado["rechazadas"], 1)
-        self.assertTrue(
-            any(
-                "exceden la capacidad declarada" in advertencia
-                for advertencia in resultado["advertencias"]
+        with self.assertRaisesRegex(ValueError, "exceden la capacidad"):
+            _procesar_tramos_inventario(
+                _csv("tecnicos_legacy.csv", contenido)
             )
-        )
         self.assertFalse(self.ruta.tramos_inventario.exists())
 
     def test_formato_legacy_actualiza_distancia_tecnica_no_la_geografica(self):

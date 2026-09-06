@@ -52,7 +52,7 @@ class ProgresoImportacionTests(TransactionTestCase):
         self.assertEqual(respuesta.status_code, 202)
         payload = respuesta.json()
         lote = LoteImportacion.objects.get(codigo=payload['lote'])
-        self.assertEqual(lote.estado, 'PROCESANDO')
+        self.assertEqual(lote.estado, 'PENDIENTE')
         submit.assert_called_once()
 
         estado = self.client.get(payload['progreso_url'])

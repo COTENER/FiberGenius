@@ -137,21 +137,6 @@ def _registrar_auditoria(
     )
 
 
-def _sincronizar_estado_tramo_unico(
-    fibra: InventarioFibra,
-    estado: str,
-) -> None:
-    """Mantiene la equivalencia 1:1 solo para una troncal de un tramo."""
-    if not fibra.ruta_id:
-        return
-    preparacion = _preparar_tramo_unico(fibra, fibra.ruta)
-    asignacion = _materializar_tramo_unico(fibra, preparacion)
-    if asignacion is not None and asignacion.estado != estado:
-        FibraTramo.objects.filter(pk=asignacion.pk).update(estado=estado)
-        asignacion.estado = estado
-        recalcular_cache_tramo(asignacion.tramo)
-
-
 @transaction.atomic
 def actualizar_metadatos_fibra(
     *, fibra: InventarioFibra, usuario=None, origen="SISTEMA",
@@ -220,8 +205,8 @@ def actualizar_fibras_masivo(
 
     Mantiene los mismos eventos de auditoría de las operaciones unitarias, pero
     evita bloquear, guardar y auditar cada fibra con consultas independientes.
-    La asignación de Ruta se conserva fuera de este servicio porque puede
-    materializar topología 1:1 y requiere sus validaciones específicas.
+    La asignación de Ruta y el recorrido se conservan fuera de este servicio:
+    requieren operaciones explícitas y sus validaciones específicas.
     """
     operaciones = list(operaciones)
     if not operaciones:
@@ -372,8 +357,6 @@ def actualizar_fibras_masivo(
         )
     if auditorias:
         AuditoriaFibra.objects.bulk_create(auditorias, batch_size=500)
-    for fibra in estados_cambiados:
-        _sincronizar_estado_tramo_unico(fibra, fibra.estado)
     return bloqueadas
 
 
@@ -383,6 +366,7 @@ def crear_fibra(
     estado: str = "SIN_INFORMACION", condicion_fisica: str = "SIN_VERIFICAR",
     nombre_fibra: str = "", tipo_conector: str = "", observaciones: str = "",
     usuario=None, origen="SISTEMA", lote_importacion=None,
+    materializar_tramo_unico=False,
 ) -> InventarioFibra:
     """Crea la identidad y delega Ruta/estado a sus servicios oficiales."""
     numero, _ = normalizar_numero_hilo(fibra_numero)
@@ -423,6 +407,7 @@ def crear_fibra(
             usuario=usuario,
             origen=origen,
             lote_importacion=lote_importacion,
+            materializar_tramo_unico=materializar_tramo_unico,
         )
     return fibra
 
@@ -552,7 +537,6 @@ def establecer_estado_fibra_informado(
             origen=origen,
             lote_importacion=lote_importacion,
         )
-        _sincronizar_estado_tramo_unico(bloqueada, estado_normalizado)
     fibra.estado = bloqueada.estado
     fibra.origen_estado = bloqueada.origen_estado
     return cambio
@@ -580,13 +564,17 @@ def restablecer_estado_fibra(
         origen=origen,
         lote_importacion=lote_importacion,
     )
-    _sincronizar_estado_tramo_unico(bloqueada, "SIN_INFORMACION")
     fibra.estado = bloqueada.estado
     fibra.origen_estado = bloqueada.origen_estado
     return bloqueada.estado
 
 
-def _preparar_tramo_unico(fibra: InventarioFibra, ruta: Ruta):
+def _preparar_tramo_unico(
+    fibra: InventarioFibra,
+    ruta: Ruta,
+    *,
+    numero_hilo=None,
+):
     tramos = list(
         InventarioTramo.objects.select_for_update()
         .filter(ruta=ruta)
@@ -595,7 +583,9 @@ def _preparar_tramo_unico(fibra: InventarioFibra, ruta: Ruta):
     if len(tramos) != 1:
         return None
     tramo = tramos[0]
-    numero_hilo, indice = normalizar_numero_hilo(fibra.fibra_numero)
+    numero_hilo, indice = normalizar_numero_hilo(
+        numero_hilo or fibra.fibra_numero
+    )
     validar_hilo_en_tramo(tramo, indice)
     existentes = list(
         FibraTramo.objects.select_for_update().filter(fibra=fibra)[:2]
@@ -636,7 +626,7 @@ def _materializar_tramo_unico(fibra: InventarioFibra, preparacion):
         numero_hilo=numero_hilo,
         estado=fibra.estado,
         fibra=fibra,
-        observaciones="Creado por regla 1:1 de troncal con un solo tramo.",
+        observaciones="Asignación explícita a la posición del tramo único.",
     )
     recalcular_cache_tramo(tramo)
     return asignacion
@@ -645,7 +635,7 @@ def _materializar_tramo_unico(fibra: InventarioFibra, preparacion):
 @transaction.atomic
 def asignar_ruta_fibra(
     *, fibra: InventarioFibra, ruta: Ruta, usuario=None, origen="SISTEMA",
-    lote_importacion=None,
+    lote_importacion=None, numero_hilo=None, materializar_tramo_unico=False,
 ):
     """Asigna la troncal conservando identidad, estado, servicio y terminaciones."""
     bloqueada = (
@@ -654,27 +644,34 @@ def asignar_ruta_fibra(
         .get(pk=fibra.pk)
     )
     ruta_bloqueada = Ruta.objects.select_for_update().get(pk=ruta.pk)
+    # La ruta por sí sola no declara un recorrido. Materializar requiere una
+    # posición explícita, nunca se deduce al cambiar estado o asignar troncal.
+    materializar_tramo_unico = bool(materializar_tramo_unico and numero_hilo)
+    if InventarioFibra.objects.filter(
+        ruta=ruta_bloqueada, fibra_numero__iexact=bloqueada.fibra_numero,
+    ).exclude(pk=bloqueada.pk).exists():
+        raise ValidationError(
+            f"La fibra {bloqueada.fibra_numero} ya existe en la troncal {ruta_bloqueada.nombre}."
+        )
     if bloqueada.ruta_id:
         if bloqueada.ruta_id == ruta_bloqueada.pk:
-            preparacion = _preparar_tramo_unico(
-                bloqueada,
-                ruta_bloqueada,
-            )
-            _materializar_tramo_unico(bloqueada, preparacion)
+            if materializar_tramo_unico:
+                preparacion = _preparar_tramo_unico(
+                    bloqueada,
+                    ruta_bloqueada,
+                    numero_hilo=numero_hilo,
+                )
+                _materializar_tramo_unico(bloqueada, preparacion)
             fibra.ruta = ruta_bloqueada
             return bloqueada, False, ""
         raise ValidationError("La fibra ya pertenece a otra troncal.")
-    if InventarioFibra.objects.filter(
-        ruta=ruta_bloqueada,
-        fibra_numero__iexact=bloqueada.fibra_numero,
-    ).exclude(pk=bloqueada.pk).exists():
-        raise ValidationError(
-            f"Ya existe {ruta_bloqueada.nombre} / {bloqueada.fibra_numero}."
+    preparacion_tramo_unico = (
+        _preparar_tramo_unico(
+            bloqueada,
+            ruta_bloqueada,
+            numero_hilo=numero_hilo,
         )
-
-    preparacion_tramo_unico = _preparar_tramo_unico(
-        bloqueada,
-        ruta_bloqueada,
+        if materializar_tramo_unico else None
     )
     InventarioFibra.objects.filter(pk=bloqueada.pk).update(ruta=ruta_bloqueada)
     bloqueada.ruta = ruta_bloqueada
@@ -701,6 +698,7 @@ def asignar_fibra_a_tramos(
     estado: str,
     observaciones: str = "",
     lote=None,
+    usuario=None, origen="GUI",
 ) -> list[FibraTramo]:
     numero_normalizado, indice = normalizar_numero_hilo(numero_hilo)
     estado_normalizado = normalizar_estado_fibra(estado)
@@ -722,6 +720,8 @@ def asignar_fibra_a_tramos(
                 f"{numero_normalizado} ya está asignado en el tramo "
                 f"{tramo.codigo_tramo or tramo.tramo_secuencia}."
             )
+        previa = FibraTramo.objects.select_for_update().filter(tramo=tramo, fibra=fibra).first()
+        antes = snapshot_asignacion(previa)
         asignacion, _ = FibraTramo.objects.update_or_create(
             tramo=tramo,
             fibra=fibra,
@@ -732,9 +732,34 @@ def asignar_fibra_a_tramos(
                 "lote_importacion": lote,
             },
         )
+        auditar_asignacion(asignacion, antes, usuario=usuario or getattr(lote, 'usuario', None),
+                          origen='EXCEL' if lote else origen, lote=lote)
         asignaciones.append(asignacion)
 
     sincronizar_estado_fibra(fibra)
     for tramo in tramos:
         recalcular_cache_tramo(tramo)
     return asignaciones
+
+
+def snapshot_asignacion(asignacion):
+    if asignacion is None:
+        return None
+    return {campo: getattr(asignacion, campo) for campo in
+            ('fibra_id', 'tramo_id', 'numero_hilo', 'estado', 'observaciones')}
+
+
+def auditar_asignacion(asignacion, anterior, *, usuario=None, origen='SISTEMA', lote=None):
+    nuevo = snapshot_asignacion(asignacion)
+    if anterior == nuevo:
+        return
+    fibra_id = asignacion.fibra_id or (anterior or {}).get('fibra_id')
+    if not fibra_id:
+        return
+    _registrar_auditoria(
+        fibra=InventarioFibra.objects.get(pk=fibra_id), accion='ASIGNAR_TRAMO',
+        valor_anterior=anterior, valor_nuevo=nuevo, usuario=usuario,
+        origen=origen, lote_importacion=lote,
+        metadatos={'asignacion_id': asignacion.pk, 'tramo_id': asignacion.tramo_id,
+                   'anterior': anterior, 'nuevo': nuevo},
+    )

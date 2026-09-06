@@ -92,7 +92,7 @@ def api_asignar_perfil_ruta(request):
                 return JsonResponse({'status': 'error', 'message': 'Perfil no encontrado'})
 
             ruta.perfil_umbral = perfil
-            ruta.save()
+            ruta.save(update_fields=['perfil_umbral'])
 
             return JsonResponse({'status': 'success', 'message': 'Perfil asignado correctamente a la ruta'})
         except (json.JSONDecodeError, TypeError, ValueError):

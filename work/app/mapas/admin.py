@@ -1,4 +1,7 @@
 from django.contrib import admin
+from django import forms
+from django.core import signing
+from django.core.exceptions import ValidationError
 from .models import (
     OTU, Ruta, PuertoOTU, CoordenadaRuta, Reserva, IDRuta,
     EventoOTDR, Medicion, PruebaOTDR, EventoOTDRDetalle,
@@ -13,15 +16,52 @@ from .models import (
 # Admin para Modelos Managed (ORM)
 # =============================================================================
 
+class EdicionSeguraAdmin(admin.ModelAdmin):
+    """Snapshot firmado y escritura limitada para formularios de inventario."""
+    def get_form(self, request, obj=None, **kwargs):
+        if kwargs.get('fields') is not None:
+            kwargs['fields'] = [f for f in kwargs['fields'] if f != 'revision_inventario']
+        base = super().get_form(request, obj, **kwargs)
+        if obj is None:
+            return base
+        model = self.model
+        def valores(instance):
+            return {f.attname: f.value_to_string(instance) for f in model._meta.concrete_fields}
+        class FormularioSeguro(base):
+            revision_inventario = forms.CharField(widget=forms.HiddenInput)
+            def __init__(self, *args, **kw):
+                super().__init__(*args, **kw)
+                if not self.is_bound:
+                    self.initial['revision_inventario'] = signing.dumps(valores(self.instance), salt='fg-admin-edit')
+            def clean(self):
+                cleaned = super().clean()
+                try:
+                    original = signing.loads(cleaned.get('revision_inventario', ''), salt='fg-admin-edit')
+                    actual = model.objects.select_for_update().get(pk=self.instance.pk)
+                except (signing.BadSignature, model.DoesNotExist):
+                    raise ValidationError('La referencia de edición no es válida. Recargue el registro.')
+                if valores(actual) != original:
+                    raise ValidationError('El registro cambió desde que abrió el formulario. Recargue antes de guardar.')
+                return cleaned
+        return FormularioSeguro
+
+    def save_model(self, request, obj, form, change):
+        if not change:
+            return super().save_model(request, obj, form, change)
+        campos = [f.name for f in obj._meta.concrete_fields if f.name in form.changed_data]
+        if campos:
+            obj.save(update_fields=campos)
+
+
 @admin.register(OTU)
-class OTUAdmin(admin.ModelAdmin):
+class OTUAdmin(EdicionSeguraAdmin):
     list_display = ('nombre', 'modelo', 'latitud', 'longitud')
     search_fields = ('nombre', 'modelo')
     list_filter = ('modelo',)
 
 
 @admin.register(Ruta)
-class RutaAdmin(admin.ModelAdmin):
+class RutaAdmin(EdicionSeguraAdmin):
     list_display = ('nombre', 'otu', 'distancia_m', 'olt', 'pon')
     search_fields = ('nombre', 'olt', 'pon')
     list_filter = ('otu',)
@@ -29,7 +69,7 @@ class RutaAdmin(admin.ModelAdmin):
 
 
 @admin.register(PuertoOTU)
-class PuertoOTUAdmin(admin.ModelAdmin):
+class PuertoOTUAdmin(EdicionSeguraAdmin):
     list_display = ('otu', 'numero', 'estado', 'ruta_asociada')
     search_fields = ('otu__nombre',)
     list_filter = ('estado',)
@@ -37,7 +77,7 @@ class PuertoOTUAdmin(admin.ModelAdmin):
 
 
 @admin.register(CoordenadaRuta)
-class CoordenadaRutaAdmin(admin.ModelAdmin):
+class CoordenadaRutaAdmin(EdicionSeguraAdmin):
     list_display = (
         'ruta', 'orden', 'latitud', 'longitud',
         'tipo_trazado', 'inicio_segmento',
@@ -48,7 +88,7 @@ class CoordenadaRutaAdmin(admin.ModelAdmin):
 
 
 @admin.register(Reserva)
-class ReservaAdmin(admin.ModelAdmin):
+class ReservaAdmin(EdicionSeguraAdmin):
     list_display = ('nombre', 'ruta', 'tipo', 'reserva_m')
     search_fields = ('nombre', 'ruta__nombre')
     list_filter = ('tipo',)
@@ -56,33 +96,53 @@ class ReservaAdmin(admin.ModelAdmin):
 
 
 @admin.register(IDRuta)
-class IDRutaAdmin(admin.ModelAdmin):
+class IDRutaAdmin(EdicionSeguraAdmin):
     list_display = ('ruta', 'ruta_obj', 'id_onmsi')
     search_fields = ('ruta', 'ruta_obj__nombre')
 
 
 @admin.register(HubSite)
-class HubSiteAdmin(admin.ModelAdmin):
+class HubSiteAdmin(EdicionSeguraAdmin):
     list_display = ('nombre', 'latitud', 'longitud')
     search_fields = ('nombre',)
 
 
 @admin.register(SalaTecnica)
-class SalaTecnicaAdmin(admin.ModelAdmin):
+class SalaTecnicaAdmin(EdicionSeguraAdmin):
     list_display = ('nombre', 'hub_site', 'estado')
     search_fields = ('nombre', 'hub_site__nombre')
     list_filter = ('estado',)
 
 
 @admin.register(RackFisico)
-class RackFisicoAdmin(admin.ModelAdmin):
+class RackFisicoAdmin(EdicionSeguraAdmin):
     list_display = ('nombre', 'sala', 'estado')
     search_fields = ('nombre', 'sala__nombre', 'sala__hub_site__nombre')
     list_filter = ('estado',)
 
 
 @admin.register(InventarioODF)
-class InventarioODFAdmin(admin.ModelAdmin):
+class InventarioODFAdmin(EdicionSeguraAdmin):
+    def get_form(self, request, obj=None, **kwargs):
+        base = super().get_form(request, obj, **kwargs)
+        class FormularioODF(base):
+            def clean(self):
+                cleaned = super().clean()
+                if obj is None and (cleaned.get('capacidad_puertos') or 0) <= 0:
+                    raise ValidationError('La capacidad debe ser mayor que cero.')
+                return cleaned
+        return FormularioODF
+
+    def get_readonly_fields(self, request, obj=None):
+        # Capacidad/ubicación existentes se gestionan por la operación ODF confirmada.
+        return self.readonly_fields + (('capacidad_puertos', 'rack_obj') if obj else ())
+
+    def save_model(self, request, obj, form, change):
+        from .services.inventario import ajustar_puertos_a_capacidad
+        super().save_model(request, obj, form, change)
+        if not change:
+            ajustar_puertos_a_capacidad(obj, obj.capacidad_puertos, usuario=request.user)
+
     list_display = (
         'odf', 'rack_obj', 'capacidad_puertos', 'puertos_ocupados',
         'puertos_libres', 'puertos_reservados',
@@ -94,7 +154,10 @@ class InventarioODFAdmin(admin.ModelAdmin):
 
 
 @admin.register(DetallePuertoODF)
-class DetallePuertoODFAdmin(admin.ModelAdmin):
+class DetallePuertoODFAdmin(EdicionSeguraAdmin):
+    def get_readonly_fields(self, request, obj=None):
+        return self.readonly_fields + (('odf_obj', 'puerto_odf') if obj else ())
+
     list_display = ('odf_obj', 'puerto_odf', 'bandeja', 'estado_puerto', 'destino')
     search_fields = (
         'odf_obj__odf', 'puerto_odf', 'destino',
@@ -106,7 +169,7 @@ class DetallePuertoODFAdmin(admin.ModelAdmin):
 
 
 @admin.register(InventarioTramo)
-class InventarioTramoAdmin(admin.ModelAdmin):
+class InventarioTramoAdmin(EdicionSeguraAdmin):
     list_display = (
         'ruta', 'codigo_tramo', 'tramo_secuencia', 'origen_nodo',
         'destino_nodo', 'capacidad_hilos', 'tipo_trazado', 'distancia_m',
@@ -133,7 +196,7 @@ class InventarioTramoAdmin(admin.ModelAdmin):
 
 
 @admin.register(NodoRed)
-class NodoRedAdmin(admin.ModelAdmin):
+class NodoRedAdmin(EdicionSeguraAdmin):
     list_display = ('codigo', 'tipo', 'nombre', 'lote_importacion')
     search_fields = ('codigo', 'nombre')
     list_filter = ('tipo',)
@@ -151,7 +214,7 @@ class NodoRedAdmin(admin.ModelAdmin):
 
 
 @admin.register(InventarioFibra)
-class InventarioFibraAdmin(admin.ModelAdmin):
+class InventarioFibraAdmin(EdicionSeguraAdmin):
     list_display = (
         'codigo_fibra', 'ruta', 'fibra_numero', 'estado', 'origen_estado',
         'condicion_fisica', 'nombre_fibra',
