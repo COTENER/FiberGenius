@@ -7,7 +7,9 @@ from collections import defaultdict
 
 from django.conf import settings
 from django.shortcuts import render, redirect, get_object_or_404
+from django.http import JsonResponse
 from django.contrib.auth.decorators import login_required, permission_required
+from ..ui_access import screen_required
 from django.contrib.auth.models import User, Group, Permission
 from django.contrib.auth import login, logout, update_session_auth_hash
 from django.contrib.auth.forms import AuthenticationForm, PasswordChangeForm, SetPasswordForm
@@ -87,7 +89,7 @@ from datetime import timedelta
 from django.utils.timezone import now
 
 @login_required
-@permission_required('auth.view_user', raise_exception=True)
+@screen_required('users')
 def lista_usuarios(request):
     usuarios = User.objects.prefetch_related('groups', 'activity').order_by('username')
     
@@ -120,6 +122,8 @@ def crear_usuario(request):
         if form.is_valid():
             form.save()
             messages.success(request, 'Usuario creado correctamente.')
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return JsonResponse({'success': True})
             return redirect('lista_usuarios')
     else:
         form = CustomUserCreationForm(actor=request.user)
@@ -139,6 +143,8 @@ def editar_usuario(request, pk):
     # Un no-superusuario no puede editar a un superusuario
     if usuario.is_superuser and not request.user.is_superuser:
         messages.error(request, 'No tienes permiso para editar a un superusuario.')
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return JsonResponse({'error': 'No tienes permiso para editar a un superusuario.'}, status=403)
         return redirect('lista_usuarios')
     # Manejo del formulario de cambio de datos del usuario
     if request.method == 'POST' and 'update_profile' in request.POST:
@@ -146,6 +152,8 @@ def editar_usuario(request, pk):
         if form_profile.is_valid():
             form_profile.save()
             messages.success(request, f'Perfil de "{usuario.username}" actualizado correctamente.')
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return JsonResponse({'success': True})
             return redirect('editar_usuario', pk=usuario.pk)
     else:
         form_profile = CustomUserChangeForm(instance=usuario, actor=request.user)
@@ -158,6 +166,8 @@ def editar_usuario(request, pk):
             if request.user.pk == user_saved.pk:
                 update_session_auth_hash(request, user_saved)
             messages.success(request, f'Contraseña de "{usuario.username}" cambiada correctamente.')
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return JsonResponse({'success': True})
             return redirect('editar_usuario', pk=usuario.pk)
     else:
         form_password = SetPasswordForm(usuario)
@@ -190,7 +200,7 @@ def eliminar_usuario(request, pk):
 
 # LISTAR GRUPOS
 @login_required
-@permission_required('auth.view_group', raise_exception=True)
+@screen_required('groups')
 def lista_grupos(request):
     grupos = Group.objects.prefetch_related('permissions').all()
     context = {'grupos': grupos}
@@ -233,10 +243,11 @@ def obtener_permisos_agrupados():
         if code == 'can_view_reports':
             agrupados["Operaciones"]["Dashboard"].append(p)
             agrupados["Operaciones"]["Ranking"].append(p)
-            agrupados["Inventario"]["Dashboard Inventario"].append(p)
         elif modelo_key in ['evento', 'eventootdr', 'medicion', 'otu', 'puertootu']:
             agrupados["Operaciones"]["Mapa VeEX"].append(p)
         elif modelo_key == 'ruta':
+            if code == 'view_ruta':
+                agrupados["Inventario"]["Dashboard Inventario"].append(p)
             agrupados["Inventario"]["Inventario Externo"].append(p)
             agrupados["Inventario"]["Planta Externa"].append(p)
             agrupados["Inventario"]["Mapa de Inventario"].append(p)
@@ -297,7 +308,7 @@ def crear_grupo(request):
     context = {
         'form': form,
         'permisos_agrupados': obtener_permisos_agrupados(),
-        'permisos_seleccionados': [],
+        'permisos_seleccionados': [int(value) for value in (form['permissions'].value() or []) if str(value).isdigit()],
         'titulo': 'Crear Nuevo Grupo'
     }
     return render(request, 'usuarios/formulario_grupo.html', context)
@@ -320,7 +331,7 @@ def editar_grupo(request, pk):
     else:
         form = GrupoForm(instance=grupo)
 
-    permisos_seleccionados = list(grupo.permissions.values_list('id', flat=True))
+    permisos_seleccionados = [int(value) for value in (form['permissions'].value() or []) if str(value).isdigit()]
 
     context = {
         'form': form,

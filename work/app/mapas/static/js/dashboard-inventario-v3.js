@@ -80,7 +80,7 @@
         const values = [free, used, reserved];
         const backgroundColors = ['#20b276', '#2275e6', '#f19a27'];
         if (unknown > 0) {
-            labels.push('Sin cobertura / estado');
+            labels.push('Sin estado informado');
             values.push(unknown);
             backgroundColors.push('#94a3b8');
         }
@@ -112,7 +112,7 @@
                             pointStyle: 'circle',
                             boxWidth: 7,
                             padding: 13,
-                            font: { family: chartFont(), size: 9, weight: '600' },
+                            font: { family: chartFont(), size: 11, weight: '600' },
                             generateLabels(chartInstance) {
                                 const original = Chart.overrides.doughnut.plugins.legend.labels.generateLabels(chartInstance);
                                 return original.map((item, index) => {
@@ -458,6 +458,17 @@
             attribution: dashboardMapTarget.dataset.attribution || '&copy; OpenStreetMap contributors',
             maxZoom: 20,
         });
+        const layer = dashboardTileLayer;
+        const warning = document.getElementById('dashboard-map-tile-warning');
+        let failed = false;
+        layer.on('loading', () => { failed = false; });
+        layer.on('tileerror', () => {
+            failed = true;
+            if (warning && dashboardTileLayer === layer) warning.hidden = false;
+        });
+        layer.on('load', () => {
+            if (warning && dashboardTileLayer === layer) warning.hidden = !failed;
+        });
         dashboardTileLayer.addTo(dashboardMap);
         dashboardTileLayer.bringToBack();
     }
@@ -491,6 +502,11 @@
         });
     }
 
+    function relatedSiteNames(route) {
+        if (Array.isArray(route.sites_relacionados)) return route.sites_relacionados;
+        return (route.tramos || []).flatMap(tramo => [tramo.hub_site, tramo.destino]).filter(Boolean);
+    }
+
     async function initDashboardMap() {
         const target = document.getElementById('dashboardInventoryMap');
         if (!target || !window.L) return;
@@ -508,7 +524,10 @@
         }, { capture: true, passive: true });
 
         try {
-            const response = await fetch(target.dataset.apiUrl, {
+            const mapUrl = new URL(target.dataset.apiUrl, window.location.origin);
+            mapUrl.searchParams.set('site', target.dataset.site || '');
+            mapUrl.searchParams.set('trazado', target.dataset.trazado || '');
+            const response = await fetch(mapUrl, {
                 headers: { Accept: 'application/json' },
                 credentials: 'same-origin',
             });
@@ -547,12 +566,13 @@
             const relatedSites = new Set();
 
             routes.forEach(route => {
+                relatedSiteNames(route).forEach(site => relatedSites.add(normalize(site)));
                 const routeBounds = L.latLngBounds([]);
                 const routeTramos = Array.isArray(route.tramos) ? route.tramos : [];
                 routeTramos.forEach(tramo => {
-                    if (tramo.hub_site) relatedSites.add(normalize(tramo.hub_site));
-                    if (tramo.destino) relatedSites.add(normalize(tramo.destino));
-                    if (selectedTrace && normalize(tramo.tipo_trazado) !== selectedTrace) return;
+                    // Híbrido selecciona una ruta compuesta: conserve todos sus segmentos.
+                    if (selectedTrace && selectedTrace !== 'HIBRIDO'
+                        && normalize(tramo.tipo_trazado) !== selectedTrace) return;
                     const coordinates = (Array.isArray(tramo.coordenadas) ? tramo.coordenadas : [])
                         .filter(point => Array.isArray(point) && Number.isFinite(Number(point[0])) && Number.isFinite(Number(point[1])))
                         .map(point => [Number(point[0]), Number(point[1])]);

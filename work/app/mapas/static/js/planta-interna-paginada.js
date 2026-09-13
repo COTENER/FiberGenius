@@ -64,6 +64,8 @@
     let exportObjectUrl = null;
     let managedPort = null;
     let fiberSearchTimer = null;
+    let fiberSearchController = null;
+    let fiberSearchVersion = 0;
     let rankingOdfId = '';
     let rankingOdf = '';
     const inspector = document.getElementById('network-inspector');
@@ -324,8 +326,7 @@
             }
             try {
                 const response = await fetch(link.href, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                const blob = await response.blob();
+                const blob = await window.FGInventoryDownloads.readBlob(response);
                 const filename = exportFilename(response);
                 if (exportObjectUrl) URL.revokeObjectURL(exportObjectUrl);
                 exportObjectUrl = URL.createObjectURL(blob);
@@ -340,7 +341,7 @@
             } catch (error) {
                 if (elements.exportStatus) {
                     elements.exportStatus.className = 'ports-export-status is-error';
-                    elements.exportStatus.textContent = 'No se pudo descargar el archivo. Intenta nuevamente.';
+                    elements.exportStatus.textContent = error.message || 'No se pudo descargar el archivo. Intenta nuevamente.';
                 }
             } finally {
                 link.dataset.busy = 'false';
@@ -796,6 +797,7 @@
     }
 
     function closeManagement() {
+        cancelFiberSearch();
         if (elements.management?.open) elements.management.close();
         managedPort = null;
     }
@@ -848,7 +850,16 @@
         managementValue('port-management-data-notes').value = port.observaciones || '';
     }
 
+    function cancelFiberSearch() {
+        fiberSearchVersion += 1;
+        window.clearTimeout(fiberSearchTimer);
+        fiberSearchController?.abort();
+        fiberSearchController = null;
+    }
+
     async function loadFibers() {
+        cancelFiberSearch();
+        const version = fiberSearchVersion;
         const route = managementValue('port-management-route').value;
         const query = managementValue('port-management-fiber-query').value.trim();
         const select = managementValue('port-management-fiber');
@@ -880,9 +891,17 @@
                 url.searchParams.set('ruta', route);
             }
             if (query) url.searchParams.set('q', query);
+            // La fibra a conectar puede estar en otro Site o sin ubicación.
+            // Esta búsqueda no hereda el filtro de la tabla de puertos.
+            url.searchParams.set('site', '');
             url.searchParams.set('page_size', '200');
-            const response = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+            const controller = new AbortController();
+            fiberSearchController = controller;
+            const response = await fetch(url, {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }, signal: controller.signal,
+            });
             const payload = await response.json();
+            if (version !== fiberSearchVersion) return;
             if (!response.ok) throw new Error(payload.message || 'No se pudieron consultar las fibras');
             const fibers = payload.data || [];
             select.replaceChildren(new Option(fibers.length ? 'Seleccionar fibra' : 'No se encontraron fibras', ''));
@@ -910,14 +929,18 @@
                 true,
             );
         } catch (error) {
+            if (version !== fiberSearchVersion || error.name === 'AbortError') return;
             clearFiberResults();
             select.replaceChildren(new Option('Consulta no disponible', ''));
             setManagementMessage(error.message);
+        } finally {
+            if (version === fiberSearchVersion) fiberSearchController = null;
         }
     }
 
     function openManagement(port) {
         if (!elements.management) return;
+        cancelFiberSearch();
         managedPort = port;
         elements.managementForm.reset();
         managementValue('port-management-id').value = String(port.id);
@@ -1033,6 +1056,7 @@
         setManagementMessage('Desconectando…');
         try {
             await postManagement('desconectar', {
+                terminacion_esperada: managedPort?.conexion?.terminacion_id,
                 sincronizar_fibra: sincronizarFibra,
             });
         } catch (error) {
@@ -1251,11 +1275,21 @@
         }
     });
     managementValue('port-management-fiber-query')?.addEventListener('input', () => {
-        window.clearTimeout(fiberSearchTimer);
+        cancelFiberSearch();
+        clearFiberResults();
+        const select = managementValue('port-management-fiber');
+        select.replaceChildren();
+        select.disabled = true;
+        updateProvisionalFiberField();
         fiberSearchTimer = window.setTimeout(() => {
-            const value = managementValue('port-management-fiber-query').value.trim();
-            if (value.length >= 2) loadFibers();
+            loadFibers();
         }, 350);
+    });
+    elements.management?.addEventListener('close', () => {
+        if (!elements.management.open) {
+            cancelFiberSearch();
+            managedPort = null;
+        }
     });
     managementValue('port-management-fiber')?.addEventListener('change', () => {
         updateProvisionalFiberField();

@@ -148,6 +148,6 @@ class PresentacionImportacionesFase4Tests(TestCase):
             html.index(">Importación guiada del inventario</h2>"),
         )
         self.assertIn(
-            "class=\"card\" style=\"text-decoration:none; cursor:pointer;\"",
+            'data-import-area="recorrido"',
             html,
         )

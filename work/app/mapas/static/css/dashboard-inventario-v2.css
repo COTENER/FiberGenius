@@ -1166,6 +1166,17 @@
     background: rgba(21, 34, 56, .96);
 }
 
+.inv-filter-scope { margin: 0 0 14px; color: var(--inv-muted); font-size: 12px; line-height: 1.5; }
+.inv-data-pending { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; padding: 14px; margin-bottom: 14px; border: 1px solid var(--border-color, #d7e0ec); border-radius: 10px; font-size: 12px; }
+.inv-data-pending small { flex-basis: 100%; color: var(--inv-muted); font-size: 11px; }
+.inv-map-tile-warning { position: absolute; z-index: 600; left: 12px; right: 12px; bottom: 12px; padding: 12px; margin: 0; border-radius: 8px; background: #fff3cd; color: #664d03; font-size: 12px; }
+.inv-map-tile-warning[hidden] { display: none; }
+.inv-dashboard .inv-kpi small, .inv-dashboard .inv-panel__header p,
+.inv-dashboard .inv-capacity-state small, .inv-dashboard .inv-capacity-list__heading small { font-size: 11px; white-space: normal; line-height: 1.4; }
+.inv-dashboard .inv-capacity-list__heading strong, .inv-dashboard .inv-capacity-state strong { font-size: 12px; }
+.inv-dashboard .inv-capacity-list__heading a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+.inv-dashboard a:focus-visible, .inv-dashboard button:focus-visible, .inv-dashboard select:focus-visible { outline: 2px solid #2275e6; outline-offset: 3px; }
+
 @media (max-width: 1350px) {
     .inv-kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .inv-chart-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -210,10 +210,10 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
             Exportar CSV
         </a>
-        <a class="btn-action btn-primary-action btn-modal-form" data-titulo="Nuevo Usuario" href="{% url 'crear_usuario' %}">
+        {% if perms.auth.add_user %}<a class="btn-action btn-primary-action btn-modal-form" data-titulo="Nuevo Usuario" href="{% url 'crear_usuario' %}">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/></svg>
             Nuevo Usuario
-        </a>
+        </a>{% endif %}
     </div>
 </div>
 
@@ -330,15 +330,15 @@
                 <!-- Actions -->
                 <td style="text-align: right;">
                     <div style="display:inline-flex; gap:8px;">
-                        <a href="{% url 'editar_usuario' usuario.pk %}" class="btn btn--ghost btn--icon btn-modal-form" data-titulo="Editar a {{ usuario.username }}" title="Editar Contraseña / Perfil" style="background:var(--bg-hover); padding:6px; border-radius:6px;">
+                        {% if perms.auth.change_user %}{% if not usuario.is_superuser or request.user.is_superuser %}<a href="{% url 'editar_usuario' usuario.pk %}" class="btn btn--ghost btn--icon btn-modal-form" data-titulo="Editar a {{ usuario.username }}" title="Editar Contraseña / Perfil" style="background:var(--bg-hover); padding:6px; border-radius:6px;">
                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
-                        </a>
-                        <form method="post" action="{% url 'eliminar_usuario' usuario.pk %}" style="display:inline;">
+                        </a>{% endif %}{% endif %}
+                        {% if perms.auth.delete_user %}<form method="post" action="{% url 'eliminar_usuario' usuario.pk %}" style="display:inline;">
                             {% csrf_token %}
                             <button type="button" class="btn btn--ghost btn--icon btn-eliminar" title="Eliminar" style="color:#ef4444; background:var(--bg-hover); padding:6px; border-radius:6px;">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
                             </button>
-                        </form>
+                        </form>{% endif %}
                     </div>
                 </td>
 
@@ -383,7 +383,14 @@
     $(document).ready(function() {
         $('#usuarios-dt').DataTable({
             language: {
-                url: '//cdn.datatables.net/plug-ins/1.13.6/i18n/es-ES.json',
+                emptyTable: "No hay usuarios registrados",
+                zeroRecords: "No hay coincidencias",
+                infoEmpty: "Mostrando 0 usuarios",
+                infoFiltered: "(filtrados de _MAX_ usuarios)",
+                loadingRecords: "Cargando…",
+                processing: "Procesando…",
+                paginate: {first: "Primero", last: "Último", next: "Siguiente", previous: "Anterior"},
+                aria: {sortAscending: ": ordenar ascendente", sortDescending: ": ordenar descendente"},
                 search: "Buscar:",
                 lengthMenu: "Mostrar _MENU_",
                 info: "Mostrando _START_ a _END_ de _TOTAL_ usuarios"
@@ -429,115 +436,7 @@
             }
         });
 
-        // ─── Dynamic Modal Logic (jQuery Delegation) ───
-        $(document).on('click', '.btn-modal-form', function(e) {
-            e.preventDefault();
-            const btn = $(this);
-            const url = btn.attr('href');
-            const titulo = btn.data('titulo') || 'Formulario';
-            
-            $('#modal-titulo').text(titulo);
-            $('#modal-contenido').html('<div style="text-align:center; padding: 2rem; color: var(--dt-text-sec);">Cargando formulario... <br><small>Por favor espere</small></div>');
-            $('#modal-dinamico').css('display', 'flex');
-            
-            cargarFormulario(url);
-        });
-
-        $('#cerrar-modal-dinamico').on('click', function() {
-            $('#modal-dinamico').hide();
-            $('#modal-contenido').empty();
-        });
     });
-
-    function cargarFormulario(url) {
-        fetch(url)
-            .then(res => res.text())
-            .then(html => {
-                const parser = new DOMParser();
-                const doc = parser.parseFromString(html, 'text/html');
-                const contentDiv = document.getElementById('modal-contenido');
-                // Extraer contenido principal del modal
-                const modalDiv = doc.querySelector('#modal-ajax-content');
-                if (modalDiv) {
-                    contentDiv.innerHTML = '';
-                    
-                    // Aseguramos que los formularios tengan el action URL correcto
-                    const forms = modalDiv.querySelectorAll('form');
-                    forms.forEach(form => form.setAttribute('action', url));
-                    
-                    // Modificar un poco los estilos de las cards si existen
-                    modalDiv.querySelectorAll('.user-form-card').forEach(card => {
-                        card.style.boxShadow = 'none';
-                        card.style.border = 'none';
-                        card.style.padding = '0';
-                    });
-                    
-                    // Ocultar el título de la vista normal dentro del modal
-                    modalDiv.querySelectorAll('.page-header').forEach(ph => ph.style.display = 'none');
-                    
-                    contentDiv.appendChild(modalDiv);
-                    bindModalForms(contentDiv, url);
-                } else {
-                    contentDiv.innerHTML = '<div class="alert-error" style="color:#ef4444;">Error al cargar el formulario.</div>';
-                }
-            })
-            .catch(err => {
-                document.getElementById('modal-contenido').innerHTML = '<div class="alert-error" style="color:#ef4444;">Error de red al conectar.</div>';
-            });
-    }
-
-    function bindModalForms(container, url) {
-        const forms = container.querySelectorAll('form');
-        forms.forEach(form => {
-            form.addEventListener('submit', function(e) {
-                e.preventDefault();
-                const formData = new FormData(form);
-                const submitBtn = e.submitter;
-                if (submitBtn && submitBtn.name) {
-                    formData.append(submitBtn.name, submitBtn.value || '1');
-                }
-                
-                if (submitBtn) {
-                    submitBtn.dataset.original = submitBtn.innerHTML;
-                    submitBtn.innerHTML = 'Guardando...';
-                    submitBtn.disabled = true;
-                }
-
-                fetch(url, {
-                    method: 'POST',
-                    body: formData,
-                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
-                })
-                .then(response => {
-                    // Django envía un redireccionamiento 302 hacia "lista_usuarios" tras un guardado de form exitoso
-                    if (response.redirected) {
-                        window.location.reload(); // Recargar para ver los cambios
-                    } else {
-                        return response.text().then(html => {
-                            // Render errors re-extraídos
-                            const parser = new DOMParser();
-                            const doc = parser.parseFromString(html, 'text/html');
-                            const modalDiv = doc.querySelector('#modal-ajax-content');
-                            if (modalDiv) {
-                                container.innerHTML = '';
-                                const fs = modalDiv.querySelectorAll('form');
-                                fs.forEach(f => f.setAttribute('action', url));
-                                
-                                modalDiv.querySelectorAll('.user-form-card').forEach(card => {
-                                    card.style.boxShadow = 'none';
-                                    card.style.border = 'none';
-                                    card.style.padding = '0';
-                                });
-                                modalDiv.querySelectorAll('.page-header').forEach(ph => ph.style.display = 'none');
-                                
-                                container.appendChild(modalDiv);
-                                bindModalForms(container, url);
-                            }
-                        });
-                    }
-                });
-            });
-        });
-    }
 </script>
+<script src="{% static 'js/admin-modal.js' %}?v=20260909"></script>
 {% endblock %}

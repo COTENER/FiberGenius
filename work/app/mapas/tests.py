@@ -566,7 +566,8 @@ class ImportacionV5Tests(TestCase):
         resultado = _procesar_tramos_inventario(archivo)
 
         tramo = ruta.tramos_inventario.get(tramo_secuencia=1)
-        self.assertEqual(resultado['actualizadas'], 1)
+        self.assertEqual(resultado['actualizadas'], 0)
+        self.assertEqual(resultado['creadas'], 1)
         self.assertEqual(tramo.estado, 'OPERATIVO')
         self.assertEqual(tramo.capacidad, '48 Hilos')
         self.assertEqual(tramo.hilos_ocupados, 12)
@@ -2006,7 +2007,8 @@ class GuiOperativaTests(TestCase):
         self.assertContains(response, 'Uso de puertos ODF')
         self.assertContains(response, 'data-free-label="Libres"')
         self.assertContains(response, 'ODF con puertos libres')
-        self.assertContains(response, 'ODF sin puertos libres')
+        self.assertContains(response, 'ODF sin libres confirmados')
+        self.assertNotContains(response, 'Capacidad comprometida al 100%')
         self.assertContains(response, 'por ciento de puertos libres')
         self.assertContains(response, 'Uso de fibras')
         self.assertContains(response, 'Mapa del inventario')
@@ -2037,7 +2039,10 @@ class GuiOperativaTests(TestCase):
         self.assertContains(response, 'Guardar dise')
         self.assertNotContains(response, 'Actividad de cargas')
         self.assertNotContains(response, 'Últimas cargas')
-        self.assertNotContains(response, 'Calidad ')
+        # Calidad tiene su propio acceso en el menú, no un panel en Resumen.
+        contenido = response.content.decode().split('<main', 1)[1].split('</main>', 1)[0]
+        self.assertNotIn('Calidad ', contenido)
+        self.assertNotIn('inv-data-pending', contenido)
 
     def test_dashboard_inventario_filtra_por_site(self):
         response = self.client.get(
@@ -2124,7 +2129,7 @@ class SeguridadYRendimientoTests(TestCase):
         response = self.client.get(reverse('configuracion'))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "openImportModal('sites_inventario'")
+        self.assertContains(response, 'data-open-import="sites_inventario"')
         self.assertNotContains(response, f'href="{reverse("importar_sites_csv")}"')
 
     def test_configuracion_muestra_rotulos_guiados_de_importacion(self):
@@ -2143,8 +2148,8 @@ class SeguridadYRendimientoTests(TestCase):
             response,
             "Cargar Fibras por Tramo (.csv)",
         )
-        self.assertContains(response, "Topología 2")
-        self.assertContains(response, "Topología 3")
+        self.assertContains(response, "Después, sus tramos")
+        self.assertContains(response, "Por último, las asignaciones")
         self.assertContains(
             response,
             "Importación guiada del inventario",

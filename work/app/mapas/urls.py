@@ -6,6 +6,7 @@ from django.shortcuts import redirect
 urlpatterns = [
     path('inventario/', views.mapa_inventario, name='mapa_inventario'), 
     path('inventario/dashboard/', views.dashboard_inventario, name='dashboard_inventario'),
+    path('inventario/calidad/', views.calidad_informacion, name='calidad_informacion'),
     path('inventario/externo/', views.inventario_externo, name='inventario_externo'),
     path('inventario/interno/', views.inventario_interno, name='inventario_interno'),
     path('inventario/planta-interna/', views.planta_interna_view, name='planta_interna'),
@@ -65,6 +66,8 @@ urlpatterns = [
     path('grupos/editar/<int:pk>/', views.editar_grupo, name='editar_grupo'),
     path('grupos/eliminar/<int:pk>/', views.eliminar_grupo, name='eliminar_grupo'),
     path('cargar-csv/<str:tipo_csv>/', views.cargar_csv, name='cargar_csv'),
+    path('validar-csv/<str:tipo_csv>/', views.validar_csv, name='validar_csv'),
+    path('api/importaciones/errores/<uuid:codigo>/', views.errores_importacion, name='errores_importacion'),
     path(
         'api/importaciones/progreso/<uuid:codigo>/',
         views.progreso_importacion,

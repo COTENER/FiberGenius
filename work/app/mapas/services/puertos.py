@@ -29,6 +29,10 @@ class MovimientoRequiereConfirmacion(ValidationError):
         )
 
 
+class ConexionDesactualizada(ValidationError):
+    """La conexión actual no es la que el usuario confirmó en pantalla."""
+
+
 def _bloquear_fibra(fibra_id):
     try:
         return (
@@ -522,7 +526,7 @@ def conectar_puerto(
 @transaction.atomic
 def desconectar_puerto(
     *, puerto_id, liberar_fibra=False, usuario=None, origen="SISTEMA",
-    lote_importacion=None,
+    lote_importacion=None, terminacion_esperada=None,
 ):
     referencia = (
         TerminacionFibra.objects.filter(puerto_odf_id=puerto_id)
@@ -530,11 +534,22 @@ def desconectar_puerto(
         .first()
     )
     if referencia is None:
+        if terminacion_esperada is not None:
+            raise ConexionDesactualizada(
+                "La conexión ya no existe. Actualice la vista; no se modificó ninguna fibra."
+            )
         raise ValidationError(
             "El puerto no tiene una terminación oficial. Debe regularizarse antes de desconectarlo."
         )
     fibra = _bloquear_fibra(referencia["fibra_id"])
     terminacion = _bloquear_terminacion(fibra, referencia["extremo"])
+    if terminacion_esperada is not None and (
+        terminacion is None or terminacion.pk != int(terminacion_esperada)
+    ):
+        raise ConexionDesactualizada(
+            "La conexión cambió desde que abrió la pantalla. Actualice la vista "
+            "y confirme nuevamente; no se desconectó ninguna fibra."
+        )
     if terminacion is None or terminacion.puerto_odf_id != int(puerto_id):
         raise ValidationError(
             "La terminación cambió durante la operación. Actualice la vista e intente nuevamente."

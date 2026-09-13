@@ -127,6 +127,9 @@
     }
 
     function clearRankingContext({ reload = true } = {}) {
+        const url = new URL(window.location.href);
+        url.searchParams.delete('odf_id');
+        window.history.replaceState({}, '', url);
         rankingOdf = '';
         rankingOdfId = '';
         pendingOdfId = null;
@@ -589,8 +592,7 @@
         elements.exportStatus.textContent = 'Generando archivo…';
         try {
             const response = await fetch(elements.exportLink.href, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            const blob = await response.blob();
+            const blob = await window.FGInventoryDownloads.readBlob(response);
             const filename = exportFilename(response);
             if (exportObjectUrl) URL.revokeObjectURL(exportObjectUrl);
             exportObjectUrl = URL.createObjectURL(blob);
@@ -609,7 +611,7 @@
             elements.exportStatus.replaceChildren(document.createTextNode(`Archivo preparado: ${filename}. `), fallback);
         } catch (error) {
             elements.exportStatus.className = 'odf-export-status is-error';
-            elements.exportStatus.textContent = 'No se pudo descargar el archivo. Intenta nuevamente.';
+            elements.exportStatus.textContent = error.message || 'No se pudo descargar el archivo. Intenta nuevamente.';
         } finally {
             elements.exportLink.dataset.busy = 'false';
             elements.exportLink.removeAttribute('aria-disabled');
@@ -627,10 +629,7 @@
     elements.clear.addEventListener('click', () => {
         elements.form.reset();
         elements.pageSize.value = '25';
-        rankingOdf = '';
-        rankingOdfId = '';
-        pendingOdfId = null;
-        syncRankingContext();
+        clearRankingContext({ reload: false });
         page = 1;
         elements.query.focus();
         load();
@@ -647,6 +646,11 @@
     });
 
     const incoming = new URLSearchParams(window.location.search);
+    if (/^\d+$/.test(incoming.get('odf_id') || '')) {
+        rankingOdfId = incoming.get('odf_id');
+        rankingOdf = `ODF seleccionado #${rankingOdfId}`;
+        syncRankingContext();
+    }
     elements.query.value = incoming.get('q') || '';
     elements.site.value = incoming.get('site') || '';
     elements.room.value = incoming.get('sala') || '';

@@ -566,6 +566,12 @@
 
 {% block content %}
 <div class="map-layout">
+    {% if request.GET.trazado %}
+    <div role="status" style="padding: 8px 16px; background: var(--bg-secondary); color: var(--text-primary); font-size: 13px;">
+        Trazado de las rutas: {{ request.GET.trazado }}.
+        <a href="{% url 'mapa_inventario' %}">Quitar filtro de trazado</a>
+    </div>
+    {% endif %}
     <h1 class="sr-only">Mapa de red del inventario</h1>
     <div class="map-layout__main">
         <!-- Search Container -->
@@ -808,5 +814,5 @@
 {% block extra_js %}
 <script src="{% static 'vendor/jquery/jquery-3.6.0.min.js' %}"></script>
 <script src="{% static 'vendor/leaflet/leaflet-1.9.4.js' %}" crossorigin=""></script>
-<script src="{% static 'js/mapa_inventario.js' %}?v=20260823-port-operational-detail-2"></script>
+<script src="{% static 'js/mapa_inventario.js' %}?v=20260908-dashboard-review"></script>
 {% endblock %}

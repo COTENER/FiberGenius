@@ -29,10 +29,10 @@
         status.className = 'odf-export-status'; status.textContent = 'Generando archivo…';
         try {
             const url = new URL(base, location.origin); url.search = params.toString(); const response = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
-            if (!response.ok) throw new Error(); const blob = await response.blob(); const disposition = response.headers.get('Content-Disposition') || ''; const match = disposition.match(/filename="?([^";]+)"?/i);
+            const blob = await window.FGInventoryDownloads.readBlob(response); const disposition = response.headers.get('Content-Disposition') || ''; const match = disposition.match(/filename="?([^";]+)"?/i);
             const objectUrl = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = objectUrl; link.download = match ? match[1] : 'FiberGenius.xlsx'; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(objectUrl);
             status.classList.add('is-success'); status.textContent = 'Archivo descargado correctamente.';
-        } catch (_error) { status.classList.add('is-error'); status.textContent = 'No se pudo generar el archivo. Intenta nuevamente.'; }
+        } catch (error) { status.classList.add('is-error'); status.textContent = error.message || 'No se pudo generar el archivo. Intenta nuevamente.'; }
     }
 
     function setInspectorCollapsed(collapsed) {
@@ -542,5 +542,22 @@
 
     const tables = { fibras: fibers, reservas: reserves }; const tabs = [...root.querySelectorAll('[role="tab"]')];
     function selectTab(name) { const tab = tabs.find((item) => item.dataset.tab === name) || tabs[0]; if (!tab) return; tabs.forEach((item) => { const active = item === tab; item.setAttribute('aria-selected', active); document.getElementById(item.getAttribute('aria-controls')).hidden = !active; }); switchInspectorContext(tab.dataset.tab); const table = tables[tab.dataset.tab]; if (table && !table.loaded) table.load(); const url = new URL(location.href); url.searchParams.set('tab', tab.dataset.tab); history.replaceState({}, '', url); }
-    tabs.forEach((tab) => tab.addEventListener('click', () => selectTab(tab.dataset.tab))); const incoming = new URLSearchParams(location.search); const query = incoming.get('q'); if (query) root.querySelectorAll('[data-filter="q"]').forEach((input) => { input.value = query; }); selectTab(incoming.get('tab') || root.dataset.defaultTab);
+    tabs.forEach((tab) => tab.addEventListener('click', () => selectTab(tab.dataset.tab)));
+    const incoming = new URLSearchParams(location.search);
+    const query = incoming.get('q');
+    if (query) root.querySelectorAll('[data-filter="q"]').forEach((input) => { input.value = query; });
+    root.querySelectorAll('[data-filter="trazado"]').forEach((input) => {
+        const trace = incoming.get('trazado') || '';
+        input.value = ['', 'AEREO', 'SOTERRADO', 'HIBRIDO'].includes(trace) ? trace : '';
+        const form = input.closest('form');
+        const syncTraceUrl = () => {
+            const url = new URL(location.href);
+            if (input.value) url.searchParams.set('trazado', input.value);
+            else url.searchParams.delete('trazado');
+            history.replaceState({}, '', url);
+        };
+        input.addEventListener('change', syncTraceUrl);
+        form.querySelector('[data-clear]').addEventListener('click', syncTraceUrl);
+    });
+    selectTab(incoming.get('tab') || root.dataset.defaultTab);
 })();

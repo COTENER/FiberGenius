@@ -8,6 +8,7 @@ from .mapa import (
 )
 
 # Dashboard
+from .calidad_informacion import calidad_informacion
 from .dashboard import (
     dashboard,
     contar_rutas_db,
@@ -42,6 +43,8 @@ from .importacion import (
     configuracion,
     cargar_csv,
     progreso_importacion,
+    errores_importacion,
+    validar_csv,
     descargar_plantilla_terminaciones_fibra,
     eliminar_ruta_config,
 )

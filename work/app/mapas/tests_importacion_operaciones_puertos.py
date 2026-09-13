@@ -1,8 +1,10 @@
 import io
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.urls import reverse
 from openpyxl import Workbook, load_workbook
@@ -242,6 +244,76 @@ class ImportacionOperacionesPuertosTests(TestCase):
         self.puertos[0].refresh_from_db()
         self.assertEqual(self.puertos[0].estado_puerto, 'LIBRE')
         self.assertFalse(TerminacionFibra.objects.exists())
+
+    def test_fallo_al_cerrar_lote_revierte_operaciones_estado_y_auditoria(self):
+        guardar_original = LoteImportacion.save
+
+        def fallar_cierre(lote, *args, **kwargs):
+            if lote.estado == 'COMPLETADO':
+                raise RuntimeError('Fallo simulado al guardar el resultado')
+            return guardar_original(lote, *args, **kwargs)
+
+        filas = [
+            self._fila('1', 'Reservar'),
+            self._fila('2', 'Conectar', 'RUTA-EXCEL', 'F12', 'A', 'Sí'),
+        ]
+        with patch.object(LoteImportacion, 'save', fallar_cierre):
+            respuesta = self._post(filas, 'aplicar')
+
+        self.assertEqual(respuesta.status_code, 500)
+        self.assertIn('No se aplicó ninguna operación', respuesta.json()['message'])
+        for puerto in self.puertos[:2]:
+            puerto.refresh_from_db()
+            self.assertEqual(puerto.estado_puerto, 'LIBRE')
+        self.fibra.refresh_from_db()
+        self.odf_a.refresh_from_db()
+        self.assertEqual(self.fibra.estado, 'DISPONIBLE')
+        self.assertEqual(self.odf_a.puertos_ocupados, 0)
+        self.assertEqual(self.odf_a.puertos_reservados, 0)
+        self.assertFalse(TerminacionFibra.objects.exists())
+        self.assertFalse(AuditoriaPuertoODF.objects.exists())
+        lote = LoteImportacion.objects.get()
+        self.assertEqual(lote.estado, 'FALLIDO')
+        self.assertEqual(lote.filas_actualizadas, 0)
+        self.assertEqual(lote.metadatos_origen, {})
+
+    def test_error_durante_aplicacion_conserva_lote_fallido_sin_operaciones(self):
+        from .services.importacion_puertos import _ejecutar_operacion
+
+        def fallar_segunda(operacion, **kwargs):
+            if kwargs.get('lote_importacion') and operacion.puerto == '2':
+                raise ValidationError('Conflicto detectado al aplicar')
+            return _ejecutar_operacion(operacion, **kwargs)
+
+        with patch(
+            'mapas.services.importacion_puertos._ejecutar_operacion',
+            side_effect=fallar_segunda,
+        ):
+            respuesta = self._post([
+                self._fila('1', 'Reservar'), self._fila('2', 'Reservar'),
+            ], 'aplicar')
+
+        self.assertEqual(respuesta.status_code, 409)
+        self.assertEqual(respuesta.json()['summary']['aplicadas'], 0)
+        self.assertEqual(respuesta.json()['rows'][0]['resultado'], 'NO_APLICADA')
+        self.puertos[0].refresh_from_db()
+        self.assertEqual(self.puertos[0].estado_puerto, 'LIBRE')
+        self.assertFalse(AuditoriaPuertoODF.objects.exists())
+        self.assertEqual(LoteImportacion.objects.get().estado, 'FALLIDO')
+
+    def test_fallo_de_respuesta_no_reclasifica_un_lote_ya_confirmado(self):
+        with patch(
+            'mapas.views.importacion_operaciones_puertos.reverse',
+            side_effect=RuntimeError('Fallo simulado construyendo respuesta'),
+        ):
+            respuesta = self._post([self._fila('1', 'Reservar')], 'aplicar')
+
+        self.assertEqual(respuesta.status_code, 500)
+        self.assertNotIn('No se aplicó ninguna operación', respuesta.json()['message'])
+        self.puertos[0].refresh_from_db()
+        self.assertEqual(self.puertos[0].estado_puerto, 'RESERVADO')
+        self.assertEqual(LoteImportacion.objects.get().estado, 'COMPLETADO')
+        self.assertEqual(AuditoriaPuertoODF.objects.count(), 1)
 
     def test_reimportar_una_reserva_es_idempotente(self):
         reservar_puerto(puerto_id=self.puertos[0].pk)

@@ -45,6 +45,7 @@
             <article class="odf-kpi odf-kpi--cyan"><span class="odf-kpi__icon">⑂</span><div><span>Troncales</span><strong id="fibras-stat-routes">0</strong><small>Rutas con fibras</small></div></article>
         </section>
         <section class="odf-filter-card inventory-filter-card"><form id="fibras-filters" class="odf-filters inventory-filter-grid inventory-filter-grid--four" role="search">
+            {% include 'mapa_inventario/partials/trace_filter.html' %}
             <input data-filter="destino" type="hidden" value="">
             <input data-filter="en_uso" type="hidden" value="">
             <label class="odf-search"><span class="sr-only">Buscar</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input data-filter="q" type="search" placeholder="Troncal, fibra, servicio, site, ODF o puerto" autocomplete="off"></label>
@@ -65,6 +66,7 @@
             <article class="odf-kpi odf-kpi--orange"><span class="odf-kpi__icon">!</span><div><span>Por confirmar</span><strong id="reservas-stat-pending">0</strong><small>Requieren validación</small></div></article>
         </section>
         <section class="odf-filter-card inventory-filter-card"><form id="reservas-filters" class="odf-filters inventory-filter-grid inventory-filter-grid--four" role="search">
+            {% include 'mapa_inventario/partials/trace_filter.html' %}
             <label class="odf-search"><span class="sr-only">Buscar</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg><input data-filter="q" type="search" placeholder="Troncal, elemento, código o tipo" autocomplete="off"></label>
             <label class="odf-filter-field"><span>Troncal</span><select data-filter="ruta"><option value="">Todas</option>{% for ruta in rutas_planta_externa %}<option value="{{ ruta.nombre }}">{{ ruta.nombre }}</option>{% endfor %}</select></label>
             <label class="odf-filter-field"><span>Tipo</span><select data-filter="tipo"><option value="">Todos</option>{% for value in tipos_elemento %}<option value="{{ value }}">{{ value }}</option>{% endfor %}</select></label>
@@ -155,5 +157,5 @@
 {% block extra_js %}
 <script src="{% static 'vendor/leaflet/leaflet-1.9.4.js' %}"></script>
 <script src="{% static 'js/inventory-edit.js' %}?v=20260905"></script>
-<script src="{% static 'js/fiber-inventory.js' %}?v=20260905-safe-edit"></script>
+<script src="{% static 'js/fiber-inventory.js' %}?v=20260908-dashboard-review"></script>
 {% endblock %}

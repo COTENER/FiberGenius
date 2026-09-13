@@ -5,6 +5,7 @@ import logging
 from django.shortcuts import render
 from django.http import JsonResponse
 from django.contrib.auth.decorators import login_required, permission_required
+from ..ui_access import screen_required
 from django.db import connection
 
 from ..models import Ruta
@@ -18,7 +19,7 @@ def contar_rutas_db():
 
 
 @login_required
-@permission_required('mapas.can_view_reports', raise_exception=True)
+@screen_required('operations')
 def dashboard(request):
     anio_seleccionado = request.GET.get('anio')
     otu_seleccionada = request.GET.get('otu')

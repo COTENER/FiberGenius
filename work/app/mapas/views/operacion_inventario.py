@@ -71,6 +71,10 @@ from ..services.trazabilidad import (
     obtener_trazabilidad_fibra,
 )
 from ..services.ubicacion import nombre_site
+from ..services.filtros_inventario import (
+    filtro_site_tramos, filtro_site_fibras, filtrar_rutas_trazado,
+    tipo_trazado_ruta, filtrar_rutas_site,
+)
 
 
 PAGE_SIZES = {10, 25, 48, 50, 100, 200}
@@ -238,6 +242,7 @@ def _serializar_puertos(puertos):
         conexion = None
         if terminacion:
             conexion = {
+                "terminacion_id": terminacion.pk,
                 "fibra_id": terminacion.fibra_id,
                 "codigo": terminacion.fibra.codigo_fibra,
                 "ruta": terminacion.fibra.nombre_troncal,
@@ -275,6 +280,7 @@ def _serializar_puertos(puertos):
 
 
 def _filtro_odfs(request):
+    from ..services.filtros_inventario import anotar_puertos_odf
     queryset = InventarioODF.objects.select_related(
         "rack_obj__sala__hub_site"
     )
@@ -296,7 +302,7 @@ def _filtro_odfs(request):
             | Q(tipo_conector__icontains=termino)
         )
     if site:
-        queryset = queryset.filter(rack_obj__sala__hub_site__nombre=site)
+        queryset = queryset.filter(rack_obj__sala__hub_site__nombre__iexact=site)
     if sala:
         queryset = queryset.filter(rack_obj__sala__nombre=sala)
     if rack:
@@ -305,21 +311,19 @@ def _filtro_odfs(request):
         queryset = queryset.filter(estado=estado)
     if capacidad in {"disponible", "sin_disponibilidad"}:
         ids = []
-        for odf in queryset.values(
+        for odf in anotar_puertos_odf(queryset).values(
             "id",
             "capacidad_puertos",
-            "puertos_ocupados",
-            "puertos_libres",
-            "puertos_reservados",
+            "_puertos_ocupados",
+            "_puertos_libres",
+            "_puertos_reservados",
+            "_puertos_total",
         ):
             declarada = odf["capacidad_puertos"] or 0
-            ocupados = odf["puertos_ocupados"] or 0
-            libres_declarados = odf["puertos_libres"] or 0
-            reservados = odf["puertos_reservados"] or 0
-            total = max(declarada, ocupados + libres_declarados + reservados)
+            total = max(declarada, odf["_puertos_total"])
             if not total:
                 continue
-            libres = max(total - ocupados - reservados, 0)
+            libres = odf["_puertos_libres"]
             if (
                 capacidad == "disponible" and libres > 0
                 or capacidad == "sin_disponibilidad" and libres == 0
@@ -494,38 +498,11 @@ def _filtro_troncales(request):
             | Q(tramos_inventario__odf_nombre__icontains=termino)
             | Q(tramos_inventario__serial__icontains=termino)
         )
-    if tipo:
-        if tipo.casefold() in {"hibrido", "híbrido"}:
-            rutas_mixtas = (
-                Ruta.objects.filter(
-                    tramos_inventario__tipo_trazado__iexact="AEREO"
-                )
-                .filter(
-                    tramos_inventario__tipo_trazado__iexact="SOTERRADO"
-                )
-                .values("pk")
-            )
-            queryset = queryset.filter(
-                Q(tramos_inventario__tipo_trazado__iexact="HIBRIDO")
-                | Q(tramos_inventario__tipo_trazado__iexact="HÍBRIDO")
-                | Q(pk__in=rutas_mixtas)
-            )
-        else:
-            queryset = queryset.filter(
-                tramos_inventario__tipo_trazado__iexact=tipo
-            )
+    queryset = filtrar_rutas_trazado(queryset, tipo)
     if estado:
         queryset = queryset.filter(tramos_inventario__estado__iexact=estado)
     if site:
-        queryset = queryset.filter(
-            Q(tramos_inventario__hub_site__iexact=site)
-            | Q(tramos_inventario__origen__iexact=site)
-            | Q(tramos_inventario__destino__iexact=site)
-            | Q(tramos_inventario__origen_nodo__codigo__iexact=site)
-            | Q(tramos_inventario__destino_nodo__codigo__iexact=site)
-            | Q(tramos_inventario__origen_nodo__nombre__iexact=site)
-            | Q(tramos_inventario__destino_nodo__nombre__iexact=site)
-        )
+        queryset = filtrar_rutas_site(queryset, site)
     if capacidad in {"disponible", "atencion"}:
         ids_ruta = set(queryset.values_list("pk", flat=True).distinct())
         estadisticas = _estadisticas_capacidad_rutas(ids_ruta)
@@ -551,10 +528,14 @@ def _filtro_troncales(request):
             ):
                 ids_capacidad.append(ruta_id)
         queryset = queryset.filter(pk__in=ids_capacidad)
+    # Los filtros seleccionan troncales, no recortan sus relaciones cuando
+    # luego se cuentan tramos/fibras/reservas (por ejemplo, q=Site o estado).
+    queryset = Ruta.objects.filter(pk__in=queryset.order_by().values("pk"))
     return (
         queryset.distinct()
         .prefetch_related(
             "fibras_inventario",
+            "coordenadas",
             Prefetch(
                 "tramos_inventario",
                 queryset=(
@@ -572,21 +553,6 @@ def _filtro_troncales(request):
         )
         .order_by("nombre", "id")
     )
-
-
-def _tipo_troncal(tramos):
-    tipos = {
-        (tramo.tipo_trazado or "").strip().upper()
-        for tramo in tramos
-        if (tramo.tipo_trazado or "").strip()
-    }
-    if "HIBRIDO" in tipos or ({"AEREO", "SOTERRADO"} <= tipos):
-        return "HÍBRIDO"
-    if "AEREO" in tipos:
-        return "AÉREO"
-    if "SOTERRADO" in tipos:
-        return "SOTERRADO"
-    return next(iter(tipos), "SIN CLASIFICAR")
 
 
 def _valor_nodo(tramo, extremo):
@@ -607,6 +573,7 @@ def _serializar_troncales(troncales):
         ultimo = tramos[-1] if tramos else None
         capacidad_ruta = capacidades[troncal.pk]
         distancia_m = capacidad_ruta["distancia_m"]
+        tipo = tipo_trazado_ruta(troncal)
         resultado.append(
             {
                 "id": troncal.pk,
@@ -619,7 +586,9 @@ def _serializar_troncales(troncales):
                     ) if primero else troncal.olt
                 ),
                 "destino": _texto(_valor_nodo(ultimo, "destino")),
-                "tipo": _tipo_troncal(tramos),
+                "tipo": {"AEREO": "AÉREO", "HIBRIDO": "HÍBRIDO"}.get(
+                    tipo, tipo
+                ),
                 "distancia_km": round((distancia_m or 0) / 1000, 2),
                 "tramos": troncal.tramos_total,
                 "capacidad": (
@@ -780,15 +749,7 @@ def _filtro_tramos(request):
     if ruta:
         queryset = queryset.filter(ruta__nombre=ruta)
     if site:
-        queryset = queryset.filter(
-            Q(hub_site__iexact=site)
-            | Q(origen__iexact=site)
-            | Q(destino__iexact=site)
-            | Q(origen_nodo__codigo__iexact=site)
-            | Q(origen_nodo__nombre__iexact=site)
-            | Q(destino_nodo__codigo__iexact=site)
-            | Q(destino_nodo__nombre__iexact=site)
-        )
+        queryset = queryset.filter(filtro_site_tramos(site))
     return queryset.order_by("ruta__nombre", "tramo_secuencia", "id")
 
 
@@ -1042,16 +1003,11 @@ def _filtro_fibras(request, *, aplicar_en_uso=True):
     elif ruta_pendiente in {"1", "true", "si", "sí"}:
         queryset = queryset.filter(ruta__isnull=True)
     if site:
-        queryset = queryset.filter(
-            Q(terminaciones__puerto_odf__odf_obj__rack_obj__sala__hub_site__nombre__iexact=site)
-            | Q(ruta__tramos_inventario__hub_site__iexact=site)
-            | Q(ruta__tramos_inventario__origen__iexact=site)
-            | Q(ruta__tramos_inventario__destino__iexact=site)
-            | Q(ruta__tramos_inventario__origen_nodo__codigo__iexact=site)
-            | Q(ruta__tramos_inventario__origen_nodo__nombre__iexact=site)
-            | Q(ruta__tramos_inventario__destino_nodo__codigo__iexact=site)
-            | Q(ruta__tramos_inventario__destino_nodo__nombre__iexact=site)
-        ).distinct()
+        queryset = queryset.filter(filtro_site_fibras(site)).distinct()
+    trazado = request.GET.get('trazado', '').strip()
+    if trazado:
+        rutas = filtrar_rutas_site(Ruta.objects.all(), site)
+        queryset = queryset.filter(ruta_id__in=filtrar_rutas_trazado(rutas, trazado).values('pk'))
     patron_fibra_numerica = r"^[Ff][0-9]+$"
     return queryset.annotate(
         _orden_fibra_tipo=Case(
@@ -1434,15 +1390,10 @@ def _filtro_elementos(request):
     if ruta:
         queryset = queryset.filter(ruta__nombre=ruta)
     if site:
-        queryset = queryset.filter(
-            Q(ruta__tramos_inventario__hub_site__iexact=site)
-            | Q(ruta__tramos_inventario__origen__iexact=site)
-            | Q(ruta__tramos_inventario__destino__iexact=site)
-            | Q(ruta__tramos_inventario__origen_nodo__codigo__iexact=site)
-            | Q(ruta__tramos_inventario__origen_nodo__nombre__iexact=site)
-            | Q(ruta__tramos_inventario__destino_nodo__codigo__iexact=site)
-            | Q(ruta__tramos_inventario__destino_nodo__nombre__iexact=site)
-        ).distinct()
+        queryset = queryset.filter(filtro_site_tramos(site, "ruta__tramos_inventario__")).distinct()
+    trazado = request.GET.get('trazado', '').strip()
+    if trazado:
+        queryset = queryset.filter(ruta_id__in=filtrar_rutas_trazado(Ruta.objects.all(), trazado).values('pk'))
     return queryset.order_by("ruta__nombre", "orden_en_ruta", "nombre", "id")
 
 
@@ -1532,25 +1483,7 @@ def api_mapa_site_navigation(request, pk):
     odfs_lista = list(odfs)
     resumen = _resumen_odfs(odfs_lista)
     troncales = Ruta.objects.filter(
-        Q(tramos_inventario__hub_site__iexact=site.nombre)
-        | Q(tramos_inventario__origen__iexact=site.nombre)
-        | Q(tramos_inventario__destino__iexact=site.nombre)
-        | Q(
-            tramos_inventario__origen_nodo__tipo="SITE",
-            tramos_inventario__origen_nodo__codigo__iexact=site.nombre,
-        )
-        | Q(
-            tramos_inventario__origen_nodo__tipo="SITE",
-            tramos_inventario__origen_nodo__nombre__iexact=site.nombre,
-        )
-        | Q(
-            tramos_inventario__destino_nodo__tipo="SITE",
-            tramos_inventario__destino_nodo__codigo__iexact=site.nombre,
-        )
-        | Q(
-            tramos_inventario__destino_nodo__tipo="SITE",
-            tramos_inventario__destino_nodo__nombre__iexact=site.nombre,
-        )
+        filtro_site_tramos(site.nombre, "tramos_inventario__")
     ).order_by("nombre").distinct()
 
     return JsonResponse({
@@ -2748,25 +2681,7 @@ def _ficha_site(pk):
     site = get_object_or_404(HubSite, pk=pk)
     odfs = InventarioODF.objects.filter(rack_obj__sala__hub_site=site)
     troncales = Ruta.objects.filter(
-        Q(tramos_inventario__hub_site__iexact=site.nombre)
-        | Q(tramos_inventario__origen__iexact=site.nombre)
-        | Q(tramos_inventario__destino__iexact=site.nombre)
-        | Q(
-            tramos_inventario__origen_nodo__tipo="SITE",
-            tramos_inventario__origen_nodo__codigo__iexact=site.nombre,
-        )
-        | Q(
-            tramos_inventario__origen_nodo__tipo="SITE",
-            tramos_inventario__origen_nodo__nombre__iexact=site.nombre,
-        )
-        | Q(
-            tramos_inventario__destino_nodo__tipo="SITE",
-            tramos_inventario__destino_nodo__codigo__iexact=site.nombre,
-        )
-        | Q(
-            tramos_inventario__destino_nodo__tipo="SITE",
-            tramos_inventario__destino_nodo__nombre__iexact=site.nombre,
-        )
+        filtro_site_tramos(site.nombre, "tramos_inventario__")
     ).order_by("nombre").distinct()
     return {
         "type": "site",

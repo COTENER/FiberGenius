@@ -306,7 +306,8 @@ class ImportacionTerminacionesFibraTests(TestCase):
             _csv('provisional-recarga.csv', contenido)
         )
         self.assertEqual(repeticion['creadas'], 0)
-        self.assertEqual(repeticion['actualizadas'], 2)
+        self.assertEqual(repeticion['actualizadas'], 0)
+        self.assertEqual(repeticion['sin_cambios'], 2)
         self.assertEqual(
             InventarioFibra.objects.filter(
                 ruta__isnull=True,
@@ -398,7 +399,8 @@ class ImportacionTerminacionesFibraTests(TestCase):
         )
 
         self.assertEqual(repeticion['creadas'], 0)
-        self.assertEqual(repeticion['actualizadas'], 2)
+        self.assertEqual(repeticion['actualizadas'], 0)
+        self.assertEqual(repeticion['sin_cambios'], 2)
         self.assertEqual(InventarioFibra.objects.filter(
             codigo_fibra=codigo,
         ).count(), 1)
@@ -422,7 +424,8 @@ class ImportacionTerminacionesFibraTests(TestCase):
         )
 
         self.assertEqual(resultado['creadas'], 1)
-        self.assertEqual(resultado['actualizadas'], 1)
+        self.assertEqual(resultado['actualizadas'], 0)
+        self.assertEqual(resultado['sin_cambios'], 1)
         self.assertEqual(fibra.terminaciones.count(), 2)
 
     def test_formato_simplificado_no_mueve_un_extremo_implicitamente(self):
@@ -544,7 +547,8 @@ class ImportacionTerminacionesFibraTests(TestCase):
             _csv('dos-f17-recarga.csv', contenido)
         )
         self.assertEqual(repeticion['creadas'], 0)
-        self.assertEqual(repeticion['actualizadas'], 4)
+        self.assertEqual(repeticion['actualizadas'], 0)
+        self.assertEqual(repeticion['sin_cambios'], 4)
         self.assertEqual(fibras.count(), 2)
 
 
@@ -639,7 +643,8 @@ class GuiTerminacionesFibraTests(TestCase):
 
         self.fibra.refresh_from_db()
         self.assertEqual(resultado['total'], 2)
-        self.assertEqual(resultado['actualizadas'], 1)
+        self.assertEqual(resultado['actualizadas'], 0)
+        self.assertEqual(resultado['sin_cambios'], 1)
         self.assertEqual(self.fibra.codigo_fibra, codigo_original)
         self.assertTrue(TerminacionFibra.objects.filter(
             fibra=self.fibra,

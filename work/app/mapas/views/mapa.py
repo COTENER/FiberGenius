@@ -9,6 +9,7 @@ from collections import defaultdict
 from django.shortcuts import render
 from django.http import JsonResponse, HttpResponse
 from django.contrib.auth.decorators import login_required, permission_required
+from ..ui_access import screen_required
 from django.contrib.staticfiles import finders
 from django.db import connection
 from django.db.models import Prefetch
@@ -71,7 +72,7 @@ def obtener_equipos_desde_db():
 
 
 @login_required
-@permission_required('mapas.view_alarmaveex', raise_exception=True)
+@screen_required('alarms')
 def mapa_alarmas(request):
     """
     Renderiza la nueva interfaz del Mapa en Vivo para Monitoreo de Alarmas en tiempo real.

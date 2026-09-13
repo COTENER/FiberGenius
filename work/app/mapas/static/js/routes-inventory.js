@@ -169,6 +169,11 @@
     }
 
     function clearRankingContext(table, { reload = true } = {}) {
+        if (table.resource === 'troncales') {
+            const url = new URL(location.href);
+            url.searchParams.delete('ranking_id');
+            history.replaceState({}, '', url);
+        }
         if (rankingContext?.kind === table.resource) rankingContext = null;
         syncRankingContexts();
         table.page = 1;
@@ -352,8 +357,7 @@
             const target = new URL(url, window.location.origin);
             target.search = params.toString();
             const response = await fetch(target, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            const blob = await response.blob();
+            const blob = await window.FGInventoryDownloads.readBlob(response);
             const disposition = response.headers.get('Content-Disposition') || '';
             const match = disposition.match(/filename="?([^";]+)"?/i);
             const link = document.createElement('a');
@@ -362,8 +366,8 @@
             document.body.appendChild(link); link.click(); link.remove();
             URL.revokeObjectURL(link.href);
             status.classList.add('is-success'); status.textContent = 'Archivo descargado correctamente.';
-        } catch (_error) {
-            status.classList.add('is-error'); status.textContent = 'No se pudo generar el archivo. Intenta nuevamente.';
+        } catch (error) {
+            status.classList.add('is-error'); status.textContent = error.message || 'No se pudo generar el archivo. Intenta nuevamente.';
         }
     }
 
@@ -441,8 +445,7 @@
             this.form.querySelectorAll('select[data-filter]').forEach((select) => select.addEventListener('change', () => { this.page = 1; this.load(); }));
             this.form.querySelector('[data-clear]').addEventListener('click', () => {
                 this.form.reset();
-                if (rankingContext?.kind === this.resource) rankingContext = null;
-                syncRankingContexts();
+                clearRankingContext(this, { reload: false });
                 this.page = 1;
                 search.focus();
                 this.load();
@@ -531,6 +534,10 @@
     }
     tabs.forEach((tab) => tab.addEventListener('click', () => selectTab(tab.dataset.tab)));
     const incoming = new URLSearchParams(location.search);
+    if (/^\d+$/.test(incoming.get('ranking_id') || '')) {
+        rankingContext = { kind: 'troncales', id: incoming.get('ranking_id'), label: 'Troncal seleccionada desde Dashboard' };
+        syncRankingContexts();
+    }
     root.querySelectorAll('[data-filter]').forEach((input) => {
         const value = incoming.get(input.dataset.filter);
         if (value !== null && [...input.options || []].some((option) => option.value === value)) {

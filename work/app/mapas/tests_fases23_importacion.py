@@ -121,7 +121,8 @@ class ImportacionTramosFase2Tests(TestCase):
         )
 
         self.assertEqual(resultado["creadas"], 0)
-        self.assertEqual(resultado["actualizadas"], 2)
+        self.assertEqual(resultado["actualizadas"], 0)
+        self.assertEqual(resultado["sin_cambios"], 2)
         self.assertEqual(self.ruta.tramos_inventario.count(), 2)
         self.assertEqual(NodoRed.objects.count(), 3)
 

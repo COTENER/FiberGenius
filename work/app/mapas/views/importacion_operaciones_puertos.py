@@ -11,6 +11,7 @@ import zipfile
 from django.conf import settings
 from django.contrib.auth.decorators import login_required, permission_required
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.db import transaction
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404
 from django.urls import reverse
@@ -183,6 +184,53 @@ def _combinar_resultados(errores_preparacion, resultados_ejecucion):
     )
 
 
+@transaction.atomic
+def _aplicar_operaciones_y_cerrar_lote(operaciones, lote, usuario):
+    """Confirma operaciones y resultado juntos; un fallo de cierre revierte todo."""
+    aplicados = ejecutar_operaciones(
+        operaciones,
+        aplicar=True,
+        usuario=usuario,
+        origen="EXCEL",
+        lote_importacion=lote,
+    )
+    resultados = _combinar_resultados([], aplicados)
+    resumen = resumen_resultados(resultados)
+    if resumen["errores"]:
+        for item in resultados:
+            if item["resultado"] != "ERROR":
+                item["resultado"] = "NO_APLICADA"
+                item["mensaje"] = "No aplicada porque otra fila del archivo falló."
+        resumen = resumen_resultados(resultados)
+        lote.estado = "FALLIDO"
+    else:
+        lote.estado = "COMPLETADO"
+    lote.filas_actualizadas = resumen["aplicadas"]
+    lote.filas_rechazadas = resumen["errores"]
+    lote.detalle_errores = [
+        {"fila": item["fila"], "mensaje": item["mensaje"]}
+        for item in resultados if item["resultado"] == "ERROR"
+    ]
+    lote.metadatos_origen = {
+        "resumen": resumen,
+        "resultado": {
+            "total": resumen["total"], "creadas": 0,
+            "actualizadas": resumen["aplicadas"],
+            "sin_cambios": resumen["sin_cambios"],
+            "omitidas": resumen["no_aplicadas"],
+            "rechazadas": resumen["errores"], "unidad": "operaciones de puertos",
+        },
+        "resultados": resultados,
+        "flujo": "servicios_operativos_puertos",
+    }
+    lote.finalizado_en = now()
+    lote.save(update_fields=[
+        "estado", "filas_actualizadas", "filas_rechazadas",
+        "detalle_errores", "metadatos_origen", "finalizado_en",
+    ])
+    return resultados, resumen
+
+
 @login_required
 @permission_required("mapas.change_detallepuertoodf", raise_exception=True)
 @require_POST
@@ -245,65 +293,13 @@ def importar_operaciones_puertos(request):
             total_filas=len(resultados_validacion),
         )
         try:
-            aplicados = ejecutar_operaciones(
-                operaciones,
-                aplicar=True,
-                usuario=request.user,
-                origen="EXCEL",
-                lote_importacion=lote,
-            )
-            resultados = _combinar_resultados([], aplicados)
-            resumen = resumen_resultados(resultados)
-            if resumen["errores"]:
-                for item in resultados:
-                    if item["resultado"] != "ERROR":
-                        item["resultado"] = "NO_APLICADA"
-                        item["mensaje"] = "No aplicada porque otra fila del archivo falló."
-                resumen = resumen_resultados(resultados)
-                lote.estado = "FALLIDO"
-            else:
-                lote.estado = "COMPLETADO"
-            lote.filas_actualizadas = resumen["aplicadas"]
-            lote.filas_rechazadas = resumen["errores"]
-            lote.detalle_errores = [
-                {"fila": item["fila"], "mensaje": item["mensaje"]}
-                for item in resultados if item["resultado"] == "ERROR"
-            ]
-            lote.metadatos_origen = {
-                "resumen": resumen,
-                "resultados": resultados,
-                "flujo": "servicios_operativos_puertos",
-            }
-            lote.finalizado_en = now()
-            lote.save(update_fields=[
-                "estado",
-                "filas_actualizadas",
-                "filas_rechazadas",
-                "detalle_errores",
-                "metadatos_origen",
-                "finalizado_en",
-            ])
-            correcto = lote.estado == "COMPLETADO"
-            return JsonResponse(
-                {
-                    "status": "success" if correcto else "error",
-                    "message": (
-                        "Archivo aplicado completamente."
-                        if correcto else "El archivo no fue aplicado porque una operación falló."
-                    ),
-                    "can_apply": False,
-                    "summary": resumen,
-                    "rows": resultados,
-                    "lote": str(lote.codigo),
-                    "report_url": reverse(
-                        "resultado_operaciones_puertos",
-                        args=[lote.codigo],
-                    ),
-                },
-                status=200 if correcto else 409,
+            resultados, resumen = _aplicar_operaciones_y_cerrar_lote(
+                operaciones, lote, request.user,
             )
         except Exception:
             logger.exception("Falló la aplicación masiva de puertos")
+            # El rollback no restaura los atributos del objeto Python.
+            lote.refresh_from_db()
             lote.estado = "FALLIDO"
             lote.detalle_errores = [{"mensaje": "Error inesperado durante la aplicación."}]
             lote.finalizado_en = now()
@@ -315,6 +311,26 @@ def importar_operaciones_puertos(request):
                 },
                 status=500,
             )
+        # La respuesta HTTP no forma parte del guardado. Un fallo al construirla
+        # no debe reclasificar un lote que ya fue confirmado en la base.
+        correcto = lote.estado == "COMPLETADO"
+        return JsonResponse(
+            {
+                "status": "success" if correcto else "error",
+                "message": (
+                    "Archivo aplicado completamente."
+                    if correcto else "El archivo no fue aplicado porque una operación falló."
+                ),
+                "can_apply": False,
+                "summary": resumen,
+                "rows": resultados,
+                "lote": str(lote.codigo),
+                "report_url": reverse(
+                    "resultado_operaciones_puertos", args=[lote.codigo],
+                ),
+            },
+            status=200 if correcto else 409,
+        )
     except PermissionDenied:
         raise
     except ValidationError as exc:

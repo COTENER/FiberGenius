@@ -4,21 +4,29 @@ from decimal import Decimal, InvalidOperation
 
 from django.shortcuts import render, redirect
 from django.contrib.auth.decorators import login_required, permission_required
+from ..ui_access import screen_required
 from django.contrib import messages
 from django.views.decorators.http import require_POST
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from django.core.paginator import Paginator
 from ..models import HubSite
 
 logger = logging.getLogger('mapas')
 
 
 @login_required
-@permission_required('mapas.view_hubsite', raise_exception=True)
+@screen_required('sites')
 def gestion_sites(request):
     """Muestra la vista principal de Sites/Hubs con la lista actual."""
-    sites = HubSite.objects.all().order_by('nombre')
-    return render(request, 'administracion/sites_index.html', {'sites': sites})
+    query = request.GET.get('q', '').strip()
+    sites = HubSite.objects.all().order_by('nombre', 'pk')
+    if query:
+        sites = sites.filter(nombre__icontains=query)
+    page = Paginator(sites, 25).get_page(request.GET.get('page'))
+    return render(request, 'administracion/sites_index.html', {
+        'sites': page, 'page_obj': page, 'q': query,
+    })
 
 @login_required
 @permission_required(('mapas.add_hubsite', 'mapas.change_hubsite'), raise_exception=True)

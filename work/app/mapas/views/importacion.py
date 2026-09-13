@@ -10,11 +10,14 @@ import json
 import logging
 import re
 import threading
+import time
+from contextlib import contextmanager
 import unicodedata
 import zipfile
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal, InvalidOperation
+from difflib import get_close_matches
 from pathlib import Path
 
 import pandas as pd
@@ -22,12 +25,15 @@ from django.conf import settings
 from django.shortcuts import render, redirect
 from django.http import HttpResponse, JsonResponse
 from django.contrib.auth.decorators import login_required, permission_required
+from ..ui_access import IMPORT_PERMISSIONS, screen_required
 from django.contrib import messages
 from django.core.exceptions import PermissionDenied, ValidationError
+from django.core import signing
 from django.core.validators import URLValidator
-from django.db import close_old_connections, transaction
+from django.db import DatabaseError, close_old_connections, transaction
 from django.db.models import Count, Q
 from django.utils.timezone import now
+from django.utils.dateparse import parse_datetime
 from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST
 import math
@@ -53,6 +59,9 @@ _IMPORT_EXECUTOR = ThreadPoolExecutor(
     thread_name_prefix='fibergenius-import',
 )
 _IMPORT_PROGRESS_LOCAL = threading.local()
+_PROGRESS_LOCK = threading.RLock()
+ESTADOS_IMPORTACION_EXITOSA = {'COMPLETADO', 'COMPLETADO_CON_ERRORES'}
+ESTADOS_IMPORTACION_FINAL = ESTADOS_IMPORTACION_EXITOSA | {'FALLIDO'}
 
 VALORES_VACIOS = {'', '-', 'nan', 'none', 'null', 'sin_dato', 'no_aplica', 'n/a'}
 VALORES_BORRADO_EXPLICITO = {'__borrar__', '__eliminar__'}
@@ -97,6 +106,11 @@ def _ruta_progreso(codigo):
 
 
 def _guardar_progreso(codigo, **cambios):
+    with _PROGRESS_LOCK:
+        return _escribir_progreso(codigo, **cambios)
+
+
+def _escribir_progreso(codigo, **cambios):
     """Publica avance fuera de la BD para que SQLite no bloquee el sondeo."""
     ruta = _ruta_progreso(codigo)
     actual = {}
@@ -105,6 +119,8 @@ def _guardar_progreso(codigo, **cambios):
             actual = json.loads(ruta.read_text(encoding='utf-8'))
         except (OSError, ValueError):
             actual = {}
+    if not isinstance(actual, dict):
+        actual = {}
     actual.update(cambios)
     actual['codigo'] = str(codigo)
     actual['actualizado_en'] = now().isoformat()
@@ -115,6 +131,15 @@ def _guardar_progreso(codigo, **cambios):
     )
     os.replace(temporal, ruta)
     return actual
+
+
+def _publicar_progreso_seguro(codigo, **cambios):
+    """El archivo de avance es auxiliar: su fallo no cambia el resultado del lote."""
+    try:
+        return _guardar_progreso(codigo, **cambios)
+    except OSError:
+        logger.warning('No se pudo publicar el progreso del lote %s', codigo, exc_info=True)
+        return None
 
 
 def _reportar_progreso(
@@ -145,6 +170,39 @@ def _reportar_progreso(
         if valor is not None:
             datos[clave] = int(valor)
     reporter(**datos)
+
+
+@contextmanager
+def _latido_importacion(codigo):
+    """Señal de vida, no porcentaje ficticio ni confirmación de éxito."""
+    detener = threading.Event()
+
+    def latir():
+        while not detener.wait(5):
+            _publicar_progreso_seguro(codigo, latido_en=now().isoformat())
+
+    hilo = threading.Thread(target=latir, daemon=True)
+    _publicar_progreso_seguro(codigo, latido_en=now().isoformat())
+    hilo.start()
+    try:
+        yield
+    finally:
+        detener.set()
+        hilo.join(timeout=6)
+
+
+def _filas_con_progreso(df):
+    """Avance real de lectura/validación; el commit se informa por separado."""
+    total = len(df)
+    ultima = time.monotonic()
+    for numero, row in enumerate(df.to_dict('records'), start=2):
+        if numero == 2 or time.monotonic() - ultima >= 1 or numero == total + 1:
+            _reportar_progreso(
+                20 + int(25 * (numero - 1) / max(total, 1)),
+                'Revisando filas y relaciones', procesadas=numero - 1, total=total,
+            )
+            ultima = time.monotonic()
+        yield numero, row
 
 
 def _dividir_en_lotes(valores, tamano=500):
@@ -281,12 +339,33 @@ def _url_o_none(valor):
     return texto
 
 
-def _resultado(total=0, creadas=0, actualizadas=0, rechazadas=0):
+def _estado_negocio(obj):
+    """Compara valores de negocio, no la fecha ni la procedencia de recarga."""
+    if obj is None or obj.pk is None:
+        return None
+    ignorados = {'lote_importacion', 'fecha_declaracion', 'fuente_declaracion',
+                 'declarado_por', 'fecha_actualizacion', 'actualizado_en',
+                 'creado_en', 'fecha_creacion'}
+    return tuple(
+        (campo.attname, campo.get_prep_value(getattr(obj, campo.attname)))
+        for campo in obj._meta.concrete_fields
+        if not campo.primary_key and campo.name not in ignorados
+        and not getattr(campo, 'auto_now', False)
+        and not getattr(campo, 'auto_now_add', False)
+    )
+
+
+def _resultado(total=0, creadas=0, actualizadas=0, rechazadas=0, *,
+               sin_cambios=None, omitidas=0, unidad='registros'):
     return {
         'total': int(total),
         'creadas': int(creadas),
         'actualizadas': int(actualizadas),
         'rechazadas': int(rechazadas),
+        'sin_cambios': int(max(0, total - creadas - actualizadas - rechazadas - omitidas)
+                           if sin_cambios is None else sin_cambios),
+        'omitidas': int(omitidas),
+        'unidad': unidad,
     }
 
 
@@ -301,11 +380,16 @@ def _normalizar_dataframe_csv(df, aliases=None):
     aliases = aliases or {}
     columnas = {}
     repetidas = []
-    for original in df.columns:
+    for posicion, original in enumerate(df.columns, start=1):
         normalizada = aliases.get(
             _normalizar_columna_csv(original),
             _normalizar_columna_csv(original),
         )
+        if not normalizada:
+            raise ValueError(
+                f'La columna {posicion} no tiene encabezado. '
+                'Asigne un nombre válido o retire esa columna antes de cargar.'
+            )
         if normalizada in columnas.values():
             repetidas.append(normalizada)
         columnas[original] = normalizada
@@ -317,11 +401,59 @@ def _normalizar_dataframe_csv(df, aliases=None):
     return df.rename(columns=columnas)
 
 
-def _leer_csv_normalizado(file, aliases=None):
+def _validar_columnas_csv(df, permitidas):
+    """No descarta columnas por adivinación: exige revisar las desconocidas."""
+    desconocidas = [columna for columna in df.columns if columna not in permitidas]
+    if desconocidas:
+        detalles = []
+        for columna in desconocidas:
+            similares = get_close_matches(columna, sorted(permitidas), n=1, cutoff=0.75)
+            sugerencia = f" (¿quiso decir '{similares[0]}'?)" if similares else ''
+            detalles.append(f"'{columna}'{sugerencia}")
+        raise ValueError(
+            'Columnas no reconocidas: ' + ', '.join(detalles) + '. '
+            'Corrija sus encabezados o retire esas columnas y vuelva a cargar. '
+            'No se realizó ningún cambio.'
+        )
+
+
+def _leer_csv_normalizado(file, aliases=None, *, columnas_permitidas=None):
     try:
         contenido = file.read().decode('utf-8-sig')
     except UnicodeDecodeError as exc:
         raise ValueError('El archivo debe estar codificado en UTF-8.') from exc
+    # pandas renombra encabezados idénticos (Direccion -> Direccion.1).
+    # Revisar la fila original antes de que eso oculte una duplicación.
+    try:
+        encabezados = next((
+            fila for fila in csv.reader(io.StringIO(contenido), strict=True)
+            if fila and not (len(fila) == 1 and not fila[0].strip())
+        ), [])
+    except csv.Error as exc:
+        raise ValueError(f'No se pudo interpretar el encabezado CSV: {exc}') from exc
+    if not encabezados:
+        raise ValueError('El CSV no contiene encabezados ni filas de datos.')
+    cabecera = _normalizar_dataframe_csv(pd.DataFrame(columns=encabezados), aliases)
+    if columnas_permitidas is not None:
+        _validar_columnas_csv(cabecera, columnas_permitidas)
+    # pandas puede interpretar una celda sobrante como índice y desplazar
+    # silenciosamente las columnas. No aceptar ese cambio de significado.
+    try:
+        filas_csv = (
+            fila for fila in csv.reader(io.StringIO(contenido), strict=True)
+            if fila and not (len(fila) == 1 and not fila[0].strip())
+        )
+        next(filas_csv)
+        errores_ancho = [
+            f'fila {numero}: contiene {len(fila)} celdas; se esperaban {len(encabezados)}'
+            for numero, fila in enumerate(filas_csv, start=2)
+            # Celdas finales omitidas equivalen a vacíos; no desplazan datos
+            # y conservan la compatibilidad con CSV anteriores.
+            if len(fila) > len(encabezados)
+        ]
+    except csv.Error as exc:
+        raise ValueError(f'CSV mal formado: {exc}') from exc
+    _errores_csv(errores_ancho, 'Estructura CSV')
     try:
         df = pd.read_csv(
             io.StringIO(contenido),
@@ -375,7 +507,9 @@ def _errores_csv(errores, etiqueta):
     muestra = '; '.join(errores[:20])
     restante = len(errores) - 20
     sufijo = f'; y {restante} error(es) adicional(es)' if restante > 0 else ''
-    raise ValueError(f'{etiqueta}: {muestra}{sufijo}. No se realizó ningún cambio.')
+    exc = ValueError(f'{etiqueta}: {muestra}{sufijo}. No se realizó ningún cambio.')
+    exc.errores_importacion = [f'{etiqueta}: {error}' for error in errores]
+    raise exc
 
 def calcular_distancia_haversine(lat1, lon1, lat2, lon2):
     """Calcula la distancia en metros entre dos puntos geográficos (Haversine)."""
@@ -428,79 +562,84 @@ def _preparar_coordenadas_geograficas(df, ruta, lote=None):
     tipo_anterior = None
     segmento_secuencia = 1
 
+    errores_filas = []
     for posicion, (_, fila) in enumerate(df.iterrows(), start=1):
-        numero_fila = posicion + 1
-        latitud = _decimal(fila.get('latitude'))
-        longitud = _decimal(fila.get('longitude'))
-        if latitud is None or longitud is None:
-            raise ValueError(
-                f"Ruta '{ruta.nombre}', fila {numero_fila}: "
-                "latitude y longitude son obligatorias."
-            )
-        if not Decimal('-90') <= latitud <= Decimal('90'):
-            raise ValueError(
-                f"Ruta '{ruta.nombre}', fila {numero_fila}: "
-                f"latitude fuera de rango ({latitud})."
-            )
-        if not Decimal('-180') <= longitud <= Decimal('180'):
-            raise ValueError(
-                f"Ruta '{ruta.nombre}', fila {numero_fila}: "
-                f"longitude fuera de rango ({longitud})."
-            )
+        try:
+            numero_fila = posicion + 1
+            latitud = _decimal(fila.get('latitude'))
+            longitud = _decimal(fila.get('longitude'))
+            if latitud is None or longitud is None:
+                raise ValueError(
+                    f"Ruta '{ruta.nombre}', fila {numero_fila}: "
+                    "latitude y longitude son obligatorias."
+                )
+            if not Decimal('-90') <= latitud <= Decimal('90'):
+                raise ValueError(
+                    f"Ruta '{ruta.nombre}', fila {numero_fila}: "
+                    f"latitude fuera de rango ({latitud})."
+                )
+            if not Decimal('-180') <= longitud <= Decimal('180'):
+                raise ValueError(
+                    f"Ruta '{ruta.nombre}', fila {numero_fila}: "
+                    f"longitude fuera de rango ({longitud})."
+                )
 
-        tipo_trazado = _normalizar_tipo_trazado(
-            fila.get('tipo_trazado')
-        )
-        valor_corte = _texto(
-            fila.get('new_seg'),
-            default='false',
-        ).casefold()
-        if valor_corte not in {
-            'true', '1', 'si', 'sí', 'yes',
-            'false', '0', 'no',
-        }:
-            raise ValueError(
-                f"Ruta '{ruta.nombre}', fila {numero_fila}: "
-                f"new_seg inválido ({fila.get('new_seg')})."
+            tipo_trazado = _normalizar_tipo_trazado(
+                fila.get('tipo_trazado')
             )
-        marca_corte = valor_corte in {'true', '1', 'si', 'sí', 'yes'}
-        inicio_segmento = (
-            posicion == 1
-            or marca_corte
-            or tipo_trazado != tipo_anterior
-        )
-        if posicion > 1 and inicio_segmento:
-            segmento_secuencia += 1
-
-        lat_float = float(latitud)
-        lon_float = float(longitud)
-        if lat_anterior is not None and lon_anterior is not None:
-            distancia_total += calcular_distancia_haversine(
-                lat_anterior,
-                lon_anterior,
-                lat_float,
-                lon_float,
+            valor_corte = _texto(
+                fila.get('new_seg'),
+                default='false',
+            ).casefold()
+            if valor_corte not in {
+                'true', '1', 'si', 'sí', 'yes',
+                'false', '0', 'no',
+            }:
+                raise ValueError(
+                    f"Ruta '{ruta.nombre}', fila {numero_fila}: "
+                    f"new_seg inválido ({fila.get('new_seg')})."
+                )
+            marca_corte = valor_corte in {'true', '1', 'si', 'sí', 'yes'}
+            inicio_segmento = (
+                posicion == 1
+                or marca_corte
+                or tipo_trazado != tipo_anterior
             )
-        lat_anterior = lat_float
-        lon_anterior = lon_float
-        tipo_anterior = tipo_trazado
+            if posicion > 1 and inicio_segmento:
+                segmento_secuencia += 1
 
-        coordenadas.append(CoordenadaRuta(
-            ruta=ruta,
-            latitud=latitud,
-            longitud=longitud,
-            orden=posicion,
-            tipo_trazado=tipo_trazado,
-            inicio_segmento=inicio_segmento,
-            tramo_secuencia=segmento_secuencia,
-            tramo=None,
-            lote_importacion=lote,
-        ))
+            lat_float = float(latitud)
+            lon_float = float(longitud)
+            if lat_anterior is not None and lon_anterior is not None:
+                distancia_total += calcular_distancia_haversine(
+                    lat_anterior,
+                    lon_anterior,
+                    lat_float,
+                    lon_float,
+                )
+            lat_anterior = lat_float
+            lon_anterior = lon_float
+            tipo_anterior = tipo_trazado
+
+            coordenadas.append(CoordenadaRuta(
+                ruta=ruta,
+                latitud=latitud,
+                longitud=longitud,
+                orden=posicion,
+                tipo_trazado=tipo_trazado,
+                inicio_segmento=inicio_segmento,
+                tramo_secuencia=segmento_secuencia,
+                tramo=None,
+                lote_importacion=lote,
+            ))
+        except (ValueError, ValidationError) as exc:
+            errores_filas.append(f'fila {posicion + 1}: {exc}')
+    _errores_csv(errores_filas, 'Coordenadas')
 
     return coordenadas, distancia_total
 
 
-def _reemplazar_geografia_ruta(ruta, df, lote=None):
+def _reemplazar_geografia_ruta(ruta, df, lote=None, *, detalle=None):
     """
     Reemplaza solo la geometría. Toda la validación precede al borrado para
     evitar que un CSV inválido deje la ruta sin coordenadas.
@@ -511,8 +650,19 @@ def _reemplazar_geografia_ruta(ruta, df, lote=None):
         ruta,
         lote,
     )
-    CoordenadaRuta.objects.filter(ruta=ruta).delete()
-    CoordenadaRuta.objects.bulk_create(coordenadas, batch_size=2000)
+    campos_geografia = ('latitud', 'longitud', 'orden', 'tipo_trazado',
+                        'inicio_segmento', 'tramo_secuencia', 'tramo_id')
+    anteriores = list(CoordenadaRuta.objects.filter(ruta=ruta).order_by('orden', 'pk')
+                      .values_list(*campos_geografia))
+    nuevos = [tuple(getattr(punto, campo) for campo in campos_geografia) for punto in coordenadas]
+    iguales = anteriores == nuevos
+    if not iguales:
+        CoordenadaRuta.objects.filter(ruta=ruta).delete()
+        CoordenadaRuta.objects.bulk_create(coordenadas, batch_size=2000)
+    if detalle is not None:
+        clave = 'sin_cambios' if iguales else 'creadas'
+        detalle[clave] = detalle.get(clave, 0) + len(coordenadas)
+        detalle['reemplazadas'] = detalle.get('reemplazadas', 0) + (len(anteriores) if not iguales else 0)
 
     ruta.distancia_m = distancia_total
     campos_actualizados = ['distancia_m']
@@ -540,6 +690,7 @@ def save_uploaded_file(uploaded_file, destination_path):
 
 
 @login_required
+@screen_required('imports')
 def configuracion(request):
     rutas = Ruta.objects.all().order_by('nombre')
     lotes = LoteImportacion.objects.select_related('usuario').order_by('-creado_en')
@@ -552,7 +703,9 @@ def configuracion(request):
     return render(
         request,
         'configuracion/configuracion_index.html',
-        {'rutas': rutas, 'lotes_importacion': lotes},
+        {'rutas': rutas, 'lotes_importacion': lotes,
+         'import_limits': {'maxUploadBytes': int(getattr(
+             settings, 'FIBERGENIUS_MAX_UPLOAD_BYTES', 25 * 1024 * 1024))}},
     )
 
 
@@ -640,7 +793,9 @@ def eliminar_ruta_config(request):
 @transaction.atomic
 def _procesar_sites_inventario(file, lote=None):
     """Crea o actualiza Sites con validación completa antes de escribir."""
-    df = _leer_csv_normalizado(file, aliases={
+    df = _leer_csv_normalizado(file, columnas_permitidas={
+        'nombre', 'latitud', 'longitud', 'direccion',
+    }, aliases={
         'site': 'nombre',
         'hub': 'nombre',
         'hub_site': 'nombre',
@@ -653,7 +808,7 @@ def _procesar_sites_inventario(file, lote=None):
     errores = []
     nombres_archivo = set()
     columnas = set(df.columns)
-    for numero_fila, row in enumerate(df.to_dict('records'), start=2):
+    for numero_fila, row in _filas_con_progreso(df):
         nombre = _texto(row.get('nombre'))
         try:
             if not nombre:
@@ -705,6 +860,7 @@ def _procesar_sites_inventario(file, lote=None):
     creadas = actualizadas = 0
     for item in preparadas:
         site = existentes.get(item['nombre'].casefold())
+        anterior_negocio = _estado_negocio(site)
         creada = site is None
         if creada:
             site = HubSite(nombre=item['nombre'])
@@ -721,14 +877,17 @@ def _procesar_sites_inventario(file, lote=None):
         site.save(update_fields=campos_site if not creada else None)
         existentes[item['nombre'].casefold()] = site
         creadas += int(creada)
-        actualizadas += int(not creada)
+        actualizadas += int(not creada and anterior_negocio != _estado_negocio(site))
     return _resultado(len(df), creadas, actualizadas)
 
 
 @transaction.atomic
 def _procesar_fibras_globales(file, lote=None):
     """Crea o actualiza la identidad y el estado global de cada fibra."""
-    df = _leer_csv_normalizado(file, aliases={
+    df = _leer_csv_normalizado(file, columnas_permitidas={
+        'codigo_fibra', 'fibra', 'ruta', 'estado', 'condicion',
+        'servicio', 'conector', 'observaciones',
+    }, aliases={
         'codigo_de_fibra': 'codigo_fibra',
         'fibra_logica': 'codigo_fibra',
         'numero_de_fibra': 'fibra',
@@ -771,7 +930,7 @@ def _procesar_fibras_globales(file, lote=None):
     errores = []
     codigos_archivo = set()
     posiciones_sin_codigo = set()
-    for numero_fila, row in enumerate(df.to_dict('records'), start=2):
+    for numero_fila, row in _filas_con_progreso(df):
         codigo = _texto(row.get('codigo_fibra')).upper()
         fibra_numero = _texto(row.get('fibra')).upper()
         ruta_nombre = _texto(row.get('ruta')) if 'ruta' in df.columns else ''
@@ -946,6 +1105,7 @@ def _procesar_fibras_globales(file, lote=None):
     creadas = actualizadas = 0
     for item in preparadas:
         fibra = resolver_fibra_existente(item)
+        anterior_negocio = _estado_negocio(fibra)
         creada = fibra is None
         if creada:
             fibra = crear_fibra(
@@ -1014,7 +1174,7 @@ def _procesar_fibras_globales(file, lote=None):
             if fibra not in por_ruta_numero[clave_ruta_numero]:
                 por_ruta_numero[clave_ruta_numero].append(fibra)
         creadas += int(creada)
-        actualizadas += int(not creada)
+        actualizadas += int(not creada and anterior_negocio != _estado_negocio(fibra))
 
     resultado = _resultado(len(df), creadas, actualizadas)
     resultado['informaciones'] = [
@@ -1028,7 +1188,9 @@ def _procesar_fibras_globales(file, lote=None):
 @transaction.atomic
 def _procesar_equipos_otu(file, lote=None):
     """Actualiza OTU/Puerto en modo parche y sin éxitos parciales."""
-    df = _leer_csv_normalizado(file, aliases={
+    df = _leer_csv_normalizado(file, columnas_permitidas={
+        'otu', 'puerto', 'modelo', 'latitud', 'longitud', 'estado',
+    }, aliases={
         'descripcion': 'otu',
         'nombre_otu': 'otu',
         'latitude': 'latitud',
@@ -1047,7 +1209,7 @@ def _procesar_equipos_otu(file, lote=None):
     claves_archivo = set()
     metadatos_otu = {}
     estados_validos = {valor for valor, _ in PuertoOTU.ESTADO_CHOICES}
-    for numero_fila, row in enumerate(df.to_dict('records'), start=2):
+    for numero_fila, row in _filas_con_progreso(df):
         try:
             nombre = _texto(row.get('otu'))
             puerto = _entero(row.get('puerto'))
@@ -1128,6 +1290,7 @@ def _procesar_equipos_otu(file, lote=None):
     creadas = actualizadas = 0
     for item in preparadas:
         otu_obj = existentes.get(item['nombre'].casefold())
+        otu_anterior = _estado_negocio(otu_obj)
         otu_creada = otu_obj is None
         if otu_creada:
             otu_obj = OTU(nombre=item['nombre'])
@@ -1142,6 +1305,7 @@ def _procesar_equipos_otu(file, lote=None):
             numero=item['puerto'],
         ).first()
         puerto_creado = puerto_obj is None
+        puerto_anterior = _estado_negocio(puerto_obj)
         if puerto_creado:
             puerto_obj = PuertoOTU(otu=otu_obj, numero=item['puerto'])
         if item['estado_informado']:
@@ -1149,15 +1313,20 @@ def _procesar_equipos_otu(file, lote=None):
         puerto_obj.lote_importacion = lote
         puerto_obj.save(update_fields=(['estado'] if item['estado_informado'] else []) + ['lote_importacion'] if not puerto_creado else None)
         creadas += int(otu_creada or puerto_creado)
-        actualizadas += int(not (otu_creada or puerto_creado))
+        actualizadas += int(not (otu_creada or puerto_creado) and (
+            otu_anterior != _estado_negocio(otu_obj)
+            or puerto_anterior != _estado_negocio(puerto_obj)
+        ))
 
-    return _resultado(len(df), creadas, actualizadas)
+    return _resultado(len(df), creadas, actualizadas, unidad='filas OTU/puerto')
 
 
 @transaction.atomic
 def _asociar_puertos_a_rutas(file, lote=None):
     """Asocia solo los puertos declarados; nunca limpia asociaciones ajenas."""
-    df = _leer_csv_normalizado(file, aliases={
+    df = _leer_csv_normalizado(file, columnas_permitidas={
+        'otu', 'puerto', 'ruta',
+    }, aliases={
         'descripcion': 'otu',
         'nombre_otu': 'otu',
         'enlaces': 'ruta',
@@ -1173,7 +1342,7 @@ def _asociar_puertos_a_rutas(file, lote=None):
     preparadas = []
     errores = []
     claves = set()
-    for numero_fila, row in enumerate(df.to_dict('records'), start=2):
+    for numero_fila, row in _filas_con_progreso(df):
         try:
             otu_nombre = _texto(row.get('otu'))
             numero = _entero(row.get('puerto'))
@@ -1212,7 +1381,11 @@ def _asociar_puertos_a_rutas(file, lote=None):
 @transaction.atomic
 def _procesar_ruta_otu(file, lote=None):
     """Crea o actualiza troncales con validación integral y modo parche."""
-    df = _leer_csv_normalizado(file, aliases={
+    df = _leer_csv_normalizado(file, columnas_permitidas={
+        'ruta', 'otu', 'distancia_m', 'olt', 'pon', 'slot_olt', 'puerto_olt',
+        'enlace', 'capacidad', 'hilos_ocupados', 'hilos_reservados',
+        'hilos_libres', 'reservas_m',
+    }, aliases={
         'nombre_ruta': 'ruta',
         'troncal': 'ruta',
         'distancia': 'distancia_m',
@@ -1236,7 +1409,7 @@ def _procesar_ruta_otu(file, lote=None):
     preparadas = []
     errores = []
     nombres_archivo = set()
-    for numero_fila, row in enumerate(df.to_dict('records'), start=2):
+    for numero_fila, row in _filas_con_progreso(df):
         ruta_nombre = _texto(row.get('ruta'))
         try:
             if not ruta_nombre:
@@ -1403,6 +1576,7 @@ def _procesar_ruta_otu(file, lote=None):
     creadas = actualizadas = 0
     for _, ruta_nombre, ruta_datos in preparadas:
         ruta = existentes.get(ruta_nombre.casefold())
+        anterior_negocio = _estado_negocio(ruta)
         creada = ruta is None
         if creada:
             ruta = Ruta(nombre=ruta_nombre)
@@ -1411,7 +1585,7 @@ def _procesar_ruta_otu(file, lote=None):
         ruta.save(update_fields=list(ruta_datos) if not creada else None)
         existentes[ruta.nombre.casefold()] = ruta
         creadas += int(creada)
-        actualizadas += int(not creada)
+        actualizadas += int(not creada and anterior_negocio != _estado_negocio(ruta))
 
     return _resultado(len(df), creadas, actualizadas)
 
@@ -1422,6 +1596,7 @@ def _procesar_coordenadas_zip(file, lote=None):
     total = creadas = 0
     errores = []
     rutas_archivo = set()
+    detalle = {}
     with zipfile.ZipFile(file, 'r') as zip_ref:
         for filename in zip_ref.namelist():
             if filename.lower().endswith('.csv'):
@@ -1437,12 +1612,13 @@ def _procesar_coordenadas_zip(file, lote=None):
 
                 if ruta_obj:
                     with zip_ref.open(filename) as csv_file:
-                        csv_content = csv_file.read().decode('utf-8-sig')
-                        df_coords = pd.read_csv(io.StringIO(csv_content))
+                        df_coords = _leer_csv_normalizado(csv_file, columnas_permitidas={
+                            'latitude', 'longitude', 'tipo_trazado', 'new_seg',
+                        })
                     cantidad = _reemplazar_geografia_ruta(
                         ruta_obj,
                         df_coords,
-                        lote,
+                        lote, detalle=detalle,
                     )
                     total += cantidad
                     creadas += cantidad
@@ -1452,13 +1628,19 @@ def _procesar_coordenadas_zip(file, lote=None):
     if not rutas_archivo:
         raise ValueError('Coordenadas de rutas: el ZIP no contiene archivos CSV.')
     _errores_csv(errores, 'Coordenadas de rutas')
-    return _resultado(total, creadas)
+    resultado = _resultado(total, detalle.get('creadas', 0),
+                           sin_cambios=detalle.get('sin_cambios', 0), unidad='puntos geográficos')
+    resultado['puntos_reemplazados'] = detalle.get('reemplazadas', 0)
+    return resultado
 
 
 @transaction.atomic
 def _procesar_reservas(file, lote=None):
     """Actualiza reservas por código estable o, como fallback, Ruta + Nombre."""
-    df = _leer_csv_normalizado(file, aliases={
+    df = _leer_csv_normalizado(file, columnas_permitidas={
+        'ruta', 'nombre', 'tipo', 'latitud', 'longitud', 'codigo',
+        'reserva_m', 'orden', 'progresiva_m',
+    }, aliases={
         'landmark_name': 'nombre',
         'connection_type': 'tipo',
         'enlace': 'ruta',
@@ -1480,7 +1662,7 @@ def _procesar_reservas(file, lote=None):
     preparadas = []
     errores = []
     claves_archivo = set()
-    for numero_fila, row in enumerate(df.to_dict('records'), start=2):
+    for numero_fila, row in _filas_con_progreso(df):
         try:
             ruta_nombre = _texto(row.get('ruta'))
             ruta_obj = rutas.get(ruta_nombre.casefold()) if ruta_nombre else None
@@ -1562,6 +1744,7 @@ def _procesar_reservas(file, lote=None):
                 )
             existente = candidatas[0] if candidatas else None
         reserva = existente or Reserva()
+        anterior_negocio = _estado_negocio(reserva)
         creada = reserva.pk is None
         for campo in ('ruta', 'nombre', 'tipo', 'latitud', 'longitud'):
             setattr(reserva, campo, item[campo])
@@ -1590,7 +1773,7 @@ def _procesar_reservas(file, lote=None):
                 campos_reserva.append(campo)
         reserva.save(update_fields=campos_reserva if not creada else None)
         creadas += int(creada)
-        actualizadas += int(not creada)
+        actualizadas += int(not creada and anterior_negocio != _estado_negocio(reserva))
 
     return _resultado(len(df), creadas, actualizadas)
 
@@ -1598,7 +1781,7 @@ def _procesar_reservas(file, lote=None):
 @transaction.atomic
 def _procesar_id_rutas(file, lote=None):
     """Carga el archivo CSV de IDs de Rutas."""
-    df = _leer_csv_normalizado(file, aliases={
+    df = _leer_csv_normalizado(file, columnas_permitidas={'ruta', 'id'}, aliases={
         'troncal': 'ruta',
         'id_onmsi': 'id',
     })
@@ -1613,7 +1796,7 @@ def _procesar_id_rutas(file, lote=None):
     errores = []
     rutas_vistas = set()
     ids_vistos = set()
-    for numero_fila, row in enumerate(df.to_dict('records'), start=2):
+    for numero_fila, row in _filas_con_progreso(df):
         try:
             ruta_nombre = _texto(row.get('ruta'))
             ruta_obj = rutas.get(ruta_nombre.casefold()) if ruta_nombre else None
@@ -1643,6 +1826,7 @@ def _procesar_id_rutas(file, lote=None):
             ).first()
             or IDRuta(ruta_obj=ruta_obj)
         )
+        anterior_negocio = _estado_negocio(identificador)
         identificador.ruta_obj = ruta_obj
         identificador.ruta = ruta_obj.nombre
         identificador.id_onmsi = id_onmsi
@@ -1651,7 +1835,7 @@ def _procesar_id_rutas(file, lote=None):
         identificador.full_clean()
         identificador.save(update_fields=['ruta_obj', 'ruta', 'id_onmsi', 'lote_importacion'] if not creada else None)
         creadas += int(creada)
-        actualizadas += int(not creada)
+        actualizadas += int(not creada and anterior_negocio != _estado_negocio(identificador))
 
     return _resultado(len(df), creadas, actualizadas)
 
@@ -1669,6 +1853,7 @@ def _procesar_coordenadas_inventario_zip(file, lote=None):
     total = creadas = 0
     errores = []
     rutas_archivo = set()
+    detalle = {}
     with zipfile.ZipFile(file, 'r') as zip_ref:
         for filename in zip_ref.namelist():
             if filename.lower().endswith('.csv'):
@@ -1684,12 +1869,13 @@ def _procesar_coordenadas_inventario_zip(file, lote=None):
 
                 if ruta_obj:
                     with zip_ref.open(filename) as csv_file:
-                        csv_content = csv_file.read().decode('utf-8-sig')
-                        df_coords = pd.read_csv(io.StringIO(csv_content))
+                        df_coords = _leer_csv_normalizado(csv_file, columnas_permitidas={
+                            'latitude', 'longitude', 'tipo_trazado', 'new_seg',
+                        })
                     cantidad = _reemplazar_geografia_ruta(
                         ruta_obj,
                         df_coords,
-                        lote,
+                        lote, detalle=detalle,
                     )
                     total += cantidad
                     creadas += cantidad
@@ -1701,7 +1887,10 @@ def _procesar_coordenadas_inventario_zip(file, lote=None):
             'Trazado geográfico segmentado: el ZIP no contiene archivos CSV.'
         )
     _errores_csv(errores, 'Trazado geográfico segmentado')
-    return _resultado(total, creadas)
+    resultado = _resultado(total, detalle.get('creadas', 0),
+                           sin_cambios=detalle.get('sin_cambios', 0), unidad='puntos geográficos')
+    resultado['puntos_reemplazados'] = detalle.get('reemplazadas', 0)
+    return resultado
 
 def _procesar_tramos_legacy_validado(df, lote=None):
     """Adapta RC1/V5 a un solo tramo con el mismo contrato atómico."""
@@ -1717,6 +1906,7 @@ def _procesar_tramos_legacy_validado(df, lote=None):
         'marca_modelo', 'serial', 'odf_nombre', 'hilos_ocupados',
         'hilos_libres',
     }
+    _validar_columnas_csv(df, campos_opcionales | {'ruta'})
     rutas = {
         ruta.nombre.casefold(): ruta
         for ruta in Ruta.objects.all().only('pk', 'nombre')
@@ -1730,7 +1920,7 @@ def _procesar_tramos_legacy_validado(df, lote=None):
         'Complementarios. Las columnas de identificación de tramo solo son '
         'necesarias para rutas con varios tramos.'
     ]
-    for indice, row in enumerate(df.to_dict('records'), start=2):
+    for indice, row in _filas_con_progreso(df):
         ruta_nombre = _texto(row.get('ruta'))
         ruta = rutas.get(ruta_nombre.casefold()) if ruta_nombre else None
         try:
@@ -1866,6 +2056,7 @@ def _procesar_tramos_legacy_validado(df, lote=None):
         ruta = item['ruta']
         tramos_existentes = tramos_por_ruta.get(ruta.pk, [])
         tramo = tramos_existentes[0] if tramos_existentes else None
+        anterior_negocio = _estado_negocio(tramo)
         creada = tramo is None
         if creada:
             tramo = InventarioTramo(
@@ -1948,13 +2139,11 @@ def _procesar_tramos_legacy_validado(df, lote=None):
             ruta.lote_importacion = lote
         ruta.save()
         creadas += int(creada)
-        actualizadas += int(not creada)
+        actualizadas += int(not creada and anterior_negocio != _estado_negocio(tramo))
 
-    # El contrato legacy cuenta filas procesadas como actualizadas, incluso
-    # cuando tuvo que crear el registro provisional de secuencia 1.
     resultado = _resultado(
         len(df),
-        actualizadas=creadas + actualizadas,
+        creadas=creadas, actualizadas=actualizadas,
     )
     resultado['advertencias'] = sorted(set(advertencias))
     resultado['formato'] = 'legacy'
@@ -2012,6 +2201,11 @@ def _procesar_tramos_inventario(file, lote=None):
         'mufas', 'splitters', 'reservas_m', 'hilos_ocupados',
         'hilos_reservados', 'hilos_libres',
     }
+    _validar_columnas_csv(df, campos_opcionales | {
+        'ruta', 'secuencia', 'codigo_tramo', 'origen', 'destino',
+        'origen_tipo', 'origen_codigo', 'origen_nombre',
+        'destino_tipo', 'destino_codigo', 'destino_nombre',
+    })
 
     def tipo_extremo(valor, tipo_informado):
         clave = valor.casefold()
@@ -2023,7 +2217,7 @@ def _procesar_tramos_inventario(file, lote=None):
             tipos_inferidos[clave] = inferir_tipo_nodo(valor)
         return tipos_inferidos[clave]
 
-    for indice, row in enumerate(df.to_dict('records'), start=2):
+    for indice, row in _filas_con_progreso(df):
         ruta_nombre = _texto(row.get('ruta'))
         try:
             ruta = rutas.get(ruta_nombre.casefold()) if ruta_nombre else None
@@ -2380,6 +2574,7 @@ def _procesar_tramos_inventario(file, lote=None):
         key=lambda fila: (fila['ruta'].pk, fila['secuencia']),
     ):
         tramo = objetivos[item['fila']]
+        anterior_negocio = _estado_negocio(tramo)
         creada = tramo is None
         if creada:
             tramo = InventarioTramo(ruta=item['ruta'])
@@ -2451,7 +2646,7 @@ def _procesar_tramos_inventario(file, lote=None):
                     setattr(tramo, campo, item[campo])
         tramo.save()
         creadas += int(creada)
-        actualizadas += int(not creada)
+        actualizadas += int(not creada and anterior_negocio != _estado_negocio(tramo))
         if lote is not None:
             Ruta.objects.filter(pk=item['ruta'].pk).update(
                 lote_importacion=lote
@@ -2466,7 +2661,11 @@ def _procesar_tramos_inventario(file, lote=None):
 @transaction.atomic
 def _procesar_fibras_inventario(file, lote=None):
     """Actualiza exclusivamente la posición/estado de fibras por tramo."""
-    df = _leer_csv_normalizado(file, aliases={
+    columnas_legacy = {'tipo_de_servicio', 'origen', 'destino', 'conector'}
+    df = _leer_csv_normalizado(file, columnas_permitidas={
+        'ruta', 'fibra', 'codigo_fibra', 'secuencia', 'codigo_tramo',
+        'estado', 'observaciones',
+    } | columnas_legacy, aliases={
         'troncal': 'ruta',
         'codigo_de_tramo': 'codigo_tramo',
         'numero_de_tramo': 'secuencia',
@@ -2511,7 +2710,7 @@ def _procesar_fibras_inventario(file, lote=None):
     errores = []
     claves_fisicas = set()
     claves_logicas_tramo = set()
-    for indice, row in enumerate(df.to_dict('records'), start=2):
+    for indice, row in _filas_con_progreso(df):
         ruta_nombre = _texto(row.get('ruta'))
         numero_hilo = _texto(row.get('fibra')).upper()
         codigo_estable = _texto(row.get('codigo_fibra')).upper()
@@ -2744,6 +2943,7 @@ def _procesar_fibras_inventario(file, lote=None):
     }
     from ..services.fibras import snapshot_asignacion, auditar_asignacion
     anteriores_asignaciones = {a.pk: snapshot_asignacion(a) for a in asignaciones}
+    valores_anteriores = {a.pk: _estado_negocio(a) for a in asignaciones}
     tocadas_asignaciones = {}
 
     conflictos = []
@@ -2826,7 +3026,9 @@ def _procesar_fibras_inventario(file, lote=None):
         asignacion.save()
         tocadas_asignaciones[asignacion.pk] = asignacion
         asignaciones_creadas += int(creada)
-        asignaciones_actualizadas += int(not creada)
+        asignaciones_actualizadas += int(
+            not creada and valores_anteriores.get(asignacion.pk) != _estado_negocio(asignacion)
+        )
         asignaciones_por_posicion[clave_posicion] = asignacion
         asignaciones_por_logica[clave_asignacion_logica] = asignacion
 
@@ -2867,6 +3069,14 @@ def _procesar_fibras_inventario(file, lote=None):
         'La carga se aplicó en modo parche exclusivamente sobre FibraTramo; '
         'no creó fibras globales ni modificó sus metadatos.'
     ]
+    legacy_presentes = sorted(columnas_legacy & set(df.columns))
+    if legacy_presentes:
+        resultado['advertencias'] = [
+            'Columnas antiguas no aplicadas en Fibras por Tramo: '
+            + ', '.join(legacy_presentes) + '. '
+            'Este archivo solo actualiza asignaciones y datos por tramo. '
+            'Use Fibras globales para sus metadatos y Terminaciones para las conexiones ODF.'
+        ]
     return resultado
 
 
@@ -2917,7 +3127,15 @@ def _procesar_terminaciones_fibra(file, lote=None):
     )
     from ..services.puertos import conectar_puertos_masivo
 
-    df = _leer_csv_normalizado(file, aliases=TERMINACIONES_ALIASES_CSV)
+    df = _leer_csv_normalizado(
+        file, aliases=TERMINACIONES_ALIASES_CSV,
+        columnas_permitidas={
+            'ruta', 'fibra', 'codigo_fibra', 'fibra_id', 'extremo', 'odf',
+            'puerto', 'conector', 'site', 'estado', 'condicion', 'servicio',
+            'observaciones', 'odf_a', 'puerto_a', 'conector_a', 'site_a',
+            'odf_b', 'puerto_b', 'conector_b', 'site_b',
+        },
+    )
     columnas = set(df.columns)
     formato_ancho = bool(
         columnas & {
@@ -2975,7 +3193,7 @@ def _procesar_terminaciones_fibra(file, lote=None):
     preparadas = []
     errores = []
     claves_puerto = set()
-    for numero_fila, row in enumerate(df.to_dict('records'), start=2):
+    for numero_fila, row in _filas_con_progreso(df):
         try:
             ruta_nombre = _texto(row.get('ruta'))
             ruta = None
@@ -3489,6 +3707,7 @@ def _procesar_terminaciones_fibra(file, lote=None):
         for item in preparadas
         if item['fibra'] is not None
     }
+    fibras_antes = {f.pk: _estado_negocio(f) for f in fibras_por_grupo.values()}
     grupos_existentes = set(fibras_por_grupo)
     grupos_aplicados = set()
     fibras_tocadas = set()
@@ -3625,11 +3844,19 @@ def _procesar_terminaciones_fibra(file, lote=None):
         'Creando terminaciones y actualizando puertos',
         total=len(df),
     )
-    _, creadas, actualizadas = conectar_puertos_masivo(
+    anteriores_terminaciones = {
+        t.pk: _estado_negocio(t) for t in por_fibra_extremo.values()
+    }
+    terminaciones_resultantes, creadas, _ = conectar_puertos_masivo(
         conexiones,
         usuario=usuario,
         origen='EXCEL',
         lote_importacion=lote,
+    )
+    actualizadas = sum(
+        t.pk in anteriores_terminaciones
+        and anteriores_terminaciones[t.pk] != _estado_negocio(t)
+        for t in terminaciones_resultantes
     )
     _reportar_progreso(
         92,
@@ -3644,8 +3871,19 @@ def _procesar_terminaciones_fibra(file, lote=None):
         len(df),
         creadas=creadas,
         actualizadas=actualizadas,
+        sin_cambios=len(conexiones) - creadas - actualizadas,
+        omitidas=(2 if formato_ancho else 1) * len(df) - len(conexiones),
+        unidad='terminaciones',
     )
     resultado['modo'] = 'parche'
+    # El contador principal mide terminaciones; informar aparte los cambios
+    # globales evita anunciar "sin cambios" al actualizar solo su servicio.
+    resultado['fibras_creadas'] = len(fibras_tocadas - set(fibras_antes))
+    resultado['fibras_modificadas'] = sum(
+        f.pk in fibras_antes and fibras_antes[f.pk] != _estado_negocio(f)
+        for lote_ids in _dividir_en_lotes(sorted(fibras_tocadas))
+        for f in InventarioFibra.objects.filter(pk__in=lote_ids)
+    )
     resultado['informaciones'] = [
         'La carga no eliminó terminaciones omitidas. Cada puerto declarado '
         'quedó Ocupado mediante una terminación oficial.'
@@ -3670,7 +3908,10 @@ def _procesar_terminaciones_fibra(file, lote=None):
 @transaction.atomic
 def _procesar_odfs_inventario(file, lote=None):
     """Crea o actualiza ODF sin convertir celdas vacías en borrados."""
-    df = _leer_csv_normalizado(file, aliases={
+    df = _leer_csv_normalizado(file, columnas_permitidas={
+        'odf', 'hub_site', 'sala', 'rack', 'capacidad_puertos',
+        'tipo_conector', 'estado', 'observaciones',
+    }, aliases={
         'site': 'hub_site',
         'sitio': 'hub_site',
         'capacidad': 'capacidad_puertos',
@@ -3696,7 +3937,7 @@ def _procesar_odfs_inventario(file, lote=None):
     preparadas = []
     errores = []
     nombres_archivo = set()
-    for numero_fila, row in enumerate(df.to_dict('records'), start=2):
+    for numero_fila, row in _filas_con_progreso(df):
         odf_nombre = limpiar_texto(row.get('odf'))
         hub_site = limpiar_texto(row.get('hub_site'))
         sala = limpiar_texto(row.get('sala'))
@@ -3763,6 +4004,7 @@ def _procesar_odfs_inventario(file, lote=None):
 
     creadas = actualizadas = 0
     for item in preparadas:
+        anterior_negocio = _estado_negocio(InventarioODF.objects.select_for_update().filter(odf__iexact=item['nombre']).first())
         odf_obj, creada = guardar_odf_normalizado(
             odf_nombre=item['nombre'],
             hub_nombre=item['hub_site'],
@@ -3774,14 +4016,17 @@ def _procesar_odfs_inventario(file, lote=None):
         if creada and item['capacidad'] is not None:
             ajustar_puertos_a_capacidad(odf_obj, item['capacidad'])
         creadas += int(creada)
-        actualizadas += int(not creada)
+        actualizadas += int(not creada and anterior_negocio != _estado_negocio(odf_obj))
 
     return _resultado(len(df), creadas, actualizadas)
 
 @transaction.atomic
 def _procesar_puertos_odf_inventario(file, lote=None):
     """Actualiza metadatos de puertos; conserva compatibilidad CSV legacy."""
-    df = _leer_csv_normalizado(file, aliases={
+    df = _leer_csv_normalizado(file, columnas_permitidas={
+        'odf', 'hub_site', 'puerto_odf', 'estado_puerto', 'bandeja',
+        'tipo_conector', 'patchcord', 'destino', 'observaciones',
+    }, aliases={
         'site': 'hub_site',
         'sitio': 'hub_site',
         'puerto': 'puerto_odf',
@@ -3815,81 +4060,86 @@ def _procesar_puertos_odf_inventario(file, lote=None):
     filas = []
     claves_archivo = set()
     odf_ids = set()
-    for numero_fila, row in enumerate(df.to_dict('records'), start=2):
-        hub_site = limpio(row.get('hub_site'))
-        odf_nombre = limpio(row.get('odf'))
-        puerto_num = limpio(row.get('puerto_odf'))
-        if not all((odf_nombre, puerto_num)):
-            raise ValueError(f'Fila {numero_fila}: puerto ODF con campos obligatorios vacíos.')
-        odf_obj = odfs.get(odf_nombre.casefold())
-        if not odf_obj:
-            raise ValueError(
-                f"Fila {numero_fila}: ODF inexistente {odf_nombre}."
-            )
-        if hub_site and hub_site.casefold() != nombre_site(odf_obj).casefold():
-            raise ValueError(
-                f"Fila {numero_fila}: el Site {hub_site} no corresponde al "
-                f"ODF {odf_obj.odf}; pertenece a {nombre_site(odf_obj)}."
-            )
-        if (
-            puerto_num.isdigit()
-            and odf_obj.capacidad_puertos
-            and int(puerto_num) > odf_obj.capacidad_puertos
-        ):
-            raise ValueError(
-                f'Fila {numero_fila}: el puerto {puerto_num} supera la '
-                f'capacidad {odf_obj.capacidad_puertos} del ODF {odf_obj.odf}.'
-            )
-        clave = (odf_obj.pk, puerto_num.casefold())
-        if clave in claves_archivo:
-            raise ValueError(f'Fila {numero_fila}: puerto duplicado {odf_nombre} / {puerto_num}.')
-        claves_archivo.add(clave)
-        odf_ids.add(odf_obj.pk)
-        metadatos = {}
-        for columna in (
-            'bandeja', 'tipo_conector', 'patchcord',
-            'destino', 'observaciones',
-        ):
-            informado, valor = _texto_parche(
-                row, columna, columnas, valor_borrado=''
-            )
-            if informado:
-                metadatos[columna] = valor
-        for campo, valor in {
-            'puerto_odf': puerto_num,
-            **metadatos,
-        }.items():
-            max_length = getattr(
-                DetallePuertoODF._meta.get_field(campo),
-                'max_length',
-                None,
-            )
-            if max_length and valor is not None and len(str(valor)) > max_length:
+    errores_filas = []
+    for numero_fila, row in _filas_con_progreso(df):
+        try:
+            hub_site = limpio(row.get('hub_site'))
+            odf_nombre = limpio(row.get('odf'))
+            puerto_num = limpio(row.get('puerto_odf'))
+            if not all((odf_nombre, puerto_num)):
+                raise ValueError(f'Fila {numero_fila}: puerto ODF con campos obligatorios vacíos.')
+            odf_obj = odfs.get(odf_nombre.casefold())
+            if not odf_obj:
                 raise ValueError(
-                    f'Fila {numero_fila}: {campo} supera {max_length} caracteres.'
+                    f"Fila {numero_fila}: ODF inexistente {odf_nombre}."
                 )
-        estado_original = limpio(row.get('estado_puerto'), 'LIBRE')
-        destino = metadatos.get('destino', '')
-        estado = normalizar_estado_puerto_odf_con_destino(
-            estado_original,
-            destino,
-            default=None,
-        )
-        if not estado:
-            raise ValueError(f'Fila {numero_fila}: estado de puerto inválido: {estado_original}.')
-        if estado == 'OCUPADO':
-            raise ValueError(
-                f'Fila {numero_fila}: un puerto no se importa como Ocupado. '
-                'Cárguelo como Libre y cree la ocupación mediante la '
-                'terminación oficial de la fibra.'
+            if hub_site and hub_site.casefold() != nombre_site(odf_obj).casefold():
+                raise ValueError(
+                    f"Fila {numero_fila}: el Site {hub_site} no corresponde al "
+                    f"ODF {odf_obj.odf}; pertenece a {nombre_site(odf_obj)}."
+                )
+            if (
+                puerto_num.isdigit()
+                and odf_obj.capacidad_puertos
+                and int(puerto_num) > odf_obj.capacidad_puertos
+            ):
+                raise ValueError(
+                    f'Fila {numero_fila}: el puerto {puerto_num} supera la '
+                    f'capacidad {odf_obj.capacidad_puertos} del ODF {odf_obj.odf}.'
+                )
+            clave = (odf_obj.pk, puerto_num.casefold())
+            if clave in claves_archivo:
+                raise ValueError(f'Fila {numero_fila}: puerto duplicado {odf_nombre} / {puerto_num}.')
+            claves_archivo.add(clave)
+            odf_ids.add(odf_obj.pk)
+            metadatos = {}
+            for columna in (
+                'bandeja', 'tipo_conector', 'patchcord',
+                'destino', 'observaciones',
+            ):
+                informado, valor = _texto_parche(
+                    row, columna, columnas, valor_borrado=''
+                )
+                if informado:
+                    metadatos[columna] = valor
+            for campo, valor in {
+                'puerto_odf': puerto_num,
+                **metadatos,
+            }.items():
+                max_length = getattr(
+                    DetallePuertoODF._meta.get_field(campo),
+                    'max_length',
+                    None,
+                )
+                if max_length and valor is not None and len(str(valor)) > max_length:
+                    raise ValueError(
+                        f'Fila {numero_fila}: {campo} supera {max_length} caracteres.'
+                    )
+            estado_original = limpio(row.get('estado_puerto'), 'LIBRE')
+            destino = metadatos.get('destino', '')
+            estado = normalizar_estado_puerto_odf_con_destino(
+                estado_original,
+                destino,
+                default=None,
             )
-        filas.append((odf_obj, puerto_num, {
-            # La relación es la fuente oficial; no conserve variantes de
-            # mayúsculas o alias procedentes del CSV.
-            'estado_puerto': estado,
-            'lote_importacion': lote,
-            **metadatos,
-        }))
+            if not estado:
+                raise ValueError(f'Fila {numero_fila}: estado de puerto inválido: {estado_original}.')
+            if estado == 'OCUPADO':
+                raise ValueError(
+                    f'Fila {numero_fila}: un puerto no se importa como Ocupado. '
+                    'Cárguelo como Libre y cree la ocupación mediante la '
+                    'terminación oficial de la fibra.'
+                )
+            filas.append((odf_obj, puerto_num, {
+                # La relación es la fuente oficial; no conserve variantes de
+                # mayúsculas o alias procedentes del CSV.
+                'estado_puerto': estado,
+                'lote_importacion': lote,
+                **metadatos,
+            }))
+        except (ValueError, ValidationError) as exc:
+            errores_filas.append(f'fila {numero_fila}: {exc}')
+    _errores_csv(errores_filas, 'Puertos ODF')
 
     existentes = {
         (obj.odf_obj_id, obj.puerto_odf.casefold()): obj
@@ -3898,9 +4148,11 @@ def _procesar_puertos_odf_inventario(file, lote=None):
     crear = []
     actualizar = []
     grupos_actualizacion = defaultdict(list)
+    sin_cambios = 0
     for odf_obj, puerto_num, valores in filas:
         obj = existentes.get((odf_obj.pk, puerto_num.casefold()))
         if obj:
+            anterior_negocio = _estado_negocio(obj)
             # Una recarga de inventario actualiza metadatos, pero no ejecuta
             # transiciones operativas ni consume/cancela reservas. El estado
             # existente se conserva y se gestiona mediante los servicios de
@@ -3908,6 +4160,8 @@ def _procesar_puertos_odf_inventario(file, lote=None):
             valores.pop('estado_puerto', None)
             for campo, valor in valores.items():
                 setattr(obj, campo, valor)
+            if anterior_negocio == _estado_negocio(obj):
+                sin_cambios += 1
             actualizar.append(obj)
             grupos_actualizacion[tuple(sorted(valores))].append(obj)
         else:
@@ -3968,7 +4222,8 @@ def _procesar_puertos_odf_inventario(file, lote=None):
         batch_size=200,
     )
 
-    return _resultado(len(df), len(crear), len(actualizar))
+    return _resultado(len(df), len(crear), len(actualizar) - sin_cambios,
+                      sin_cambios=sin_cambios, unidad='puertos')
 
 @transaction.atomic
 def _procesar_coordenadas_csv(file, lote=None):
@@ -3980,7 +4235,9 @@ def _procesar_coordenadas_csv(file, lote=None):
     Columnas requeridas: Ruta, Latitude, Longitude
     Columnas opcionales: tipo_trazado, new_seg
     """
-    df = _leer_csv_normalizado(file, aliases={
+    df = _leer_csv_normalizado(file, columnas_permitidas={
+        'ruta', 'latitude', 'longitude', 'tipo_trazado', 'new_seg', 'hub_site',
+    }, aliases={
         'latitud': 'latitude',
         'longitud': 'longitude',
         'inicio_segmento': 'new_seg',
@@ -4014,6 +4271,7 @@ def _procesar_coordenadas_csv(file, lote=None):
             'compatibilidad y no modifica el inventario técnico.'
         )
 
+    detalle = {}
     rutas_actualizadas = 0
     coordenadas_creadas = 0
 
@@ -4030,14 +4288,16 @@ def _procesar_coordenadas_csv(file, lote=None):
         coordenadas_creadas += _reemplazar_geografia_ruta(
             ruta_obj,
             df_coords.reset_index(drop=True),
-            lote,
+            lote, detalle=detalle,
         )
         rutas_actualizadas += 1
 
-    resultado = _resultado(len(df), coordenadas_creadas)
+    resultado = _resultado(len(df), detalle.get('creadas', 0),
+                           sin_cambios=detalle.get('sin_cambios', 0), unidad='puntos geográficos')
+    resultado['puntos_reemplazados'] = detalle.get('reemplazadas', 0)
     resultado['rutas_actualizadas'] = rutas_actualizadas
     if hub_site_ignorado:
-        resultado['informaciones'] = [
+        resultado['advertencias'] = [
             'La columna hub_site no se guardó desde esta carga geográfica; '
             'adminístrala mediante Inventario Técnico de Tramos.'
         ]
@@ -4054,11 +4314,11 @@ def _cerrar_lote_exitoso(lote, resultado):
     lote.filas_actualizadas = int(resultado.get('actualizadas', 0) or 0)
     lote.filas_rechazadas = filas_rechazadas
     advertencias = [
-        str(item)[:1000]
+        str(item)
         for item in (resultado.get('advertencias') or [])
     ]
     informaciones = [
-        str(item)[:1000]
+        str(item)
         for item in (resultado.get('informaciones') or [])
     ]
     lote.detalle_errores = advertencias
@@ -4066,6 +4326,7 @@ def _cerrar_lote_exitoso(lote, resultado):
     metadatos.update({
         'advertencias': advertencias,
         'informaciones': informaciones,
+        'resultado': resultado,
     })
     lote.metadatos_origen = metadatos
     lote.finalizado_en = now()
@@ -4081,9 +4342,56 @@ def _cerrar_lote_fallido(lote, exc):
     if lote.estado in {'COMPLETADO', 'COMPLETADO_CON_ERRORES'}:
         return
     lote.estado = 'FALLIDO'
-    lote.detalle_errores = [str(exc)[:1000]]
+    lote.detalle_errores = getattr(exc, 'errores_importacion', [str(exc)])
     lote.finalizado_en = now()
     lote.save(update_fields=['estado', 'detalle_errores', 'finalizado_en'])
+
+
+def _resultado_progreso_lote(lote, nombre_amigable=None):
+    """Construye el resultado final exclusivamente desde el lote persistido."""
+    exitoso = lote.estado in ESTADOS_IMPORTACION_EXITOSA
+    nombre = nombre_amigable or obtener_procesadores_importacion().get(
+        lote.tipo, (None, lote.tipo),
+    )[1]
+    validacion = (lote.metadatos_origen or {}).get('modo') == 'validar'
+    datos = {
+        'codigo': str(lote.codigo),
+        'usuario_id': lote.usuario_id,
+        'tipo': lote.tipo,
+        'archivo': lote.archivo_origen,
+        'estado': lote.estado,
+        'porcentaje': 100,
+        'etapa': 'Importación completada' if exitoso else 'La importación falló',
+        'procesadas': lote.total_filas if exitoso else 0,
+        'total': lote.total_filas,
+        'creadas': lote.filas_creadas,
+        'actualizadas': lote.filas_actualizadas,
+        'rechazadas': lote.filas_rechazadas,
+        'modo': 'validar' if validacion else 'aplicar',
+        'resultado': (lote.metadatos_origen or {}).get('resultado', {}),
+        'errores_url': reverse('errores_importacion', args=[lote.codigo]),
+        'mensaje': (
+            f'{nombre}: {lote.total_filas} fila(s) procesadas; '
+            f'{lote.filas_creadas} creadas, '
+            f'{lote.filas_actualizadas} actualizadas y '
+            f'{lote.filas_rechazadas} rechazadas.'
+            if exitoso else
+            'No se pudo completar la importación. Revise el detalle del lote.'
+        ),
+    }
+    if validacion:
+        datos['etapa'] = 'Revisión completada; sin cambios guardados' if exitoso else 'Archivo no válido'
+        datos['mensaje'] = (
+            'Revisión completa de datos y relaciones. No se guardaron cambios de inventario. '
+            'Revise el resultado y confirme la carga; se validará de nuevo al aplicar.'
+            if exitoso else 'No se guardaron cambios. Descargue el informe para corregir el archivo.'
+        )
+        if exitoso and not lote.filas_rechazadas:
+            datos['validacion_token'] = signing.dumps({
+                'lote': str(lote.codigo), 'usuario': lote.usuario_id,
+                'tipo': lote.tipo, 'hash': lote.hash_sha256,
+            }, salt='importacion-validada')
+    return datos
 
 
 def _procesar_lote_atomicamente(lote_id, procesador_func, archivo):
@@ -4096,7 +4404,14 @@ def _procesar_lote_atomicamente(lote_id, procesador_func, archivo):
             return lote, None
         lote.estado = 'PROCESANDO'
         lote.save(update_fields=['estado'])
-        resultado = procesador_func(archivo, lote=lote)
+        if (lote.metadatos_origen or {}).get('modo') == 'validar':
+            # Misma lógica y restricciones, sin conservar datos ni auditorías
+            # de inventario. El resumen de revisión sí queda en su propio lote.
+            with transaction.atomic():
+                resultado = procesador_func(archivo, lote=lote)
+                transaction.set_rollback(True)
+        else:
+            resultado = procesador_func(archivo, lote=lote)
         resultado = _cerrar_lote_exitoso(lote, resultado)
     return lote, resultado
 
@@ -4167,41 +4482,25 @@ def _ejecutar_importacion_en_segundo_plano(
 ):
     close_old_connections()
     exitoso = False
-    _IMPORT_PROGRESS_LOCAL.reporter = lambda **datos: _guardar_progreso(
+    estado_final = None
+    _IMPORT_PROGRESS_LOCAL.reporter = lambda **datos: _publicar_progreso_seguro(
         codigo,
         **datos,
     )
     try:
         _reportar_progreso(10, f'Preparando {nombre_amigable}')
-        with Path(ruta_archivo).open('rb') as archivo:
+        with _latido_importacion(codigo), Path(ruta_archivo).open('rb') as archivo:
             _reportar_progreso(15, 'Validando archivo y datos relacionados')
             lote, resultado = _procesar_lote_atomicamente(
                 lote_id,
                 procesador_func,
                 archivo,
             )
-        if resultado is None:
-            exitoso = True
-            return
-        _reportar_progreso(95, 'Consolidando resultado y auditoría')
-        _guardar_progreso(
-            codigo,
-            estado=lote.estado,
-            porcentaje=100,
-            etapa='Importación completada',
-            procesadas=resultado['total'],
-            total=resultado['total'],
-            creadas=resultado['creadas'],
-            actualizadas=resultado['actualizadas'],
-            rechazadas=resultado.get('rechazadas', 0),
-            mensaje=(
-                f"{nombre_amigable}: {resultado['total']} fila(s) procesadas; "
-                f"{resultado['creadas']} creadas, "
-                f"{resultado['actualizadas']} actualizadas y "
-                f"{resultado.get('rechazadas', 0)} rechazadas."
-            ),
-        )
+        # El commit ya terminó. Incluso al recuperar un lote ya completado
+        # (resultado=None), se publica su resultado sin volver a procesarlo.
         exitoso = True
+        estado_final = lote.estado
+        _publicar_progreso_seguro(**_resultado_progreso_lote(lote, nombre_amigable))
     except Exception as exc:
         logger.exception(
             'Error inesperado al procesar la carga asíncrona %s',
@@ -4211,22 +4510,25 @@ def _ejecutar_importacion_en_segundo_plano(
         try:
             lote = LoteImportacion.objects.get(pk=lote_id)
             _cerrar_lote_fallido(lote, exc)
+            estado_final = lote.estado
+            exitoso = estado_final in ESTADOS_IMPORTACION_EXITOSA
+            _publicar_progreso_seguro(**_resultado_progreso_lote(lote, nombre_amigable))
         except Exception:
             logger.exception('No se pudo cerrar como fallido el lote %s', codigo)
-        _guardar_progreso(
-            codigo,
-            estado='FALLIDO',
-            porcentaje=100,
-            etapa='La importación falló',
-            mensaje='No se pudo completar la importación. Revise el detalle del lote.',
-        )
+            # Sin confirmación de la BD no se inventa un resultado definitivo.
+            # Se conserva el archivo pendiente para recuperación.
+            _publicar_progreso_seguro(
+                codigo, estado='PROCESANDO', porcentaje=0,
+                etapa='Resultado pendiente de confirmar',
+                mensaje='Consulte el historial antes de volver a cargar el archivo.',
+            )
     finally:
         _IMPORT_PROGRESS_LOCAL.reporter = None
         try:
             ruta_temporal = Path(ruta_archivo)
             if exitoso:
                 ruta_temporal.unlink(missing_ok=True)
-            elif ruta_temporal.exists():
+            elif estado_final == 'FALLIDO' and ruta_temporal.exists():
                 destino_fallido = (
                     _directorio_importaciones()
                     / 'fallidos'
@@ -4241,34 +4543,85 @@ def _ejecutar_importacion_en_segundo_plano(
 @login_required
 @require_GET
 def progreso_importacion(request, codigo):
-    """Estado por UUID; evita consultar BD durante el bloqueo de SQLite."""
-    ruta = _ruta_progreso(codigo)
-    if not ruta.exists():
-        return JsonResponse(
-            {'estado': 'PENDIENTE', 'porcentaje': 0, 'etapa': 'En cola'},
-            status=404,
-        )
+    """La BD decide el resultado y propietario; el JSON solo aporta avance."""
+    # Solo una lectura por UUID, sin escrituras durante el sondeo. SQLite
+    # permite lectores mientras el importador mantiene su transacción abierta.
     try:
-        datos = json.loads(ruta.read_text(encoding='utf-8'))
-    except (OSError, ValueError):
-        return JsonResponse(
-            {'estado': 'PROCESANDO', 'porcentaje': 0, 'etapa': 'Preparando estado'},
-            status=503,
+        lotes = LoteImportacion.objects.filter(codigo=codigo).only(
+            'codigo', 'usuario_id', 'tipo', 'archivo_origen', 'estado',
+            'total_filas', 'filas_creadas', 'filas_actualizadas', 'filas_rechazadas',
+            'metadatos_origen', 'hash_sha256',
         )
-    propietario_id = datos.get('usuario_id')
-    if (
-        not request.user.is_superuser
-        and propietario_id != request.user.pk
-    ):
-        # Se responde como inexistente para no revelar UUID ni actividad de
-        # importaciones pertenecientes a otro usuario.
-        return JsonResponse(
-            {'estado': 'NO_ENCONTRADO'},
-            status=404,
-        )
-    respuesta = JsonResponse(datos)
+        if not request.user.is_superuser:
+            lotes = lotes.filter(usuario_id=request.user.pk)
+        lote = lotes.first()
+    except DatabaseError:
+        respuesta = JsonResponse({
+            'estado': 'PROCESANDO', 'porcentaje': 0,
+            'etapa': 'Esperando confirmación del resultado',
+        }, status=503)
+    else:
+        if lote is None:
+            respuesta = JsonResponse({'estado': 'NO_ENCONTRADO'}, status=404)
+        elif lote.estado in ESTADOS_IMPORTACION_FINAL:
+            respuesta = JsonResponse(_resultado_progreso_lote(lote))
+        else:
+            try:
+                datos = json.loads(_ruta_progreso(codigo).read_text(encoding='utf-8'))
+            except (OSError, ValueError):
+                datos = {}
+            if not isinstance(datos, dict) or datos.get('estado') not in {
+                'PENDIENTE', 'PROCESANDO',
+            }:
+                datos = {
+                    'estado': lote.estado, 'porcentaje': 0,
+                    'etapa': 'Esperando avance del proceso',
+                }
+            datos.update(codigo=str(lote.codigo), usuario_id=lote.usuario_id)
+            try:
+                latido = parse_datetime(str(datos.get('latido_en') or datos.get('actualizado_en') or ''))
+                inactivo = bool(latido and latido.tzinfo and (now() - latido).total_seconds() > 90)
+            except (ValueError, TypeError):
+                inactivo = False
+            if inactivo:
+                datos['sin_senal'] = True
+                datos['mensaje'] = 'No hay señal reciente del proceso. Consulte el historial; no vuelva a cargar todavía.'
+            respuesta = JsonResponse(datos)
     respuesta['Cache-Control'] = 'no-store, max-age=0'
     return respuesta
+
+
+@login_required
+@require_GET
+def errores_importacion(request, codigo):
+    lotes = LoteImportacion.objects.filter(codigo=codigo)
+    if not request.user.is_superuser and not request.user.has_perm('mapas.view_loteimportacion'):
+        lotes = lotes.filter(usuario=request.user)
+    lote = lotes.first()
+    if lote is None:
+        return HttpResponse(status=404)
+    # Texto UTF-8: no interpreta como fórmulas los valores proporcionados por
+    # terceros y permite conservar mensajes extensos sin truncarlos.
+    errores = lote.detalle_errores or []
+    contenido = '\n'.join(
+        f"Fila {error.get('fila', '')}: {error.get('mensaje', '')}"
+        if isinstance(error, dict) else str(error)
+        for error in errores
+    ) or 'Sin errores registrados.'
+    respuesta = HttpResponse(contenido, content_type='text/plain; charset=utf-8')
+    respuesta['Content-Disposition'] = f'attachment; filename="importacion-{lote.codigo}-errores.txt"'
+    respuesta['Cache-Control'] = 'no-store'
+    respuesta['X-Content-Type-Options'] = 'nosniff'
+    return respuesta
+
+
+@login_required
+@require_POST
+def validar_csv(request, tipo_csv):
+    """Endpoint distinto: una GUI nueva no puede aplicar en un servidor antiguo."""
+    request.POST = request.POST.copy()
+    request.POST['modo'] = 'validar'
+    return cargar_csv(request, tipo_csv)
 
 
 @login_required
@@ -4281,42 +4634,14 @@ def cargar_csv(request, tipo_csv):
         messages.error(request, f"Tipo de archivo '{tipo_csv}' no es válido.")
         return redirect('configuracion')
 
-    permisos_por_tipo = {
-        'sites_inventario': ('mapas.add_hubsite', 'mapas.change_hubsite'),
-        'reservas': ('mapas.add_reserva', 'mapas.change_reserva'),
-        'ruta_otu': ('mapas.add_ruta', 'mapas.change_ruta'),
-        'equipos_otu': (
-            'mapas.add_otu', 'mapas.change_otu',
-            'mapas.add_puertootu', 'mapas.change_puertootu',
-        ),
-        'coordenadas_rutas': ('mapas.add_coordenadaruta', 'mapas.change_coordenadaruta'),
-        'asociar_puertos': ('mapas.change_puertootu',),
-        'id_rutas': ('mapas.add_idruta', 'mapas.change_idruta'),
-        'coordenadas_inventario': ('mapas.add_coordenadaruta', 'mapas.change_coordenadaruta'),
-        'coordenadas_csv': ('mapas.add_coordenadaruta', 'mapas.change_coordenadaruta'),
-        'tramos_inventario': ('mapas.add_inventariotramo', 'mapas.change_inventariotramo'),
-        'fibras_globales': ('mapas.add_inventariofibra', 'mapas.change_inventariofibra'),
-        'fibras_inventario': (
-            'mapas.change_inventariofibra',
-            'mapas.add_fibratramo', 'mapas.change_fibratramo',
-        ),
-        'terminaciones_fibra': (
-            'mapas.add_inventariofibra',
-            'mapas.change_inventariofibra',
-            'mapas.add_terminacionfibra',
-            'mapas.change_terminacionfibra',
-            'mapas.change_detallepuertoodf',
-        ),
-        'odf_inventario': ('mapas.add_inventarioodf', 'mapas.change_inventarioodf'),
-        'puertos_odf_inventario': (
-            'mapas.add_detallepuertoodf',
-            'mapas.change_detallepuertoodf',
-        ),
-    }
+    permisos_por_tipo = IMPORT_PERMISSIONS
     if not request.user.has_perms(permisos_por_tipo[tipo_csv]):
         raise PermissionDenied
 
     procesador_func, nombre_amigable = procesadores[tipo_csv]
+    modo = request.POST.get('modo', 'aplicar')
+    if modo not in {'aplicar', 'validar'}:
+        return JsonResponse({'error': 'Modo de importación no válido.'}, status=400)
     solicitud_asincrona = (
         request.headers.get('X-Requested-With') == 'XMLHttpRequest'
     )
@@ -4346,11 +4671,30 @@ def cargar_csv(request, tipo_csv):
                 messages.error(request, str(exc))
                 return redirect('configuracion')
 
+            token = request.POST.get('validacion_token')
+            if token and modo == 'aplicar':
+                try:
+                    validado = signing.loads(token, salt='importacion-validada', max_age=3600)
+                    archivo_subido.seek(0)
+                    digest = hashlib.sha256()
+                    for chunk in archivo_subido.chunks():
+                        digest.update(chunk)
+                    archivo_subido.seek(0)
+                    if (validado['usuario'] != request.user.pk
+                            or validado['tipo'] != tipo_csv
+                            or validado['hash'] != digest.hexdigest()):
+                        raise signing.BadSignature('El archivo o el usuario cambió')
+                except (signing.BadSignature, KeyError, TypeError):
+                    return JsonResponse({'error': 'La revisión venció o el archivo cambió. Valide nuevamente.'}, status=400)
+
             lote = _crear_lote_importacion(
                 archivo_subido,
                 tipo_csv,
                 request.user,
             )
+            if modo == 'validar':
+                lote.metadatos_origen = {'modo': 'validar'}
+                lote.save(update_fields=['metadatos_origen'])
 
             if solicitud_asincrona:
                 try:
@@ -4371,6 +4715,7 @@ def cargar_csv(request, tipo_csv):
                         rechazadas=0,
                         tipo=tipo_csv,
                         archivo=lote.archivo_origen,
+                        modo=modo,
                     )
                     _IMPORT_EXECUTOR.submit(
                         _ejecutar_importacion_en_segundo_plano,
@@ -4406,6 +4751,8 @@ def cargar_csv(request, tipo_csv):
                     procesador_func,
                     archivo_subido,
                 )
+                if modo == 'validar':
+                    return JsonResponse(_resultado_progreso_lote(lote, nombre_amigable))
                 filas_rechazadas = int(resultado.get('rechazadas', 0) or 0)
                 advertencias = resultado.get('advertencias') or []
                 informaciones = resultado.get('informaciones') or []

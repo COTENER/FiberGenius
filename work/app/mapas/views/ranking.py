@@ -8,6 +8,7 @@ from datetime import datetime
 from django.shortcuts import render
 from django.http import JsonResponse, HttpResponse
 from django.contrib.auth.decorators import login_required, permission_required
+from ..ui_access import screen_required
 from django.db import DatabaseError, connection
 
 from ..models import Ruta
@@ -18,7 +19,7 @@ logger = logging.getLogger('mapas')
 
 
 @login_required
-@permission_required('mapas.can_view_reports', raise_exception=True)
+@screen_required('ranking')
 def ranking(request):
     anio_seleccionado = request.GET.get('anio')
     otu_seleccionada = request.GET.get('otu')

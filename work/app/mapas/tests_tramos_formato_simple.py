@@ -41,7 +41,8 @@ class TramosFormatoSimpleTests(TestCase):
         )
 
         self.assertEqual(resultado['creadas'], 0)
-        self.assertEqual(resultado['actualizadas'], 2)
+        self.assertEqual(resultado['actualizadas'], 0)
+        self.assertEqual(resultado['sin_cambios'], 2)
         self.assertEqual(InventarioTramo.objects.count(), 2)
         self.assertEqual(NodoRed.objects.count(), 3)
 

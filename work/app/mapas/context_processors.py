@@ -1,6 +1,7 @@
 """Contexto global de presentación para Fiber Genius."""
 
 from django.conf import settings
+from .ui_access import IMPORT_PERMISSIONS, navigation_access
 
 
 def fibergenius_ui(request):
@@ -26,6 +27,8 @@ def fibergenius_ui(request):
         getattr(settings, "FIBERGENIUS_MAP_ATTRIBUTION", "Cartografía configurable"),
     )
     return {
+        "fg_access": navigation_access(request.user),
+        "fg_import_access": {kind: request.user.has_perms(perms) for kind, perms in IMPORT_PERMISSIONS.items()},
         "fg_version": getattr(settings, "FIBERGENIUS_VERSION", "RC2 GUI 0.5.0"),
         "fg_veex_enabled": getattr(settings, "FIBERGENIUS_OPERATIONS_UI_ENABLED", False),
         "fg_map_tile_light": light,

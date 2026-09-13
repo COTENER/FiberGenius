@@ -5,328 +5,43 @@
 {% block page_title %}Carga y calidad de datos{% endblock %}
 
 {% block content %}
-<style>
-.import-mode-toggle {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    background: var(--bg-surface);
-    padding: 12px 20px;
-    border-radius: 12px;
-    border: 1px solid var(--border-color);
-    width: fit-content;
-    margin-bottom: var(--space-5);
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
-}
-.switch {
-    position: relative;
-    display: inline-block;
-    width: 50px;
-    height: 28px;
-}
-.switch input { opacity: 0; width: 0; height: 0; }
-.slider {
-    position: absolute; cursor: pointer;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background-color: var(--text-tertiary);
-    transition: .4s; border-radius: 34px;
-}
-.slider:before {
-    position: absolute; content: "";
-    height: 20px; width: 20px;
-    left: 4px; bottom: 4px;
-    background-color: white;
-    transition: .4s; border-radius: 50%;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-}
-input:checked + .slider { background-color: var(--accent); }
-input:checked + .slider:before { transform: translateX(22px); }
-.toggle-label { font-size: 14px; font-weight: 600; color: var(--text-primary); transition: color 0.3s; }
-.import-flow-heading {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: var(--space-4);
-    margin: var(--space-6) 0 var(--space-4);
-    padding-top: var(--space-5);
-    border-top: 1px solid var(--border-color);
-}
-.import-flow-heading h2 { margin: 0 0 6px; font-size: 1.5rem; }
-.import-flow-heading p { margin: 0; color: var(--text-tertiary); }
-.import-flow-note {
-    max-width: 390px;
-    padding: 10px 14px;
-    border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border-color));
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--accent) 8%, var(--bg-surface));
-    color: var(--text-secondary);
-    font-size: var(--text-xs);
-    line-height: 1.45;
-}
-.import-card-grid { grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
-.import-card-grid > .card {
-    min-height: 210px;
-    display: flex;
-    flex-direction: column;
-    text-align: left;
-    font: inherit;
-    color: inherit;
-    appearance: none;
-    transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
-}
-.import-card-grid > .card:hover,
-.import-card-grid > .card:focus-visible {
-    transform: translateY(-2px);
-    border-color: color-mix(in srgb, var(--accent) 55%, var(--border-color));
-    box-shadow: 0 12px 28px rgba(15, 23, 42, .10);
-    outline: none;
-}
-.import-card-dependency {
-    margin-top: auto;
-    padding-top: var(--space-3);
-    border-top: 1px solid var(--border-color);
-    color: var(--text-tertiary);
-    font-size: var(--text-xs);
-}
-.import-card-grid [data-import-type="sites_inventario"] { order: 1; }
-.import-card-grid [data-import-type="odf_inventario"] { order: 2; }
-.import-card-grid [data-import-type="puertos_odf_inventario"] { order: 3; }
-.import-card-grid [data-import-type="fibras_globales"] { order: 4; }
-.import-card-grid [data-import-type="terminaciones_fibra"] { order: 5; }
-.import-card-grid [data-import-type="ruta_otu"] { order: 6; }
-.import-card-grid [data-import-type="tramos_inventario"] { order: 7; }
-.import-card-grid [data-import-type="fibras_inventario"] { order: 8; }
-.import-card-grid [data-import-type="coordenadas_csv"] { order: 9; }
-.import-card-grid [data-import-type="reservas"] { order: 10; }
-@media (max-width: 800px) {
-    .import-flow-heading { flex-direction: column; }
-    .import-flow-note { max-width: none; }
-}
-</style>
-
-<div class="page-header">
-    <div>
-        <h1 class="page-header__title">Carga y calidad de datos</h1>
-        <p class="page-header__subtitle">Selecciona el flujo de importación correspondiente al inventario.</p>
-    </div>
-</div>
-
-<div class="import-mode-toggle">
-    <span class="toggle-label" id="lblInventario" style="color: var(--accent);">Modo Inventario Físico</span>
-    <label class="switch">
-        <input type="checkbox" id="modeToggle" onchange="toggleImportMode()">
-        <span class="slider"></span>
-    </label>
-    <span class="toggle-label" id="lblOperativo" style="color: var(--text-tertiary);">Modo Operativo Completo</span>
-</div>
-
-<div id="flujoOperativo" style="display: none; margin-bottom: var(--space-6); padding-bottom: var(--space-6); border-bottom: 1px solid var(--border-color);">
-    <h2 class="page-header__title" style="font-size: 1.5rem; margin-bottom: var(--space-4);">Flujo Operativo (OTDR y Asociación)</h2>
-
-{# ─── Info Box ─── #}
-<div class="card" style="margin-bottom: var(--space-5); border-left: 4px solid var(--warning);">
-    <h3 class="card__title" style="margin-bottom: var(--space-2);">
-        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:text-bottom;"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-        Nota sobre Actualización de Troncales
-    </h3>
-    <p style="font-size: var(--text-sm); color: var(--text-secondary); margin-bottom: var(--space-3);">
-        Para agregar o actualizar una troncal, es necesario proporcionar todos sus datos relacionados. El único paso opcional corresponde a reservas y elementos de planta externa.
-    </p>
-    <ul style="font-size: var(--text-sm); color: var(--text-secondary); padding-left: var(--space-5); display: flex; flex-direction: column; gap: var(--space-1);">
-        <li><strong>Obligatorio:</strong> Actualizar el archivo de <strong>Equipos OTU</strong> (si el OTU es nuevo).</li>
-        <li><strong>Inventario:</strong> La información general de las troncales se administra desde <strong>Modo Inventario Físico</strong>.</li>
-        <li><strong>Obligatorio:</strong> Actualizar el archivo de <strong>Trazado de Troncales</strong>.</li>
-        <li><strong>Opcional:</strong> Cargar el archivo de <strong>Reservas y elementos</strong>.</li>
-        <li><strong>Obligatorio:</strong> Volver a ejecutar la <strong>Asociación de Puertos a Troncales</strong>.</li>
-    </ul>
-</div>
-
-{# ─── Steps ─── #}
-<div class="grid grid--auto">
-    <div onclick="openImportModal('equipos_otu', 'Cargar Equipos y Puertos OTU')" class="card" style="text-decoration:none; cursor:pointer;">
-        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
-            <div class="stat-card__icon stat-card__icon--accent" style="width:36px;height:36px;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
-            </div>
-            <span class="badge badge--accent">Paso 1</span>
-        </div>
-        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Equipos y Puertos OTU</h3>
-        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">OTUs y sus puertos. Clave: Nombre del OTU + N° de Puerto.</p>
-    </div>
-
-    <div onclick="openImportModal('reservas', 'Cargar Reservas y Elementos')" class="card" style="text-decoration:none; cursor:pointer;" role="button" tabindex="0">
-        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
-            <div class="stat-card__icon stat-card__icon--info" style="width:36px;height:36px;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
-            </div>
-            <span class="badge badge--info">Paso 4</span>
-        </div>
-        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar reservas y elementos</h3>
-        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Clave: nombre de la troncal + nombre del elemento.</p>
-    </div>
-
-    <div onclick="openImportModal('asociar_puertos', 'Asociar Puertos a Troncales')" class="card" style="text-decoration:none; cursor:pointer;">
-        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
-            <div class="stat-card__icon stat-card__icon--danger" style="width:36px;height:36px;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-            </div>
-            <span class="badge badge--danger">Paso 5</span>
-        </div>
-        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Asociar Puertos a Troncales</h3>
-        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Vinculación final entre puertos y troncales. Esencial tras cualquier cambio.</p>
-    </div>
-</div>
-</div>
-
-<div class="import-flow-heading">
-    <div>
-        <h2 class="page-header__title">Importación guiada del inventario</h2>
-        <p>Sigue el orden recomendado. Cada tarjeta incluye plantilla, ejemplo y validación antes de importar.</p>
-    </div>
-    <div class="import-flow-note"><strong>Regla segura:</strong> importar nuevamente actualiza registros identificados; no elimina los que no estén incluidos en el archivo.</div>
-</div>
-
-<div class="grid grid--auto import-card-grid" id="guidedImportGrid">
-    <button type="button" onclick="openImportModal('sites_inventario', 'Cargar Sites (.csv)')" class="card" style="cursor:pointer;order:1;" data-import-type="sites_inventario">
-        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
-            <div class="stat-card__icon stat-card__icon--success" style="width:36px;height:36px;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-            </div>
-            <span class="badge badge--success">Físico 1</span>
-        </div>
-        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Sites (.csv)</h3>
-        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Registra los nodos físicos. Las coordenadas del Site son opcionales, pero Latitud y Longitud deben informarse juntas.</p>
-    </button>
-
-    <button type="button" onclick="openImportModal('fibras_globales', 'Cargar inventario global de fibras (.csv)')" class="card" style="cursor:pointer;order:4;" data-import-type="fibras_globales">
-        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
-            <div class="stat-card__icon stat-card__icon--success" style="width:36px;height:36px;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M2 12h20M4.93 4.93l14.14 14.14M19.07 4.93L4.93 19.07"/></svg>
-            </div>
-            <span class="badge badge--success">Físico 4</span>
-        </div>
-        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar inventario global de fibras (.csv)</h3>
-        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Crea la identidad estable y el estado global de cada fibra. La troncal puede quedar pendiente.</p>
-    </button>
-
-    <div onclick="openImportModal('ruta_otu', 'Cargar Troncales y Datos Generales')" class="card" style="text-decoration:none; cursor:pointer;order:6;">
-        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
-            <div class="stat-card__icon stat-card__icon--success" style="width:36px;height:36px;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21"/><line x1="9" x2="9" y1="3" y2="18"/><line x1="15" x2="15" y1="6" y2="21"/></svg>
-            </div>
-            <span class="badge badge--success">Topología 1</span>
-        </div>
-        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Troncales y Datos Generales</h3>
-        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Registra la troncal y sus valores generales de distancia, capacidad, ocupación, reservas y disponibilidad.</p>
-    </div>
-
-    <div onclick="openImportModal('coordenadas_csv', 'Cargar recorridos en el mapa (.csv)')" class="card" style="text-decoration:none; cursor:pointer;order:9;">
-        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
-            <div class="stat-card__icon stat-card__icon--warning" style="width:36px;height:36px;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-            </div>
-            <span class="badge badge--warning">Topología opcional</span>
-        </div>
-        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar recorridos en el mapa (.csv)</h3>
-        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Dibuja el recorrido de cada troncal en el mapa. Es opcional y no modifica su inventario técnico.</p>
-    </div>
-
-    <div onclick="openImportModal('tramos_inventario', 'Cargar Inventario Técnico de Tramos (.csv)')" class="card" style="text-decoration:none; cursor:pointer;order:7;">
-        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
-            <div class="stat-card__icon stat-card__icon--accent" style="width:36px;height:36px;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-            </div>
-            <span class="badge badge--accent">Topología 2</span>
-        </div>
-        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Inventario Técnico de Tramos (.csv)</h3>
-        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Registra los tramos de cada troncal, sus extremos, distancia, capacidad y contadores físicos.</p>
-    </div>
-
-    <div onclick="openImportModal('fibras_inventario', 'Cargar Fibras por Tramo (.csv)')" class="card" style="text-decoration:none; cursor:pointer;order:8;">
-        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
-            <div class="stat-card__icon stat-card__icon--success" style="width:36px;height:36px;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M2 12h20M4.93 4.93l14.14 14.14M19.07 4.93L4.93 19.07"/></svg>
-            </div>
-            <span class="badge badge--success">Topología 3</span>
-        </div>
-        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Fibras por Tramo (.csv)</h3>
-        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Registra el estado y la posición física de una fibra identificada de forma estable en cada tramo de su recorrido.</p>
-    </div>
-
-    <div onclick="openImportModal('odf_inventario', 'Cargar Inventario de ODFs (.csv)')" class="card" style="text-decoration:none; cursor:pointer;order:2;">
-        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
-            <div class="stat-card__icon stat-card__icon--danger" style="width:36px;height:36px;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
-            </div>
-            <span class="badge badge--danger">Físico 2</span>
-        </div>
-        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Inventario de ODFs (.csv)</h3>
-        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Sube la información de racks, salas y capacidad de los ODFs.</p>
-    </div>
-
-    <div onclick="openImportModal('puertos_odf_inventario', 'Cargar Detalle de Puertos ODF (.csv)')" class="card" style="text-decoration:none; cursor:pointer;order:3;">
-        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
-            <div class="stat-card__icon stat-card__icon--warning" style="width:36px;height:36px;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 16V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v16"/><path d="M4 15h16"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M8 18h.01"/><path d="M12 18h.01"/><path d="M16 18h.01"/></svg>
-            </div>
-            <span class="badge badge--warning">Físico 3</span>
-        </div>
-        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Detalle de Puertos ODF (.csv)</h3>
-        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Actualiza bandeja, conector, patchcord, destino y observaciones. La ocupación se deriva de las terminaciones de fibra.</p>
-    </div>
-
-    <div onclick="openImportModal('terminaciones_fibra', 'Cargar Terminaciones de Fibra (.csv)')" class="card" style="text-decoration:none; cursor:pointer;order:5;">
-        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
-            <div class="stat-card__icon stat-card__icon--accent" style="width:36px;height:36px;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-            </div>
-            <span class="badge badge--accent">Físico 5</span>
-        </div>
-        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar Terminaciones de Fibra (.csv)</h3>
-        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Registra los extremos A y B en una sola fila. Fiber Genius genera la identidad interna cuando crea una fibra nueva.</p>
-    </div>
-
-    <div onclick="openImportModal('reservas', 'Cargar Reservas y Elementos')" class="card" style="text-decoration:none; cursor:pointer;order:10;" role="button" tabindex="0">
-        <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2);">
-            <div class="stat-card__icon stat-card__icon--info" style="width:36px;height:36px;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
-            </div>
-            <span class="badge badge--info">Topología opcional</span>
-        </div>
-        <h3 style="font-size:var(--text-md);font-weight:600;color:var(--text-primary);margin-bottom:var(--space-1);">Cargar reservas y elementos (.csv)</h3>
-        <p style="font-size:var(--text-sm);color:var(--text-tertiary);">Sube reservas y elementos como Sites, mufas, cámaras y postes.</p>
-    </div>
-</div>
+{% include "configuracion/_navegacion_importaciones.html" %}
 
 <section class="card" style="margin-top: var(--space-6); padding: 0; overflow: hidden;" aria-labelledby="import-history-title">
     <div style="padding: var(--space-5); border-bottom: 1px solid var(--border-color);">
         <h2 id="import-history-title" class="card__title">Historial de importaciones</h2>
         <p class="page-header__subtitle" style="margin-top: 4px;">Resultado, origen y errores de los últimos 20 lotes procesados.</p>
     </div>
+    <p style="padding: 0 20px;">Total corresponde a filas; los contadores corresponden a entidades del tipo indicado. Una fila A/B puede afectar dos terminaciones. Las revisiones no guardan inventario.</p>
     <div class="data-table-wrap">
         <table class="data-table" style="min-width: 1050px;">
             <caption class="sr-only">Últimos lotes de importación</caption>
-            <thead><tr><th scope="col">Fecha</th><th scope="col">Tipo</th><th scope="col">Archivo</th><th scope="col">Usuario</th><th scope="col">Total</th><th scope="col">Creadas</th><th scope="col">Actualizadas</th><th scope="col">Rechazadas</th><th scope="col">Estado</th><th scope="col">Detalle</th></tr></thead>
+            <thead><tr><th scope="col">Fecha</th><th scope="col">Tipo</th><th scope="col">Archivo</th><th scope="col">Usuario</th><th scope="col">Total</th><th scope="col">Creadas</th><th scope="col">Actualizadas</th><th scope="col">Sin cambios</th><th scope="col">Omitidas</th><th scope="col">Rechazadas</th><th scope="col">Estado</th><th scope="col">Detalle</th></tr></thead>
             <tbody>
                 {% for lote in lotes_importacion %}
                 <tr>
                     <td>{{ lote.creado_en|date:"d/m/Y H:i" }}</td>
-                    <td>{{ lote.tipo }}</td>
+                    <td>{{ lote.tipo }}{% if lote.metadatos_origen.modo == 'validar' %} · Revisión (sin aplicar){% endif %}</td>
                     <td>{{ lote.archivo_origen }}</td>
                     <td>{{ lote.usuario.username|default:"Sistema" }}</td>
                     <td>{{ lote.total_filas }}</td>
                     <td>{{ lote.filas_creadas }}</td>
                     <td>{{ lote.filas_actualizadas }}</td>
+                    <td>{{ lote.metadatos_origen.resultado.sin_cambios|default_if_none:'—' }}</td>
+                    <td>{{ lote.metadatos_origen.resultado.omitidas|default_if_none:'—' }}</td>
                     <td>{{ lote.filas_rechazadas }}</td>
                     <td><span class="status-badge {% if lote.estado == 'COMPLETADO' %}status-badge--free{% elif lote.estado == 'FALLIDO' %}status-badge--busy{% else %}status-badge--reserved{% endif %}">{{ lote.get_estado_display }}</span></td>
                     <td>
                         {% if lote.detalle_errores %}
-                        <details><summary>Ver errores</summary><ul style="padding: 8px 0 0 18px;">{% for error in lote.detalle_errores %}<li>{{ error }}</li>{% endfor %}</ul></details>
+                        <details><summary>Ver errores</summary><ul style="padding: 8px 0 0 18px;">{% for error in lote.detalle_errores|slice:":20" %}<li>{{ error }}</li>{% endfor %}</ul></details><a href="{% url 'errores_importacion' lote.codigo %}">Descargar informe completo</a>
                         {% else %}Sin errores{% endif %}
+                        {% if lote.estado == 'PENDIENTE' or lote.estado == 'PROCESANDO' %}
+                        <button type="button" class="btn btn--sm btn--secondary" onclick="recoverImport('{% url 'progreso_importacion' lote.codigo %}')">Ver avance</button>
+                        {% endif %}
                     </td>
                 </tr>
                 {% empty %}
-                <tr><td colspan="10" class="data-table__empty">Todavía no hay lotes registrados. Las próximas cargas aparecerán aquí.</td></tr>
+                <tr><td colspan="12" class="data-table__empty">Todavía no hay lotes registrados. Las próximas cargas aparecerán aquí.</td></tr>
                 {% endfor %}
             </tbody>
         </table>
@@ -334,19 +49,19 @@ input:checked + .slider:before { transform: translateX(22px); }
 </section>
 
 <!-- Modal Importación Genérico -->
-<div id="importModal" class="modal-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); backdrop-filter:blur(8px); z-index:3000; align-items:center; justify-content:center; animation: fadeInSaas 0.2s ease;">
+<div id="importModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="importModalTitle" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); backdrop-filter:blur(8px); z-index:3000; align-items:center; justify-content:center; animation: fadeInSaas 0.2s ease;">
     <div class="modal-content" style="max-width: 850px; width: 95%; background:var(--bg-surface); border-radius:24px; border:1px solid var(--border-color); box-shadow:0 25px 50px -12px rgba(0,0,0,0.5); overflow: hidden; animation: scaleUpSaas 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);">
         <div class="modal-header" style="padding: 24px 32px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; background: var(--bg-surface-2);">
             <h3 id="importModalTitle" style="margin:0; font-size: 20px; font-weight: 800; color: var(--text-primary);">Importar Datos</h3>
-            <button onclick="closeImportModal()" class="btn-close" style="background:none; border:none; color:var(--text-tertiary); font-size:24px; cursor:pointer;">&times;</button>
+            <button type="button" aria-label="Cerrar importación" onclick="closeImportModal()" class="btn-close" style="background:none; border:none; color:var(--text-tertiary); font-size:24px; cursor:pointer;">&times;</button>
         </div>
         <div class="modal-body" style="padding: 32px; max-height: 70vh; overflow-y: auto;">
             <div class="import-progress" aria-label="Pasos de importación">
                 <div class="import-progress__step is-active"><span>1</span><strong>Preparar</strong></div>
                 <div class="import-progress__line"></div>
-                <div class="import-progress__step"><span>2</span><strong>Validar</strong></div>
+                <div class="import-progress__step"><span>2</span><strong>Revisar archivo</strong></div>
                 <div class="import-progress__line"></div>
-                <div class="import-progress__step"><span>3</span><strong>Importar</strong></div>
+                <div class="import-progress__step"><span>3</span><strong>Confirmar carga</strong></div>
             </div>
             <div id="importGuideSummary"></div>
             <div id="importModalRequirements"></div>
@@ -376,7 +91,7 @@ input:checked + .slider:before { transform: translateX(22px); }
                 </div>
                 
                 <div style="display:flex; gap:12px; margin-top:32px; justify-content: flex-end; flex-wrap:wrap;">
-                    <button type="button" onclick="closeImportModal()" class="btn btn--secondary" style="padding: 12px 24px; border-radius: 12px;">Cancelar</button>
+                    <button type="button" onclick="closeImportModal()" class="btn btn--secondary" style="padding: 12px 24px; border-radius: 12px;">Cerrar</button>
                     <button type="button" id="validateImportFile" class="btn btn--secondary" style="padding: 12px 24px; border-radius: 12px;">Validar archivo</button>
                     <button type="submit" id="submitImportFile" class="btn btn--primary" disabled style="padding: 12px 32px; border-radius: 12px; font-weight: 700; box-shadow: 0 10px 15px -3px rgba(37, 99, 235, 0.3);">
                         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 8px; vertical-align: middle;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
@@ -453,61 +168,10 @@ input:checked + .slider:before { transform: translateX(22px); }
 </template>
 
 <template id="tmpl-equipos_otu">
-    <div style="background:var(--bg-surface-2);border:1px solid var(--border-color);border-radius:var(--radius-md);padding:var(--space-4);">
-        <h4 style="font-size:var(--text-sm);font-weight:600;margin-bottom:var(--space-2);color:var(--text-primary);">Requisitos del CSV: Equipos y Puertos OTU</h4>
-        <p style="font-size:var(--text-sm);color:var(--text-secondary);margin-bottom:var(--space-2);">Columnas requeridas:</p>
-        <div style="display:flex;flex-wrap:wrap;gap:var(--space-1);margin-bottom:var(--space-3);">
-            <span class="badge badge--accent">Latitude</span> <span class="badge badge--accent">Longitude</span>
-            <span class="badge badge--accent">Descripcion</span> <span class="badge badge--accent">OTU</span>
-            <span class="badge badge--accent">Modelo</span> <span class="badge badge--accent">Puerto monitoreados</span>
-            <span class="badge badge--accent">Puertos libres</span> <span class="badge badge--accent">Puerto</span>
-            <span class="badge badge--accent">Estado</span> <span class="badge badge--accent">Enlaces</span>
-        </div>
-        <h5 style="margin-top: 15px; font-size: 13px; color: var(--text-primary);">Tabla de Ejemplo:</h5>
-        <div style="overflow-x: auto; margin-top: 8px; border: 1px solid var(--border-color); border-radius: 8px;">
-            <table style="width:100%;border-collapse:collapse;font-size:11px;background:var(--bg-surface);">
-                <thead style="border-bottom:1px solid var(--border-color);background:var(--bg-surface-2);color:var(--text-secondary);">
-                    <tr>
-                        <th style="text-align:left;padding:6px 12px;">Latitude</th>
-                        <th style="text-align:center;padding:6px;">Longitude</th>
-                        <th style="text-align:left;padding:6px;">Descripcion</th>
-                        <th style="text-align:center;padding:6px;">OTU</th>
-                        <th style="text-align:center;padding:6px;">Modelo</th>
-                        <th style="text-align:center;padding:6px;">Puerto</th>
-                        <th style="text-align:center;padding:6px;">Estado</th>
-                        <th style="text-align:left;padding:6px;">Enlaces</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr style="border-bottom:1px solid var(--border-color);">
-                        <td style="padding:6px 12px;">-33.4041276</td>
-                        <td style="text-align:center;padding:6px;">-70.6712350</td>
-                        <td style="font-weight:600;color:var(--text-primary);padding:6px;">Hub Independencia odf TR02</td>
-                        <td style="text-align:center;padding:6px;">OTU-1</td>
-                        <td style="text-align:center;padding:6px;">NQI-5000</td>
-                        <td style="text-align:center;padding:6px;">1</td>
-                        <td style="text-align:center;padding:6px;"><span class="badge badge--success">Libre</span></td>
-                        <td style="padding:6px;">-</td>
-                    </tr>
-                    <tr style="border-bottom:1px solid var(--border-color);">
-                        <td style="padding:6px 12px;">-33.4042727</td>
-                        <td style="text-align:center;padding:6px;">-70.6711975</td>
-                        <td style="font-weight:600;color:var(--text-primary);padding:6px;">Hub Independencia odf TR02</td>
-                        <td style="text-align:center;padding:6px;">OTU-1</td>
-                        <td style="text-align:center;padding:6px;">NQI-5000</td>
-                        <td style="text-align:center;padding:6px;">2</td>
-                        <td style="text-align:center;padding:6px;"><span class="badge badge--warning">Ocupado</span></td>
-                        <td style="padding:6px;color:var(--text-secondary);">Lampa OLT1 Primario 42</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-        <div style="margin-top: 16px; display: flex; justify-content: flex-start;">
-            <a href="/static/ejemplos/equipos_otu_ejemplo.csv" download class="btn btn--sm btn--secondary" style="font-size: 12px; display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 8px; text-decoration: none;">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                Descargar Plantilla CSV Ejemplo
-            </a>
-        </div>
+    <div class="import-guide-summary">
+        <h4>Equipos y puertos OTU</h4>
+        <p>Obligatorios: OTU y Puerto. Opcionales: Modelo, Latitud, Longitud y Estado. Las coordenadas deben informarse juntas y ser iguales en todas las filas del mismo equipo.</p>
+        <p>Estado: Monitoreado, Libre, Ocupado o Desconocido. No son estados de puertos ODF.</p>
     </div>
 </template>
 
@@ -930,78 +594,103 @@ input:checked + .slider:before { transform: translateX(22px); }
     </div>
 </template>
 
+<template id="tmpl-id_rutas">
+    <div class="import-guide-summary">
+        <h4>IDs de rutas ONMSI</h4>
+        <p>Cabeceras: <code>Ruta,ID</code>. Ruta debe existir; ID es un entero del sistema ONMSI. No repitas rutas ni IDs en el archivo.</p>
+        <p>Ejemplo de fila: <code>TRONCAL-01,1001</code>. Usa el ID real de tu integración, no el del ejemplo.</p>
+    </div>
+</template>
+
+{{ import_limits|json_script:"import-limits" }}
 <script>
+const IMPORT_LIMITS = JSON.parse(document.getElementById("import-limits")?.textContent || '{"maxUploadBytes":26214400}');
 const impModal = document.getElementById('importModal');
 let currentImportType = '';
 let importPollTimer = null;
+let importBusy = false;
+let importFocusOrigin = null;
+let importValidationToken = '';
+let lastImportProgress = {};
+let importPollFailures = 0;
+function rememberImport(value) {
+    try {
+        if (value) localStorage.setItem('fiberGeniusActiveImport', JSON.stringify(value));
+        else localStorage.removeItem('fiberGeniusActiveImport');
+    } catch (_) {}
+}
 
 const IMPORT_GUIDES = {
+    id_rutas: {
+        step: 'Avanzado / Integraciones', dependency: 'Requiere troncales existentes e IDs del sistema ONMSI',
+        purpose: 'Asocia cada troncal con su identificador ONMSI. No cambia sus fibras.',
+    },
+    equipos_otu: {
+        step: 'Avanzado / Integraciones', dependency: 'Solo si utilizas equipos de monitorización OTU',
+        purpose: 'Registra equipos OTU y sus puertos de monitorización; no son puertos ODF.',
+        example: '/static/ejemplos/equipos_otu_ejemplo.csv'
+    },
+    asociar_puertos: {
+        step: 'Avanzado / Integraciones', dependency: 'Requiere equipos OTU, puertos y troncales',
+        purpose: 'Vincula el puerto de monitorización con una troncal.',
+        example: '/static/ejemplos/asociar_puertos_ejemplo.csv'
+    },
+    coordenadas_rutas: {
+        step: 'Avanzado / Compatibilidad', dependency: 'Requiere troncales existentes',
+        purpose: 'Reemplaza la geometría de cada ruta incluida en el ZIP. No crea asignaciones de fibras.'
+    },
+    coordenadas_inventario: {
+        step: 'Avanzado / Compatibilidad', dependency: 'Requiere troncales existentes',
+        purpose: 'Carga geometría segmentada desde ZIP. Los segmentos visuales no son tramos técnicos.'
+    },
     sites_inventario: {
-        step: 'Físico 1', dependency: 'Inicio del flujo · no depende de otras cargas',
+        step: 'Infraestructura', dependency: 'Opcional para empezar con ODF · no depende de otras cargas',
         purpose: 'Crea o actualiza los Sites que usarán los ODF y la red.',
-        required: [['nombre', 'site', 'hub', 'hub_site']],
         template: '/static/ejemplos/plantilla_sites.csv', example: '/static/ejemplos/sites_ejemplo.csv'
     },
     odf_inventario: {
-        step: 'Físico 2', dependency: 'La ubicación completa es opcional; no informe solo una parte',
+        step: 'Infraestructura', dependency: 'La ubicación completa es opcional; no informe solo una parte',
         purpose: 'Crea ODF y genera sus puertos libres según la capacidad indicada.',
-        required: [['odf']],
         template: '/static/ejemplos/plantilla_odfs.csv', example: '/static/ejemplos/odfs_ejemplo.csv'
     },
     fibras_globales: {
-        step: 'Físico 4', dependency: 'La troncal es opcional y puede asociarse después',
+        step: 'Fibras y conexiones', dependency: 'La troncal es opcional y puede asociarse después',
         purpose: 'Registra la identidad estable y el estado global oficial de cada fibra.',
-        required: [['codigo_fibra', 'codigo_de_fibra'], ['fibra', 'numero_de_fibra', 'hilo']],
         template: '/static/ejemplos/plantilla_fibras_globales.csv', example: '/static/ejemplos/fibras_globales_ejemplo.csv'
     },
     terminaciones_fibra: {
-        step: 'Físico 5', dependency: 'Requiere: ODF y puertos existentes',
+        step: 'Fibras y conexiones', dependency: 'Requiere: ODF y puertos existentes',
         purpose: 'Crea o reconoce la fibra y conecta uno o ambos extremos ODF.',
-        requiredFormats: [
-            [['fibra', 'hilo'], ['odf_a'], ['puerto_a'], ['odf_b'], ['puerto_b']],
-            [['codigo_fibra', 'codigo_fibra_global'], ['extremo'], ['odf'], ['puerto', 'puerto_odf']]
-        ],
         template: '/static/ejemplos/plantilla_terminaciones_simplificada.csv', example: '/static/ejemplos/terminaciones_fibra_ejemplo.csv'
     },
     ruta_otu: {
-        step: 'Topología 1', dependency: 'Puede cargarse sin coordenadas',
-        purpose: 'Registra el cable continuo o troncal y sus datos técnicos generales.',
-        required: [['ruta', 'troncal', 'ruta_troncal']],
+        step: 'Troncales y recorrido', dependency: 'Puede cargarse sin coordenadas',
+        purpose: 'Registra la troncal y sus datos generales sin crear asignaciones de fibras.',
         template: '/static/ejemplos/plantilla_troncales.csv', example: '/static/ejemplos/rutas_ejemplo.csv'
     },
     tramos_inventario: {
-        step: 'Topología 2', dependency: 'Requiere: Troncal',
+        step: 'Troncales y recorrido', dependency: 'Requiere: Troncal',
         purpose: 'Define uno o varios tramos ordenados dentro de cada troncal.',
-        required: [
-            ['ruta', 'troncal', 'ruta_troncal'],
-            ['secuencia', 'numero_de_tramo', 'n_de_tramo'],
-            ['origen'],
-            ['destino']
-        ],
         template: '/static/ejemplos/plantilla_tramos.csv', example: '/static/ejemplos/inventario_tramos_ejemplo.csv'
     },
     fibras_inventario: {
-        step: 'Topología 3', dependency: 'Requiere: Fibra global, troncal y tramo',
+        step: 'Troncales y recorrido', dependency: 'Requiere: Fibra global, troncal y tramo',
         purpose: 'Ubica la misma fibra global en cada tramo de su recorrido.',
-        required: [['ruta', 'troncal'], ['secuencia', 'numero_de_tramo', 'n_de_tramo'], ['fibra'], ['codigo_fibra']],
         template: '/static/ejemplos/plantilla_fibras_por_tramo.csv', example: '/static/ejemplos/fibras_por_tramo_ejemplo.csv'
     },
     coordenadas_csv: {
-        step: 'Topología opcional', dependency: 'Requiere: Troncal; el inventario funciona sin mapa',
+        step: 'Complementos · opcional', dependency: 'Requiere: Troncal; el inventario funciona sin mapa',
         purpose: 'Dibuja el recorrido en el mapa sin alterar distancia ni capacidad técnica.',
-        required: [['ruta', 'troncal'], ['latitude', 'latitud'], ['longitude', 'longitud']],
         template: '/static/ejemplos/plantilla_recorridos_mapa.csv', example: '/static/ejemplos/coordenadas_unificadas_ejemplo.csv'
     },
     puertos_odf_inventario: {
-        step: 'Físico 3', dependency: 'Requiere: ODF; no modifica ocupación oficial',
+        step: 'Infraestructura · opcional', dependency: 'Requiere: ODF; no modifica ocupación oficial',
         purpose: 'Actualiza bandeja, conector, patchcord, destino y observaciones del puerto.',
-        required: [['odf'], ['puerto_odf']],
         template: '/static/ejemplos/plantilla_datos_puertos.csv', example: '/static/ejemplos/datos_puertos_ejemplo.csv'
     },
     reservas: {
-        step: 'Topología opcional', dependency: 'Requiere una troncal existente para vincular el elemento',
+        step: 'Complementos · opcional', dependency: 'Requiere una troncal existente para vincular el elemento',
         purpose: 'Carga reservas de cable y elementos físicos georreferenciados.',
-        required: [['nombre', 'landmark_name'], ['tipo', 'connection_type'], ['latitud', 'latitude'], ['longitud', 'longitude'], ['ruta', 'enlace', 'troncal']],
         template: '/static/ejemplos/plantilla_reservas_elementos.csv', example: '/static/ejemplos/reservas_ejemplo.csv'
     }
 };
@@ -1037,6 +726,7 @@ function setImportProgress(step) {
 }
 
 function resetImportValidation() {
+    importValidationToken = '';
     const status = document.getElementById('importValidation');
     const preview = document.getElementById('importPreview');
     status.hidden = true; status.className = 'import-validation'; status.textContent = '';
@@ -1067,6 +757,12 @@ function renderGuide(tipo) {
 }
 
 function openImportModal(tipo, nombre) {
+    importFocusOrigin = document.activeElement;
+    if (importBusy) {
+        impModal.style.display = 'flex';
+        impModal.querySelector('.btn-close').focus();
+        return;
+    }
     currentImportType = tipo;
     document.getElementById('importModalTitle').textContent = nombre;
     const importForm = document.getElementById('importModalForm');
@@ -1092,11 +788,32 @@ function openImportModal(tipo, nombre) {
     renderGuide(tipo);
     resetImportValidation();
     impModal.style.display = 'flex';
+    impModal.querySelector('.btn-close').focus();
 }
 
-function closeImportModal() { impModal.style.display = 'none'; }
+function closeImportModal() {
+    impModal.style.display = 'none';
+    if (importFocusOrigin?.isConnected) importFocusOrigin.focus();
+}
+
+function recoverImport(url) {
+    importBusy = true;
+    currentImportType = '';
+    importValidationToken = '';
+    document.getElementById('importModalTitle').textContent = 'Importación / revisión en curso';
+    document.getElementById('importGuideSummary').replaceChildren();
+    document.getElementById('importModalRequirements').replaceChildren();
+    document.getElementById('importModalForm').hidden = false;
+    document.getElementById('importModalFile').disabled = true;
+    document.getElementById('validateImportFile').disabled = true;
+    document.getElementById('submitImportFile').disabled = true;
+    impModal.style.display = 'flex';
+    renderImportExecution({estado: 'PROCESANDO', porcentaje: 0, etapa: 'Recuperando avance…'});
+    pollImportProgress(url);
+}
 
 function renderImportExecution(data) {
+    lastImportProgress = {...lastImportProgress, ...data};
     const execution = document.getElementById('importExecution');
     const percentage = Math.max(0, Math.min(100, Number(data.porcentaje || 0)));
     execution.hidden = false;
@@ -1109,17 +826,39 @@ function renderImportExecution(data) {
     const total = Number(data.total || 0);
     const rows = total ? `${processed.toLocaleString()} de ${total.toLocaleString()} filas` : 'Calculando filas…';
     const counters = [
+        data.resultado?.unidad || '',
         data.creadas != null ? `${Number(data.creadas).toLocaleString()} creadas` : '',
         data.actualizadas != null ? `${Number(data.actualizadas).toLocaleString()} actualizadas` : '',
+        data.resultado?.sin_cambios != null ? Number(data.resultado.sin_cambios).toLocaleString() + ' sin cambios' : '',
+        data.resultado?.omitidas != null ? Number(data.resultado.omitidas).toLocaleString() + ' omitidas' : '',
         data.rechazadas != null ? `${Number(data.rechazadas).toLocaleString()} rechazadas` : ''
     ].filter(Boolean).join(' · ');
     document.getElementById('importExecutionCounts').textContent = counters ? `${rows} · ${counters}` : rows;
+    if (data.latido_en && !['COMPLETADO', 'COMPLETADO_CON_ERRORES', 'FALLIDO'].includes(data.estado)) {
+        const heartbeat = new Date(data.latido_en);
+        if (Number.isFinite(heartbeat.getTime())) {
+            document.getElementById('importExecutionCounts').textContent +=
+                ' · Última señal del servidor: ' + heartbeat.toLocaleTimeString();
+        }
+    }
     const message = document.getElementById('importExecutionMessage');
     message.textContent = data.mensaje || '';
     message.hidden = !data.mensaje;
+    const details = data.resultado || {};
+    if (details.fibras_creadas != null) {
+        message.textContent += ' Fibras globales: ' + details.fibras_creadas + ' creadas, '
+            + details.fibras_modificadas + ' modificadas.';
+        message.hidden = false;
+    }
+    if (data.errores_url) {
+        const link = document.createElement('a');
+        link.href = data.errores_url; link.textContent = ' Descargar informe';
+        message.appendChild(link); message.hidden = false;
+    }
 }
 
 function restoreImportControls() {
+    importBusy = false;
     document.getElementById('importModalFile').disabled = false;
     document.getElementById('validateImportFile').disabled = false;
     const submit = document.getElementById('submitImportFile');
@@ -1129,27 +868,60 @@ function restoreImportControls() {
 
 async function pollImportProgress(url) {
     if (importPollTimer) window.clearTimeout(importPollTimer);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 15000);
     try {
-        const response = await fetch(url, {cache: 'no-store'});
+        const response = await fetch(url, {cache: 'no-store', signal: controller.signal});
+        if (response.redirected || response.status === 401) {
+            renderImportExecution({...lastImportProgress, etapa: 'Sesión finalizada',
+                mensaje: 'Inicie sesión de nuevo y abra Importación para recuperar el avance. No vuelva a subir el archivo.'});
+            return;
+        }
+        if ([403, 404].includes(response.status)) {
+            rememberImport(null);
+            restoreImportControls();
+            renderImportExecution({estado: 'PROCESANDO', porcentaje: 0, etapa: 'Avance no disponible',
+                mensaje: 'Consulte el historial antes de volver a cargar; esto no confirma que la importación falló.'});
+            return;
+        }
+        if (!response.ok) throw new Error('Comunicación no disponible');
         const data = await response.json();
+        importPollFailures = 0;
         renderImportExecution(data);
         if (['COMPLETADO', 'COMPLETADO_CON_ERRORES', 'FALLIDO'].includes(data.estado)) {
-            localStorage.removeItem('fiberGeniusActiveImport');
-            document.getElementById('validateImportFile').disabled = false;
-            window.setTimeout(() => window.location.reload(), 2200);
+            rememberImport(null);
+            restoreImportControls();
+            if (data.modo === 'validar') {
+                importValidationToken = data.validacion_token || '';
+                document.getElementById('submitImportFile').disabled = !(
+                    importValidationToken && currentImportType === data.tipo
+                    && document.getElementById('importModalFile').files?.length
+                );
+                document.getElementById('submitImportFile').textContent = 'Confirmar carga';
+                setImportProgress(1);
+            } else {
+                window.setTimeout(() => window.location.reload(), 2200);
+            }
             return;
         }
     } catch (error) {
-        renderImportExecution({
-            estado: 'PROCESANDO', porcentaje: 0,
-            etapa: 'Esperando respuesta del proceso…'
-        });
+        importPollFailures += 1;
+        renderImportExecution({...lastImportProgress,
+            etapa: 'Comunicación interrumpida; recuperando avance',
+            mensaje: 'El servidor puede continuar trabajando. No vuelva a cargar el archivo.'});
+    } finally {
+        window.clearTimeout(timeout);
     }
-    importPollTimer = window.setTimeout(() => pollImportProgress(url), 1500);
+    importPollTimer = window.setTimeout(() => pollImportProgress(url),
+        Math.min(15000, 1500 * (1 + importPollFailures)));
 }
 
-function startImportUpload(form) {
+function startImportUpload(form, modo = 'aplicar') {
+    lastImportProgress = {};
+    importBusy = true;
     const formData = new FormData(form);
+    formData.set('modo', modo);
+    if (modo === 'aplicar') formData.set('validacion_token', importValidationToken);
     const execution = document.getElementById('importExecution');
     execution.hidden = false;
     document.getElementById('importValidation').hidden = true;
@@ -1159,7 +931,7 @@ function startImportUpload(form) {
     renderImportExecution({estado: 'PROCESANDO', porcentaje: 0, etapa: 'Subiendo archivo'});
 
     const request = new XMLHttpRequest();
-    request.open('POST', form.action);
+    request.open('POST', modo === 'validar' ? `/validar-csv/${currentImportType}/` : form.action);
     request.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
     request.upload.addEventListener('progress', event => {
         if (!event.lengthComputable) return;
@@ -1176,21 +948,21 @@ function startImportUpload(form) {
             renderImportExecution({
                 estado: 'FALLIDO', porcentaje: 100,
                 etapa: 'No se pudo iniciar la importación',
-                mensaje: payload.error || 'Revise el archivo y vuelva a intentarlo.'
+                mensaje: payload.error || 'No se pudo confirmar la recepción. Revise su sesión y el historial antes de volver a cargar.'
             });
             restoreImportControls();
             return;
         }
         const active = {codigo: payload.lote, url: payload.progreso_url};
-        localStorage.setItem('fiberGeniusActiveImport', JSON.stringify(active));
+        rememberImport(active);
         renderImportExecution({estado: 'PENDIENTE', porcentaje: 2, etapa: 'Archivo recibido; esperando turno'});
         pollImportProgress(payload.progreso_url);
     });
     request.addEventListener('error', () => {
         renderImportExecution({
-            estado: 'FALLIDO', porcentaje: 100,
-            etapa: 'Error de comunicación',
-            mensaje: 'No se pudo enviar el archivo al servidor.'
+            estado: 'PROCESANDO', porcentaje: 0,
+            etapa: 'Recepción pendiente de confirmar',
+            mensaje: 'La conexión se interrumpió. El servidor pudo recibir el archivo: consulte el historial antes de repetir.'
         });
         restoreImportControls();
     });
@@ -1198,68 +970,32 @@ function startImportUpload(form) {
 }
 
 async function validateImportFile() {
+    if (importBusy) return;
     const input = document.getElementById('importModalFile');
     const status = document.getElementById('importValidation');
-    const preview = document.getElementById('importPreview');
-    const guide = IMPORT_GUIDES[currentImportType];
     resetImportValidation();
     status.hidden = false;
     if (!input.files.length) {
         status.classList.add('is-error'); status.textContent = 'Selecciona primero un archivo.'; return;
     }
     const file = input.files[0];
-    const isZipImport = ['coordenadas_rutas', 'coordenadas_inventario'].includes(currentImportType);
-    const requiredExtension = isZipImport ? '.zip' : '.csv';
-    if (!file.name.toLowerCase().endsWith(requiredExtension)) {
-        status.classList.add('is-error'); status.textContent = `El archivo debe tener extensión ${requiredExtension}.`; return;
+    const extension = ['coordenadas_rutas', 'coordenadas_inventario'].includes(currentImportType) ? '.zip' : '.csv';
+    if (!file.name.toLowerCase().endsWith(extension)) {
+        status.classList.add('is-error'); status.textContent = 'El archivo debe tener extensión ' + extension; return;
     }
-    if (file.size > 25 * 1024 * 1024) {
-        status.classList.add('is-error'); status.textContent = 'El archivo supera el límite permitido de 25 MB.'; return;
-    }
-    if (isZipImport) {
-        status.classList.add('is-ok');
-        status.textContent = 'Archivo ZIP listo. Fiber Genius validará su estructura, contenido y relaciones antes de guardar cambios.';
-        document.getElementById('submitImportFile').disabled = false;
-        setImportProgress(1);
-        return;
-    }
-    const text = (await file.text()).replace(/^\uFEFF/, '');
-    const rows = parseCsv(text);
-    if (rows.length < 2) {
-        status.classList.add('is-error'); status.textContent = 'El CSV debe incluir encabezados y al menos una fila de datos.'; return;
-    }
-    const headers = rows[0].map(normalizeHeader);
-    const requiredFormats = guide?.requiredFormats || [guide?.required || []];
-    const validFormat = requiredFormats.find(format => (
-        format.every(group => group.some(name => headers.includes(normalizeHeader(name))))
-    ));
-    const missing = validFormat ? [] : (requiredFormats[0] || []).filter(
-        group => !group.some(name => headers.includes(normalizeHeader(name)))
-    );
-    if (missing.length) {
+    if (file.size > IMPORT_LIMITS.maxUploadBytes) {
         status.classList.add('is-error');
-        status.textContent = `Faltan columnas obligatorias: ${missing.map(group => group[0]).join(', ')}. Descarga la plantilla para usar los encabezados correctos.`;
+        status.textContent = 'El archivo supera el límite permitido de ' + (IMPORT_LIMITS.maxUploadBytes / 1048576) + ' MB.';
         return;
     }
-    const table = document.createElement('table');
-    const thead = document.createElement('thead'); const headerRow = document.createElement('tr');
-    rows[0].forEach(value => { const th = document.createElement('th'); th.textContent = value; headerRow.appendChild(th); });
-    thead.appendChild(headerRow); table.appendChild(thead);
-    const tbody = document.createElement('tbody');
-    rows.slice(1, 6).forEach(values => {
-        const tr = document.createElement('tr'); rows[0].forEach((_, index) => { const td = document.createElement('td'); td.textContent = values[index] || '—'; tr.appendChild(td); }); tbody.appendChild(tr);
-    });
-    table.appendChild(tbody); preview.appendChild(table); preview.hidden = false;
-    status.classList.add('is-ok');
-    status.textContent = `Estructura válida: ${rows.length - 1} fila(s) detectadas. La importación hará la validación completa de datos y relaciones.`;
-    document.getElementById('submitImportFile').disabled = false;
-    setImportProgress(1);
+    // Las cabeceras, alias, datos y relaciones se validan únicamente en servidor.
+    startImportUpload(document.getElementById('importModalForm'), 'validar');
 }
 
 document.getElementById('validateImportFile').addEventListener('click', validateImportFile);
 document.getElementById('importModalFile').addEventListener('change', resetImportValidation);
 document.getElementById('importModalForm').addEventListener('submit', event => {
-    if (document.getElementById('submitImportFile').disabled) { event.preventDefault(); return; }
+    if (!importValidationToken || document.getElementById('submitImportFile').disabled) { event.preventDefault(); return; }
     event.preventDefault();
     setImportProgress(2);
     document.getElementById('submitImportFile').disabled = true;
@@ -1270,55 +1006,36 @@ document.getElementById('importModalForm').addEventListener('submit', event => {
 try {
     const activeImport = JSON.parse(localStorage.getItem('fiberGeniusActiveImport') || 'null');
     if (activeImport && activeImport.url) {
+        importBusy = true;
         currentImportType = '';
         document.getElementById('importModalTitle').textContent = 'Importación en curso';
         document.getElementById('importGuideSummary').replaceChildren();
         document.getElementById('importModalRequirements').replaceChildren();
-        document.getElementById('importModalForm').hidden = true;
+        document.getElementById('importModalForm').hidden = false;
+        document.getElementById('importModalFile').disabled = true;
+        document.getElementById('validateImportFile').disabled = true;
         impModal.style.display = 'flex';
         renderImportExecution({estado: 'PROCESANDO', porcentaje: 0, etapa: 'Recuperando avance…'});
         pollImportProgress(activeImport.url);
     }
 } catch (error) {
-    localStorage.removeItem('fiberGeniusActiveImport');
+    rememberImport(null);
 }
 
-document.querySelectorAll('#guidedImportGrid [onclick*="openImportModal"]').forEach(card => {
-    const match = card.getAttribute('onclick').match(/openImportModal\('([^']+)'/);
-    if (!match) return;
-    const tipo = match[1]; const guide = IMPORT_GUIDES[tipo];
-    card.dataset.importType = tipo;
-    card.tabIndex = 0;
-    card.setAttribute('role', 'button');
-    card.addEventListener('keydown', event => {
-        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); card.click(); }
-    });
-    if (guide && !card.querySelector('.import-card-dependency')) {
-        const badge = card.querySelector('.badge');
-        if (badge) badge.textContent = guide.step;
-        const dependency = document.createElement('div'); dependency.className = 'import-card-dependency'; dependency.textContent = `${guide.step} · ${guide.dependency}`; card.appendChild(dependency);
+impModal.addEventListener('click', event => { if (event.target === impModal) closeImportModal(); });
+document.addEventListener('keydown', event => {
+    if (impModal.style.display !== 'flex') return;
+    if (event.key === 'Escape') closeImportModal();
+    if (event.key === 'Tab') {
+        const controls = [...impModal.querySelectorAll('button, a[href], input, summary, [tabindex="0"]')]
+            .filter(element => !element.disabled && element.getClientRects().length);
+        if (!controls.length) return;
+        const first = controls[0], last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     }
 });
-impModal.addEventListener('click', event => { if (event.target === impModal) closeImportModal(); });
-document.addEventListener('keydown', event => { if (event.key === 'Escape' && impModal.style.display === 'flex') closeImportModal(); });
 </script>
 
-<script>
-function toggleImportMode() {
-    const isOperativo = document.getElementById('modeToggle').checked;
-    const flujoOperativo = document.getElementById('flujoOperativo');
-    const lblInventario = document.getElementById('lblInventario');
-    const lblOperativo = document.getElementById('lblOperativo');
-
-    if (isOperativo) {
-        flujoOperativo.style.display = 'block';
-        lblOperativo.style.color = 'var(--accent)';
-        lblInventario.style.color = 'var(--text-tertiary)';
-    } else {
-        flujoOperativo.style.display = 'none';
-        lblInventario.style.color = 'var(--accent)';
-        lblOperativo.style.color = 'var(--text-tertiary)';
-    }
-}
-</script>
+<script src="{% static 'js/import-navigation.js' %}?v=20260906"></script>
 {% endblock %}

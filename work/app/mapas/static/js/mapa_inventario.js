@@ -760,6 +760,9 @@
         $.ajax({
             url: basePath + '/api/inventario/datos/',
             method: 'GET',
+            data: { site: window.FGSiteContext?.get()
+                || new URLSearchParams(window.location.search).get('site') || '',
+                trazado: new URLSearchParams(window.location.search).get('trazado') || '' },
             success: function(response) {
                 if(response.status === 'success') {
                     state.data = Array.isArray(response.data) ? response.data : [];

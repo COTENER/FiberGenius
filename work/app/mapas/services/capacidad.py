@@ -69,9 +69,9 @@ def _distancia_geometrica(coordenadas):
     segmentos = 0
     anterior = coordenadas[0]
     for actual in coordenadas[1:]:
-        if _valor(actual, "inicio_segmento", False):
-            anterior = actual
-            continue
+        # inicio_segmento es un corte VISUAL (también cambia al cambiar de
+        # trazado), no una interrupción física. Importador y mapa conservan
+        # la arista desde el punto anterior; el resumen debe medirla también.
         lat1 = math.radians(float(_valor(anterior, "latitud")))
         lon1 = math.radians(float(_valor(anterior, "longitud")))
         lat2 = math.radians(float(_valor(actual, "latitud")))

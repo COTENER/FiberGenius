@@ -7,12 +7,9 @@
     const currentUrl = new URL(window.location.href);
     const urlSite = currentUrl.searchParams.get('site')?.trim() || '';
     const dashboardSite = document.querySelector('select[name="site"]')?.value.trim() || '';
-    let activeSite = urlSite || dashboardSite || sessionStorage.getItem(storageKey) || '';
-
-    if (urlSite || dashboardSite) {
-        activeSite = urlSite || dashboardSite;
-        sessionStorage.setItem(storageKey, activeSite);
-    }
+    let storedSite = '';
+    try { storedSite = sessionStorage.getItem(storageKey) || ''; } catch (_) { /* Storage opcional. */ }
+    let activeSite = currentUrl.searchParams.has('site') ? urlSite : (dashboardSite || storedSite);
 
     const banner = document.getElementById('global-site-context');
     const name = document.getElementById('global-site-context-name');
@@ -22,6 +19,30 @@
         if (!banner) return;
         banner.hidden = !activeSite;
         if (name) name.textContent = activeSite ? `Site: ${activeSite}` : '';
+    }
+
+    function setSite(value) {
+        activeSite = String(value || '').trim();
+        try {
+            if (activeSite) sessionStorage.setItem(storageKey, activeSite);
+            else sessionStorage.removeItem(storageKey);
+        } catch (_) { /* La selección sigue funcionando sin almacenamiento. */ }
+        const url = new URL(window.location.href);
+        if (activeSite) url.searchParams.set('site', activeSite);
+        else url.searchParams.delete('site');
+        window.history.replaceState(window.history.state, '', url.toString());
+        render();
+    }
+
+    window.FGSiteContext = { get: () => activeSite, set: setSite };
+    // Antes de inicializar las pestañas, haga visible en su URL el contexto heredado.
+    setSite(activeSite);
+    if (activeSite && !currentUrl.searchParams.has('site')
+        && (currentUrl.pathname.endsWith('/inventario/dashboard/')
+            || currentUrl.pathname.endsWith('/inventario/calidad/'))) {
+        // Los contadores del Dashboard se calculan en servidor.
+        window.location.replace(window.location.href);
+        return;
     }
 
     function urlWithSite(rawUrl) {
@@ -47,22 +68,27 @@
         ) {
             return originalFetch(resource, options);
         }
-        url.searchParams.set('site', activeSite);
+        if (!url.searchParams.has('site')) url.searchParams.set('site', activeSite);
         if (typeof resource === 'string' || resource instanceof URL) {
             return originalFetch(url.toString(), options);
         }
         return originalFetch(new Request(url.toString(), resource), options);
     };
 
+    document.addEventListener('change', event => {
+        if (event.target.matches('select[name="site"]')) setSite(event.target.value);
+    }, true);
+
+    document.addEventListener('reset', event => {
+        if (event.target.querySelector('select[name="site"]')) setSite('');
+    }, true);
+
     document.addEventListener('submit', (event) => {
         const form = event.target;
         if (!(form instanceof HTMLFormElement)) return;
         const select = form.querySelector('select[name="site"]');
         if (select) {
-            activeSite = select.value.trim();
-            if (activeSite) sessionStorage.setItem(storageKey, activeSite);
-            else sessionStorage.removeItem(storageKey);
-            render();
+            setSite(select.value);
             return;
         }
         if (activeSite && form.method.toLowerCase() === 'get' && !form.elements.site) {
@@ -78,8 +104,7 @@
         const link = event.target.closest('a[href]');
         if (!link) return;
         if (link.dataset.clearSiteContext === 'true') {
-            sessionStorage.removeItem(storageKey);
-            activeSite = '';
+            setSite('');
             return;
         }
         if (!activeSite) return;
@@ -89,8 +114,7 @@
     }, true);
 
     clear?.addEventListener('click', () => {
-        sessionStorage.removeItem(storageKey);
-        activeSite = '';
+        setSite('');
         const url = new URL(window.location.href);
         url.searchParams.delete('site');
         window.location.assign(url.toString());

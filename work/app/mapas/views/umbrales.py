@@ -2,6 +2,7 @@ import logging
 
 from django.shortcuts import render, get_object_or_404
 from django.contrib.auth.decorators import login_required, permission_required
+from ..ui_access import screen_required
 from django.core.exceptions import PermissionDenied
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
@@ -12,7 +13,7 @@ logger = logging.getLogger('mapas')
 
 
 @login_required
-@permission_required('mapas.view_perfilumbral', raise_exception=True)
+@screen_required('thresholds')
 def configuracion_umbrales(request):
     """
     Renderiza la vista principal para configurar perfiles de umbrales.

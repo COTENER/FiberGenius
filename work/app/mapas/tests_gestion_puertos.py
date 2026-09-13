@@ -357,6 +357,7 @@ class GestionPuertosApiTests(TestCase):
         respuesta = self._post({
             'accion': 'desconectar',
             'puerto_id': self.puerto.pk,
+            'terminacion_esperada': TerminacionFibra.objects.get(puerto_odf=self.puerto).pk,
             'liberar_fibra': True,
         })
         self.assertEqual(respuesta.status_code, 200)

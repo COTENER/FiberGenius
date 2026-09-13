@@ -145,14 +145,24 @@ def leer_operaciones_excel(contenido, *, max_filas=5000):
 
         encabezados = []
         repetidos = set()
+        desconocidos = set()
+        permitidos = set(ALIASES_COLUMNAS.values())
         for original in encabezados_originales:
             clave = ALIASES_COLUMNAS.get(_normalizar(original), _normalizar(original))
             if clave and clave in encabezados:
                 repetidos.add(clave)
+            if clave and clave not in permitidos:
+                desconocidos.add(str(original))
             encabezados.append(clave)
         if repetidos:
             raise ValidationError(
                 "Hay columnas equivalentes repetidas: " + ", ".join(sorted(repetidos)) + "."
+            )
+        if desconocidos:
+            raise ValidationError(
+                'Columnas no reconocidas: ' + ', '.join(sorted(desconocidos))
+                + '. Corrija sus encabezados o retire esas columnas y vuelva a cargar. '
+                'No se realizó ningún cambio.'
             )
         obligatorias = {"odf", "puerto", "accion"}
         faltantes = obligatorias - set(encabezados)
@@ -163,6 +173,13 @@ def leer_operaciones_excel(contenido, *, max_filas=5000):
 
         filas = []
         for numero_fila, valores in enumerate(iterator, start=2):
+            if any(
+                _texto(valor) and (indice >= len(encabezados) or not encabezados[indice])
+                for indice, valor in enumerate(valores)
+            ):
+                raise ValidationError(
+                    f'Fila {numero_fila}: hay datos en una columna sin encabezado.'
+                )
             registro = {
                 encabezados[indice]: valor
                 for indice, valor in enumerate(valores)
