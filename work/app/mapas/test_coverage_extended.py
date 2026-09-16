@@ -183,6 +183,7 @@ class ServiciosYFormulariosCoverageTests(TestCase):
         self.assertIn('Administración', agrupados)
 
 
+@override_settings(FIBERGENIUS_OPERATIONS_UI_ENABLED=True)
 class AdministracionCoverageTests(TestCase):
     def setUp(self):
         self.admin = User.objects.create_superuser('admin-vistas', 'admin-vistas@example.test', 'clave-segura')
@@ -277,6 +278,7 @@ class AdministracionCoverageTests(TestCase):
         self.assertEqual(self.client.post(reverse('eliminar_usuario', args=[usuario.pk])).status_code, 302)
 
 
+@override_settings(FIBERGENIUS_OPERATIONS_UI_ENABLED=True)
 class PermisosTrazaOnDemandTests(TestCase):
     def setUp(self):
         self.media_dir = SafeTemporaryDirectory()
@@ -381,6 +383,7 @@ class PermisosTrazaOnDemandTests(TestCase):
 
 
 @override_settings(MEDIA_ROOT=tempfile.gettempdir())
+@override_settings(FIBERGENIUS_OPERATIONS_UI_ENABLED=True)
 class IntegracionesCoverageTests(TestCase):
     def setUp(self):
         self.admin = User.objects.create_superuser('admin-integracion', 'integracion@example.test', 'clave-segura')
@@ -753,6 +756,7 @@ class VeexApiCoverageTests(TestCase):
     FIBERGENIUS_WEBHOOK_MAX_SKEW_SECONDS=300,
     MEDIA_ROOT=tempfile.gettempdir(),
 )
+@override_settings(FIBERGENIUS_OPERATIONS_UI_ENABLED=True)
 class WebhookCompletoCoverageTests(TestCase):
     def setUp(self):
         self.admin = User.objects.create_superuser('admin-webhook', 'webhook@example.test', 'clave-segura')
@@ -928,6 +932,7 @@ class _CursorAnaliticoFalso:
         return self.resultado
 
 
+@override_settings(FIBERGENIUS_OPERATIONS_UI_ENABLED=True)
 class AnaliticaCoverageTests(TestCase):
     def setUp(self):
         self.admin = User.objects.create_superuser('admin-analitica', 'analitica@example.test', 'clave-segura')

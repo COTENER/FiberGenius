@@ -760,6 +760,7 @@ class AutorizacionTests(TestCase):
         self.assertEqual(odf.puertos_reservados, 1)
         self.assertEqual(odf.puertos_libres, 0)
 
+    @override_settings(FIBERGENIUS_OPERATIONS_UI_ENABLED=True)
     def test_alarmas_no_son_publicas(self):
         self.client.logout()
         response = self.client.get(reverse('get_alarmas_activas'))
@@ -848,6 +849,7 @@ class ControlesAccesoTests(TestCase):
         self.assertNotIn('_auth_user_id', self.client.session)
 
 
+@override_settings(FIBERGENIUS_OPERATIONS_UI_ENABLED=True)
 class WebhookTests(TestCase):
     def _payload(self):
         return {

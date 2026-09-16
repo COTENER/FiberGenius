@@ -11,7 +11,8 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 from pathlib import Path
-from decouple import config, Csv
+from decouple import Csv
+from .configuration import config
 import os
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -34,6 +35,7 @@ if not os.environ.get(
 BACKUP_RETENTION_DAYS = config('BACKUP_RETENTION_DAYS', default=30, cast=int)
 BACKUP_PG_DUMP_PATH = config('BACKUP_PG_DUMP_PATH', default='pg_dump')
 BACKUP_PG_RESTORE_PATH = config('BACKUP_PG_RESTORE_PATH', default='pg_restore')
+BACKUP_COMMAND_TIMEOUT_SECONDS = config('BACKUP_COMMAND_TIMEOUT_SECONDS', default=3600, cast=int)
 
 
 # Quick-start development settings - unsuitable for production

@@ -1,16 +1,11 @@
 """Production settings for the BHP Windows Server deployment."""
 from pathlib import Path
-import os
-from decouple import Config, Csv, RepositoryEnv
-from .settings import *  # noqa: F401,F403
+from decouple import Csv
+from .configuration import use_production_environment
 
-ENV_FILE = os.environ.get(
-    "FIBERGENIUS_ENV_FILE",
-    r"C:\ProgramData\COTENER\FiberGenius\config\.env",
-)
-if not Path(ENV_FILE).exists():
-    raise RuntimeError(f"Fiber Genius environment file not found: {ENV_FILE}")
-fg = Config(RepositoryEnv(ENV_FILE))
+# Select the external file BEFORE evaluating any shared setting.
+ENV_FILE, fg = use_production_environment()
+from .settings import *  # noqa: E402,F401,F403
 
 SECRET_KEY = fg("SECRET_KEY")
 DEBUG = False
@@ -92,10 +87,10 @@ GEO_BOUNDS = {
     "LON_MAX": fg("GEO_LON_MAX", default=-66.00, cast=float),
 }
 
-MAP_TILE_URL_LIGHT = fg("MAP_TILE_URL_LIGHT", default="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png")
-MAP_TILE_URL_DARK = fg("MAP_TILE_URL_DARK", default="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png")
-MAP_TILE_URL_SATELLITE = fg("MAP_TILE_URL_SATELLITE", default="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}")
-MAP_TILE_ATTRIBUTION = fg("MAP_TILE_ATTRIBUTION", default="OpenStreetMap contributors / CARTO / Esri")
+MAP_TILE_URL_LIGHT = fg("MAP_TILE_URL_LIGHT", default=FIBERGENIUS_MAP_TILE_LIGHT)
+MAP_TILE_URL_DARK = fg("MAP_TILE_URL_DARK", default=FIBERGENIUS_MAP_TILE_DARK)
+MAP_TILE_URL_SATELLITE = fg("MAP_TILE_URL_SATELLITE", default=FIBERGENIUS_MAP_TILE_SATELLITE)
+MAP_TILE_ATTRIBUTION = fg("MAP_TILE_ATTRIBUTION", default=FIBERGENIUS_MAP_ATTRIBUTION)
 
 TEMPLATES[0]["OPTIONS"]["context_processors"].append("fibergenius.context_processors.deployment")
 

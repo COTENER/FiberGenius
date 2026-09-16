@@ -46,7 +46,12 @@ def _run(command, env=None):
             capture_output=True,
             text=True,
             env=env,
+            timeout=max(1, int(settings.BACKUP_COMMAND_TIMEOUT_SECONDS)),
         )
+    except subprocess.TimeoutExpired as exc:
+        raise BackupError(
+            f'{Path(command[0]).name} excedió el tiempo máximo configurado.'
+        ) from exc
     except OSError as exc:
         raise BackupError(f'No se pudo ejecutar {command[0]}: {exc}') from exc
     if result.returncode:
@@ -102,6 +107,7 @@ def backup_database(destination):
 
     command = [
         str(settings.BACKUP_PG_DUMP_PATH),
+        '--no-password',
         '--format=custom',
         '--no-owner',
         '--no-privileges',
@@ -346,6 +352,9 @@ def restore_database(backup_dir, manifest):
         raise BackupError(f'Motor de base no soportado: {engine}')
     command = [
         str(settings.BACKUP_PG_RESTORE_PATH),
+        '--single-transaction',
+        '--exit-on-error',
+        '--no-password',
         '--clean',
         '--if-exists',
         '--no-owner',

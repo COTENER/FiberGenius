@@ -77,5 +77,11 @@ La ejecución destructiva exige dos confirmaciones explícitas:
 .\.venv\Scripts\python.exe manage.py restore_fibergenius RUTA_BACKUP --execute --confirm RESTORE-FIBERGENIUS --settings=fibergenius.settings_production
 ```
 
-Después de restaurar PostgreSQL, ejecute `migrate` y `check`, inicie Fiber Genius
-y valide inventario, usuarios, archivos SOR y permisos.
+Antes de restaurar, consulte también [PRODUCCION_WINDOWS.md](PRODUCCION_WINDOWS.md):
+preferir un destino alternativo y conservar un respaldo previo. La restauración
+PostgreSQL utiliza una transacción única y parada al primer error; base y archivos
+no comparten una transacción. No iniciar el servicio si falla alguna fase.
+
+Después de restaurar PostgreSQL, con la versión compatible del código, ejecute
+`migrate` y `check`, y valide inventario, usuarios, archivos SOR y permisos antes
+de habilitar el acceso. La configuración `.env` requiere custodia separada.

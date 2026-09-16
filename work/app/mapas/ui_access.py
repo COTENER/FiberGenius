@@ -5,6 +5,23 @@ from django.conf import settings
 from django.core.exceptions import PermissionDenied
 from django.http import Http404
 
+
+# Backend as well as screens. Inventory views are deliberately excluded.
+OPERATIONS_VIEW_MODULES = frozenset({
+    'mapas.views.dashboard', 'mapas.views.ranking', 'mapas.views.mapa',
+    'mapas.views.api', 'mapas.views.webhook', 'mapas.views.visor_traza',
+    'mapas.views.on_demand', 'mapas.views.umbrales', 'mapas.views.proactivo',
+})
+
+
+def operations_required(view):
+    @wraps(view)
+    def wrapped(request, *args, **kwargs):
+        if not getattr(settings, 'FIBERGENIUS_OPERATIONS_UI_ENABLED', False):
+            raise Http404('Módulo de operaciones deshabilitado.')
+        return view(request, *args, **kwargs)
+    return wrapped
+
 IMPORT_PERMISSIONS = {
     'sites_inventario': ('mapas.add_hubsite', 'mapas.change_hubsite'),
     'reservas': ('mapas.add_reserva', 'mapas.change_reserva'),

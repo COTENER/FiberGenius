@@ -2,6 +2,7 @@ from django.urls import path
 from . import views
 from django.contrib.auth import views as auth_views  # Importa las vistas de autenticación
 from django.shortcuts import redirect
+from .ui_access import OPERATIONS_VIEW_MODULES, operations_required
 
 urlpatterns = [
     path('inventario/', views.mapa_inventario, name='mapa_inventario'), 
@@ -114,3 +115,9 @@ urlpatterns = [
     path('api/proactivo/asignar-perfil/', views.api_asignar_perfil_ruta, name='api_asignar_perfil_ruta'),
     path('api/proactivo/coordenadas/<int:ruta_id>/', views.api_calcular_coordenadas, name='api_calcular_coordenadas'),
 ]
+
+# Keep reverse() stable and permissions intact; switching off operations also
+# closes its APIs, downloads and webhook, not only navigation entries.
+for pattern in urlpatterns:
+    if pattern.callback.__module__ in OPERATIONS_VIEW_MODULES:
+        pattern.callback = operations_required(pattern.callback)

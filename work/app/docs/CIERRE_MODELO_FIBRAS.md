@@ -1,5 +1,13 @@
 # Cierre operativo del modelo de fibras
 
+## Nota de vigencia — cierre productivo 2026-09-16
+
+Esta guía conserva contexto de migraciones anteriores. Para una instalación o
+actualización actual utilizar también `PRODUCCION_WINDOWS.md`. No ejecutar una
+limpieza de inventario como paso rutinario: conservar los datos y validar las
+migraciones sobre una copia. Cualquier sustitución de datos requiere autorización
+expresa y un respaldo restaurable.
+
 ## Condición previa para datos históricos
 
 La procedencia de los estados históricos no se infiere ni se inventa. La nueva
@@ -9,8 +17,8 @@ de ejecutar este procedimiento controlado:
 1. Detener cargas e importaciones.
 2. Generar y verificar un backup completo.
 3. Aplicar el código y las migraciones.
-4. Limpiar el inventario de fibras con el procedimiento controlado aprobado.
-5. Recargar el inventario BHP normalizado.
+4. Validar los datos existentes y reconciliar las relaciones después de migrar.
+5. Recargar datos normalizados solo si forma parte del plan de corte aprobado.
 6. Ejecutar el motor de calidad.
 7. Validar totales, estados, terminaciones y cobertura contra la fuente BHP.
 
@@ -26,8 +34,8 @@ backfill interpretativo.
 - `NO_INFORMADO` solo es válido con estado global `Desconocido`.
 - La relación física ODF es `TerminacionFibra -> Puerto -> ODF -> Rack -> Sala
   -> Site`.
-- Una ruta de exactamente un tramo materializa obligatoriamente el mismo hilo
-  en `FibraTramo`; si no es posible, toda la asignación de ruta se revierte.
+- La asignación de una fibra a una ruta no crea automáticamente `FibraTramo`.
+  El recorrido por tramos se registra explícitamente mediante su flujo autorizado.
 - Las importaciones BHP no mueven terminaciones ni consumen reservas de forma
   implícita.
 - El importador histórico de puertos permanece retirado (`HTTP 410`) y exige

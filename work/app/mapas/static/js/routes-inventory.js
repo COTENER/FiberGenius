@@ -222,10 +222,13 @@
         }
         routeMap = L.map(target, { zoomControl: true, attributionControl: true, scrollWheelZoom: false, preferCanvas: true });
         const dark = document.documentElement.dataset.theme === 'dark';
-        L.tileLayer(
-            dark ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png' : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-            { maxZoom: 19, attribution: '&copy; OpenStreetMap &copy; CARTO' },
-        ).addTo(routeMap);
+        const mapConfig = document.body.dataset;
+        const tileUrl = dark ? mapConfig.mapTileDark : mapConfig.mapTileLight;
+        if (tileUrl) {
+            L.tileLayer(tileUrl, {
+                maxZoom: 19, attribution: mapConfig.mapAttribution || '',
+            }).addTo(routeMap);
+        }
         const line = L.polyline(coordinates, { color: '#7657ed', weight: 5, opacity: .96 }).addTo(routeMap);
         routeMap.fitBounds(line.getBounds(), { padding: [18, 18], maxZoom: 15 });
         setTimeout(() => routeMap?.invalidateSize(), 80);
@@ -417,22 +420,41 @@
                 button.addEventListener('click', () => { this.page = p; this.load(); }); this.pagination.appendChild(button); last = p;
             });
         }
+        clearResults(label) {
+            this.loaded = false;
+            this.body.replaceChildren(); this.pagination.replaceChildren();
+            this.renderSummary({}); this.info.textContent = label;
+            this.previous.disabled = true; this.next.disabled = true;
+            this.form.querySelector('[data-export]').disabled = true;
+            this.form.querySelector('[data-export-status]').textContent = '';
+        }
         async load() {
             if (this.controller) this.controller.abort();
-            this.controller = new AbortController(); this.message.className = 'odf-message'; this.message.textContent = 'Consultando inventario…';
+            const controller = new AbortController(); this.controller = controller;
+            this.clearResults('Consultando inventario…'); this.panel.setAttribute('aria-busy', 'true');
+            this.message.className = 'odf-message'; this.message.textContent = 'Consultando inventario…';
             const url = new URL(this.options.api, window.location.origin); url.search = this.params().toString();
             try {
-                const response = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' }, signal: this.controller.signal });
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                const payload = await response.json(); const meta = payload.pagination;
+                const response = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' }, signal: controller.signal, cache: 'no-store' });
+                if (response.redirected || !response.ok) throw Object.assign(new Error(), {status: response.redirected ? 401 : response.status});
+                const payload = await response.json();
+                if (controller.signal.aborted || this.controller !== controller) return;
+                const meta = payload.pagination;
                 this.page = meta.page; this.renderRows(payload.data || []); this.renderSummary(payload.summary);
                 const start = meta.total ? ((meta.page - 1) * meta.page_size) + 1 : 0; const end = Math.min(meta.page * meta.page_size, meta.total);
                 this.info.textContent = `Mostrando ${start} a ${end} de ${number.format(meta.total)} resultados`;
                 this.previous.disabled = !meta.has_previous; this.next.disabled = !meta.has_next; this.renderPagination(meta);
                 this.message.textContent = ''; this.loaded = true;
+                this.form.querySelector('[data-export]').disabled = false;
             } catch (error) {
-                if (error.name === 'AbortError') return;
-                this.message.classList.add('is-error'); this.message.textContent = 'No se pudo cargar el inventario.';
+                if (error.name === 'AbortError' || controller.signal.aborted || this.controller !== controller) return;
+                this.clearResults('Consulta no disponible');
+                this.message.classList.add('is-error');
+                this.message.textContent = error.status === 401 ? 'La sesión finalizó. Inicia sesión nuevamente.' : error.status === 403 ? 'No tienes permisos para consultar este inventario.' : 'No se pudo cargar el inventario. Intenta aplicar los filtros nuevamente.';
+            } finally {
+                if (this.controller === controller) {
+                    this.controller = null; this.panel.setAttribute('aria-busy', 'false');
+                }
             }
         }
         bind() {

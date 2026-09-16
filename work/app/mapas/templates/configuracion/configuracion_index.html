@@ -941,16 +941,28 @@ function startImportUpload(form, modo = 'aplicar') {
             etapa: 'Subiendo archivo'
         });
     });
+    const receiptUnconfirmed = () => {
+        renderImportExecution({
+            estado: 'PROCESANDO', porcentaje: 0,
+            etapa: 'Recepción pendiente de confirmar',
+            mensaje: 'No se pudo confirmar la recepción. El servidor pudo recibir el archivo: revise su sesión y el historial antes de repetir la carga.'
+        });
+        restoreImportControls();
+    };
     request.addEventListener('load', () => {
         let payload = {};
         try { payload = JSON.parse(request.responseText || '{}'); } catch (error) { payload = {}; }
-        if (request.status !== 202 || !payload.progreso_url) {
-            renderImportExecution({
-                estado: 'FALLIDO', porcentaje: 100,
-                etapa: 'No se pudo iniciar la importación',
-                mensaje: payload.error || 'No se pudo confirmar la recepción. Revise su sesión y el historial antes de volver a cargar.'
-            });
-            restoreImportControls();
+        if (request.status !== 202 || typeof payload?.progreso_url !== 'string' || !payload.progreso_url) {
+            // Un error de comunicación/proxy no confirma el resultado del servidor.
+            if (request.status >= 400 && request.status < 500 && typeof payload?.error === 'string' && payload.error) {
+                renderImportExecution({
+                    estado: 'FALLIDO', porcentaje: 0,
+                    etapa: 'Solicitud rechazada', mensaje: payload.error
+                });
+                restoreImportControls();
+            } else {
+                receiptUnconfirmed();
+            }
             return;
         }
         const active = {codigo: payload.lote, url: payload.progreso_url};
@@ -958,14 +970,7 @@ function startImportUpload(form, modo = 'aplicar') {
         renderImportExecution({estado: 'PENDIENTE', porcentaje: 2, etapa: 'Archivo recibido; esperando turno'});
         pollImportProgress(payload.progreso_url);
     });
-    request.addEventListener('error', () => {
-        renderImportExecution({
-            estado: 'PROCESANDO', porcentaje: 0,
-            etapa: 'Recepción pendiente de confirmar',
-            mensaje: 'La conexión se interrumpió. El servidor pudo recibir el archivo: consulte el historial antes de repetir.'
-        });
-        restoreImportControls();
-    });
+    ['error', 'timeout', 'abort'].forEach(event => request.addEventListener(event, receiptUnconfirmed));
     request.send(formData);
 }
 

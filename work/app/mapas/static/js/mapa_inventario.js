@@ -39,6 +39,7 @@
             odf: null,
             portPage: 1,
             loadedOdfId: null,
+            siteAbortController: null,
             portAbortController: null
         }
     };
@@ -127,25 +128,44 @@
             basemapThemes.set(satelite, 'satellite');
         }
 
-        let tileErrors = 0;
+        const tileStatus = new Map();
         const showOfflineNotice = () => {
             if (document.getElementById('map-offline-notice')) return;
             const notice = document.createElement('div');
             notice.id = 'map-offline-notice';
             notice.className = 'map-offline-notice';
             notice.setAttribute('role', 'status');
-            notice.textContent = 'Mapa base no disponible. El inventario de troncales continúa visible.';
+            notice.textContent = 'Mapa base no disponible o incompleto. El inventario de troncales continúa visible.';
             mapElement.parentElement.appendChild(notice);
         };
-        Object.values(baseMaps).forEach((layer) => {
-            layer.on('tileerror', () => {
-                tileErrors += 1;
-                if (tileErrors >= 3) showOfflineNotice();
-            });
-            layer.on('load', () => {
+        const updateTileNotice = (layer) => {
+            if (state.tileLayer !== layer) return;
+            const status = tileStatus.get(layer);
+            if (status.errors) {
+                showOfflineNotice();
+            } else if (status.complete && status.loaded > 0) {
                 mapElement.classList.remove('map-fallback-grid');
                 const notice = document.getElementById('map-offline-notice');
                 if (notice) notice.remove();
+            }
+        };
+        Object.values(baseMaps).forEach((layer) => {
+            const status = { errors: 0, loaded: 0, complete: false };
+            tileStatus.set(layer, status);
+            layer.on('loading', () => {
+                status.errors = 0;
+                status.loaded = 0;
+                status.complete = false;
+            });
+            layer.on('tileerror', () => {
+                status.errors += 1;
+                updateTileNotice(layer);
+            });
+            layer.on('tileload', () => { status.loaded += 1; });
+            layer.on('load', () => {
+                // Leaflet también emite load cuando todas las teselas fallan.
+                status.complete = true;
+                updateTileNotice(layer);
             });
         });
 
@@ -154,8 +174,8 @@
 
         const preferredLayer = isDark ? (mapOscuro || mapClaro) : (mapClaro || mapOscuro);
         if (preferredLayer) {
-            preferredLayer.addTo(state.map);
             state.tileLayer = preferredLayer;
+            preferredLayer.addTo(state.map);
             mapElement.dataset.basemapTheme = basemapThemes.get(preferredLayer) || (isDark ? 'dark' : 'light');
         }
         else showOfflineNotice();
@@ -164,6 +184,7 @@
             L.control.layers(baseMaps, null, { position: 'topright', collapsed: true }).addTo(state.map);
             state.map.on('baselayerchange', (event) => {
                 state.tileLayer = event.layer;
+                updateTileNotice(event.layer);
                 mapElement.dataset.basemapTheme = basemapThemes.get(event.layer) || 'light';
                 applyRouteFocusStyles();
             });
@@ -1549,6 +1570,10 @@
     function closeNetworkNavigation() {
         const panel = networkElement('network-nav-panel');
         if (!panel) return;
+        if (state.navigation.siteAbortController) {
+            state.navigation.siteAbortController.abort();
+            state.navigation.siteAbortController = null;
+        }
         if (state.navigation.portAbortController) {
             state.navigation.portAbortController.abort();
             state.navigation.portAbortController = null;
@@ -1604,6 +1629,15 @@
     async function openSiteNavigation(siteId, siteName) {
         const panel = networkElement('network-nav-panel');
         if (!panel) return;
+        if (state.navigation.siteAbortController) state.navigation.siteAbortController.abort();
+        if (state.navigation.portAbortController) state.navigation.portAbortController.abort();
+        state.navigation.portAbortController = null;
+        const controller = new AbortController();
+        state.navigation.siteAbortController = controller;
+        state.navigation.sitePayload = null;
+        state.navigation.odf = null;
+        state.navigation.loadedOdfId = null;
+        networkElement('network-nav-breadcrumb').replaceChildren();
         panel.classList.add('is-open');
         panel.setAttribute('aria-hidden', 'false');
         showNetworkLoading('Cargando ' + (siteName || 'Site') + '…');
@@ -1620,19 +1654,24 @@
         try {
             const response = await fetch(url, {
                 headers: { 'X-Requested-With': 'XMLHttpRequest' },
-                credentials: 'same-origin'
+                credentials: 'same-origin',
+                signal: controller.signal
             });
             if (!response.ok) throw new Error('HTTP ' + response.status);
             const payload = await response.json();
+            if (controller.signal.aborted || state.navigation.siteAbortController !== controller) return;
             if (payload.status !== 'success') throw new Error(payload.message || 'Respuesta no válida');
             state.navigation.sitePayload = payload;
             state.navigation.odf = null;
             state.navigation.loadedOdfId = null;
             renderSiteView(payload);
         } catch (error) {
-            if (error.name !== 'AbortError') {
+            if (error.name !== 'AbortError' && !controller.signal.aborted &&
+                    state.navigation.siteAbortController === controller) {
                 showNetworkError('No se pudo cargar el Site. Verifica tus permisos e inténtalo nuevamente.');
             }
+        } finally {
+            if (state.navigation.siteAbortController === controller) state.navigation.siteAbortController = null;
         }
     }
 
@@ -1783,12 +1822,14 @@
             });
             if (!response.ok) throw new Error('HTTP ' + response.status);
             const payload = await response.json();
+            if (controller.signal.aborted || state.navigation.portAbortController !== controller) return;
             if (payload.status !== 'success') throw new Error(payload.message || 'Respuesta no válida');
             state.navigation.portPage = payload.pagination.page;
             state.navigation.loadedOdfId = odf.id;
             renderOdfPorts(payload);
         } catch (error) {
-            if (error.name !== 'AbortError') {
+            if (error.name !== 'AbortError' && !controller.signal.aborted &&
+                    state.navigation.portAbortController === controller) {
                 setPortGridMessage('No se pudieron cargar los puertos. Inténtalo nuevamente.', true);
             }
         } finally {

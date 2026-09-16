@@ -20,7 +20,10 @@
         })();
     </script>
 </head>
-<body data-authenticated="{% if user.is_authenticated %}true{% else %}false{% endif %}">
+<body data-authenticated="{% if user.is_authenticated %}true{% else %}false{% endif %}"
+      data-map-tile-light="{{ fg_map_tile_light }}"
+      data-map-tile-dark="{{ fg_map_tile_dark }}"
+      data-map-attribution="{{ fg_map_attribution }}">
     <a class="skip-link" href="#contenido-principal">Saltar al contenido principal</a>
     <div class="app">
         {% include "partials/_sidebar.html" %}
