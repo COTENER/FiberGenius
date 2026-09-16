@@ -1,0 +1,354 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Configuración de Umbrales - OTDR{% endblock %}
+
+{% block extra_css %}
+<style>
+    .umbrales-container {
+        padding: 24px 32px;
+        width: 100%;
+    }
+    .header-section {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 24px;
+    }
+    .title {
+        font-size: 24px;
+        font-weight: 700;
+        color: var(--text-primary);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+    .card-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 20px;
+        align-items: flex-start;
+    }
+    .profile-card {
+        background: var(--bg-surface);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: var(--shadow-sm);
+        transition: transform 0.2s, box-shadow 0.2s;
+        width: 440px;
+    }
+    .profile-card:hover {
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-md);
+    }
+    .profile-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--border-color);
+    }
+    .profile-name {
+        font-weight: 600;
+        font-size: 16px;
+        color: var(--text-primary);
+    }
+    .param-table {
+        display: grid;
+        grid-template-columns: max-content auto;
+        row-gap: 8px;
+        column-gap: 16px;
+        font-size: 13px;
+        align-items: center;
+    }
+    .param-table .label {
+        color: var(--text-secondary);
+        white-space: nowrap;
+    }
+    .param-table .value {
+        font-weight: 600;
+        color: var(--text-primary);
+        white-space: nowrap;
+    }
+    
+    /* Progress bar visuals for severity */
+    .visual-bar {
+        height: 6px;
+        border-radius: 3px;
+        background: var(--bg-surface-2);
+        margin-top: 4px;
+        overflow: hidden;
+    }
+    .visual-fill {
+        height: 100%;
+        border-radius: 3px;
+    }
+    
+    /* Modal styles */
+    .modal-overlay {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s;
+    }
+    .modal-overlay.active {
+        opacity: 1;
+        pointer-events: all;
+    }
+    .modal-content {
+        background: var(--bg-surface);
+        width: 100%;
+        max-width: 500px;
+        border-radius: 12px;
+        padding: 24px;
+        box-shadow: var(--shadow-lg);
+        border: 1px solid var(--border-color);
+    }
+    .form-group {
+        margin-bottom: 16px;
+    }
+    .form-group label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-secondary);
+    }
+    .form-control {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid var(--border-color);
+        background: var(--bg-body);
+        color: var(--text-primary);
+        border-radius: 6px;
+    }
+    .btn {
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-weight: 600;
+        cursor: pointer;
+        border: none;
+    }
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-secondary { background: var(--bg-surface-2); color: var(--text-primary); border: 1px solid var(--border-color); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="umbrales-container">
+    <div class="header-section">
+        <h1 class="title">
+            <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" fill="none" viewBox="0 0 24 24" stroke="currentColor" class="text-accent"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" /></svg>
+            Perfiles de Umbrales
+        </h1>
+        <button class="btn btn-primary" onclick="openModal()">+ Nuevo Perfil</button>
+    </div>
+
+    <div class="card-grid">
+        {% for perfil in perfiles %}
+        <div class="profile-card">
+            <div class="profile-header">
+                <span class="profile-name">{{ perfil.nombre_perfil }}</span>
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 12px;" onclick="editProfile('{{ perfil.id }}', '{{ perfil.nombre_perfil|escapejs }}', '{{ perfil.splice_loss }}', '{{ perfil.connector_loss }}', '{{ perfil.reflectance }}', '{{ perfil.attenuation }}', '{{ perfil.end_of_fiber }}', '{{ perfil.atenuacion_minor_min|default:'1.0' }}', '{{ perfil.atenuacion_major_min|default:'3.0' }}', '{{ perfil.atenuacion_critical_min|default:'5.0' }}', '{{ perfil.margen_corte_fibra_db|default:'2.0' }}')">Editar</button>
+                </div>
+            </div>
+            <div style="display: flex; gap: 32px; margin-bottom: 12px;">
+                <div style="flex: 0 0 auto;">
+                    <div class="param-table">
+                        <div class="label">Empalme</div>
+                        <div class="value">{{ perfil.splice_loss }} dB</div>
+                        
+                        <div class="label">Conector</div>
+                        <div class="value">{{ perfil.connector_loss }} dB</div>
+                        
+                        <div class="label">Reflectancia</div>
+                        <div class="value">{{ perfil.reflectance }} dB</div>
+                        
+                        <div class="label">Atenuación</div>
+                        <div class="value">{{ perfil.attenuation }} dB/km</div>
+                    </div>
+                </div>
+                <div style="border-left: 1px solid var(--border-color); padding-left: 20px; flex: 1;">
+                    <div style="font-size: 11px; color: var(--text-secondary); margin-bottom: 8px; font-weight: 600;">Severidad de Atenuación</div>
+                    <div class="param-table">
+                        <div class="label">Atenuación Minor (>)</div>
+                        <div class="value" style="color: #3b82f6;">{{ perfil.atenuacion_minor_min }} dB</div>
+                        
+                        <div class="label">Atenuación Major (>)</div>
+                        <div class="value" style="color: #f97316;">{{ perfil.atenuacion_major_min }} dB</div>
+                        
+                        <div class="label">Atenuación Critical (>)</div>
+                        <div class="value" style="color: #ef4444;">{{ perfil.atenuacion_critical_min }} dB</div>
+                    </div>
+                    
+                    <div style="font-size: 11px; color: var(--text-secondary); margin-top: 12px; margin-bottom: 8px; font-weight: 600;">Corte de Fibra</div>
+                    <div class="param-table">
+                        <div class="label">Umbral de Corte</div>
+                        <div class="value" style="color: var(--danger);">+{{ perfil.margen_corte_fibra_db }} dB</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-color); font-size: 12px; color: var(--text-secondary);">
+                Asignado a: <strong>{{ perfil.rutas.count }}</strong> rutas
+            </div>
+        </div>
+        {% empty %}
+        <div style="grid-column: 1 / -1; text-align: center; padding: 40px; color: var(--text-secondary); background: var(--bg-surface); border-radius: 12px; border: 1px dashed var(--border-color);">
+            No hay perfiles de umbrales configurados. Crea uno nuevo para empezar.
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Modal Form -->
+<div class="modal-overlay" id="profileModal">
+    <div class="modal-content">
+        <h2 id="modalTitle" style="margin-top: 0; margin-bottom: 20px; color: var(--text-primary);">Nuevo Perfil</h2>
+        <form id="profileForm" onsubmit="saveProfile(event)">
+            <input type="hidden" id="perfil_id">
+            
+            <div class="form-group">
+                <label>Nombre del Perfil</label>
+                <input type="text" id="nombre_perfil" class="form-control" required placeholder="Ej. Troncal Larga Distancia">
+            </div>
+            
+            <h4 style="margin: 16px 0 8px 0; font-size: 14px; color: var(--text-primary); border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">Configuración Base</h4>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                <div class="form-group">
+                    <label>Pérdida Empalme (dB)</label>
+                    <input type="number" step="0.01" id="splice_loss" class="form-control" value="0.1" required>
+                </div>
+                <div class="form-group">
+                    <label>Pérdida Conector (dB)</label>
+                    <input type="number" step="0.01" id="connector_loss" class="form-control" value="0.5" required>
+                </div>
+            </div>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                <div class="form-group">
+                    <label>Reflectancia (dB)</label>
+                    <input type="number" step="0.01" id="reflectance" class="form-control" value="-45.0" required>
+                </div>
+                <div class="form-group">
+                    <label>Atenuación Típica (dB/km)</label>
+                    <input type="number" step="0.01" id="attenuation" class="form-control" value="0.5" required>
+                </div>
+            </div>
+
+            <div class="form-group" style="display: none;">
+                <label>Fin de Fibra Estándar (dB)</label>
+                <input type="number" step="0.01" id="end_of_fiber" class="form-control" value="3.0">
+            </div>
+
+            <h4 style="margin: 24px 0 8px 0; font-size: 14px; color: var(--text-primary); border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">Motor Proactivo: Severidad de Atenuación</h4>
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+                <div class="form-group">
+                    <label>Atenuación Minor (> dB)</label>
+                    <input type="number" step="0.01" id="atenuacion_minor_min" class="form-control" value="1.0" required>
+                </div>
+                <div class="form-group">
+                    <label>Atenuación Major (> dB)</label>
+                    <input type="number" step="0.01" id="atenuacion_major_min" class="form-control" value="3.0" required>
+                </div>
+                <div class="form-group">
+                    <label>Atenuación Critical (> dB)</label>
+                    <input type="number" step="0.01" id="atenuacion_critical_min" class="form-control" value="5.0" required>
+                </div>
+            </div>
+
+            <h4 style="margin: 16px 0 8px 0; font-size: 14px; color: var(--text-primary); border-bottom: 1px solid var(--border-color); padding-bottom: 4px;">Motor Proactivo: Corte de Fibra</h4>
+            <div class="form-group" style="grid-column: 1 / -1;">
+                <label class="form-label">Nivel Mínimo de Corte (Margen sobre piso de ruido en dB)</label>
+                <input type="number" step="0.1" class="form-control" name="margen_corte_fibra_db" id="margen_corte_fibra_db" required>
+            </div>
+            
+            <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px;">
+                <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancelar</button>
+                <button type="submit" class="btn btn-primary">Guardar Perfil</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function openModal() {
+        document.getElementById('perfil_id').value = '';
+        document.getElementById('profileForm').reset();
+        document.getElementById('modalTitle').textContent = 'Nuevo Perfil de Umbrales';
+        document.getElementById('profileModal').classList.add('active');
+    }
+
+    function closeModal() {
+        document.getElementById('profileModal').classList.remove('active');
+    }
+
+    function editProfile(id, nombre, splice, connector, refl, atten, endFiber, minor, major, crit, corte) {
+        document.getElementById('perfil_id').value = id;
+        document.getElementById('nombre_perfil').value = nombre;
+        
+        const parseDbVal = (val) => parseFloat(String(val).replace(',', '.')) || 0;
+        
+        document.getElementById('splice_loss').value = parseDbVal(splice);
+        document.getElementById('connector_loss').value = parseDbVal(connector);
+        document.getElementById('reflectance').value = parseDbVal(refl);
+        document.getElementById('attenuation').value = parseDbVal(atten);
+        document.getElementById('end_of_fiber').value = parseDbVal(endFiber);
+        
+        document.getElementById('atenuacion_minor_min').value = parseDbVal(minor);
+        document.getElementById('atenuacion_major_min').value = parseDbVal(major);
+        document.getElementById('atenuacion_critical_min').value = parseDbVal(crit);
+        document.getElementById('margen_corte_fibra_db').value = parseDbVal(corte);
+        
+        document.getElementById('modalTitle').textContent = 'Editar Perfil';
+        document.getElementById('profileModal').classList.add('active');
+    }
+
+    function saveProfile(e) {
+        e.preventDefault();
+        
+        const data = {
+            action: document.getElementById('perfil_id').value ? 'update' : 'create',
+            id: document.getElementById('perfil_id').value,
+            nombre_perfil: document.getElementById('nombre_perfil').value,
+            splice_loss: document.getElementById('splice_loss').value,
+            connector_loss: document.getElementById('connector_loss').value,
+            reflectance: document.getElementById('reflectance').value,
+            attenuation: document.getElementById('attenuation').value,
+            end_of_fiber: document.getElementById('end_of_fiber').value,
+            atenuacion_minor_min: document.getElementById('atenuacion_minor_min').value,
+            atenuacion_major_min: document.getElementById('atenuacion_major_min').value,
+            atenuacion_critical_min: document.getElementById('atenuacion_critical_min').value,
+            margen_corte_fibra_db: document.getElementById('margen_corte_fibra_db').value
+        };
+
+        fetch('/api/umbrales/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(result => {
+            if(result.status === 'success') {
+                location.reload();
+            } else {
+                alert('Error: ' + result.message);
+            }
+        });
+    }
+</script>
+{% endblock %}

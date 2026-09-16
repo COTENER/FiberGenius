@@ -4,7 +4,8 @@ Aplicación Django para inventario y visualización de infraestructura de fibra 
 
 ## Contenido
 
-- `work/app/`: código de la aplicación Django.
+- `work/app/fibergenius/`: configuración general del proyecto Django.
+- `work/app/mapas/`: aplicación principal con el dominio de FiberGenius.
 - `compose.demo.yaml`: despliegue Docker local en `127.0.0.1:8001`.
 - `.env.demo.example`: configuración de ejemplo sin credenciales.
 - `DESPLIEGUE_DOCKER_DEMO.md`: instrucciones de despliegue.
@@ -42,6 +43,42 @@ contenedor cree el usuario durante el primer arranque. Retire esos valores despu
 cd work/app
 python -m venv .venv
 .venv/Scripts/pip install -r requirements.demo.txt
-.venv/Scripts/python manage.py test --settings=onmsi_mapas.settings_pruebas
+.venv/Scripts/pip install -r requirements.dev.txt
+.venv/Scripts/python manage.py test --settings=fibergenius.settings_pruebas
 ```
 
+## Perfiles de dependencias
+
+- `requirements.demo.txt`: aplicación ejecutada con SQLite, tanto en la demo
+  Docker como en las pruebas locales.
+- `requirements.dev.txt`: herramientas de desarrollo y validación, instaladas
+  después de las dependencias de la demo.
+- `requirements.lock`: conjunto cerrado para el despliegue de producción en
+  Windows con PostgreSQL. Instálelo con
+  `python -m pip install --require-hashes -r requirements.lock`.
+
+La suite actual contiene 101 pruebas y cubre el 73 % del código Python medido. El
+flujo de integración continua rechaza cambios que reduzcan la cobertura por debajo
+de ese umbral. Las pruebas adicionales cubren seguridad, permisos, inventario,
+webhooks, VeEX, trazas SOR, auditoría, Sites, perfiles de umbral y los indicadores
+del centro de control de inventario. Troncales, tramos, fibras y reservas usan
+consultas paginadas en servidor, indicadores filtrables y exportación Excel.
+
+## Auditoría de la carga inicial
+
+Después de aplicar migraciones, el inventario existente puede registrarse como una
+línea base reconstruida. Este comando no la presenta como una importación ejecutada
+desde la GUI: conserva el origen, la fecha declarada, el hash SHA-256 del manifiesto
+y los conteos actuales del inventario.
+
+```bash
+python manage.py migrate
+python manage.py registrar_baseline_inventario \
+  --manifest /ruta/al/manifiesto.csv \
+  --fecha-origen 2026-07-18T12:00:00-05:00 \
+  --descripcion "Carga V5 reconstruida para homologación" \
+  --usuario admin
+```
+
+Use un manifiesto verificado y respaldado. El comando rechaza el mismo hash si ya
+fue registrado.

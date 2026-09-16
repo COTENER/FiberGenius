@@ -1,0 +1,3 @@
+# Herramientas de validación; instale también requirements.demo.txt.
+coverage
+pip-audit

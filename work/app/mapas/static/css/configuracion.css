@@ -1,0 +1,119 @@
+
+.config-header {
+    position: sticky;
+    top: 0;
+    left: 0;
+    z-index: 10;
+    background-color: white;
+    padding: 10px 15px;
+    border-bottom: 1px solid #ccc;
+}
+
+.config-container {
+    padding: 15px;
+}
+
+.config-card {
+    background-color: white;
+    padding: 1.5rem;
+    border-radius: 0.5rem;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    width: 100%;
+    max-width: 800px;
+    
+}
+
+.config-card h2, .config-card h3 {
+    margin-top: 0;
+    border-bottom: 2px solid #edf2f7;
+    padding-bottom: 0.75rem;
+    margin-bottom: 1rem;
+}
+
+/* --- CAMBIO CLAVE: Estilos para la lista de enlaces --- */
+.config-list {
+    list-style: none;
+    padding: 0;
+    margin: 0; /* Reseteo de margen por defecto */
+    
+    /* 1. Hacemos la lista más estrecha */
+    max-width: 500px; 
+    
+    /* 2. La centramos horizontalmente con márgenes automáticos */
+    margin-left: auto;
+    margin-right: auto;
+    
+    /* 3. Le damos un poco de espacio superior para separarla del texto */
+    margin-top: 2rem; 
+}
+
+.config-list li {
+    margin-bottom: 1rem;
+}
+
+.config-list li a {
+    display: block;
+    text-align: left;
+    padding: 0.8rem 1.2rem;
+    font-size: 1.1rem;
+    text-decoration: none;
+    background-color: #3182ce;
+    color: white;
+    border-radius: 0.375rem;
+    transition: background-color 0.3s ease, transform 0.2s ease;
+}
+
+.config-list li a:hover {
+    background-color: #2b6cb0;
+    transform: translateY(-2px);
+}
+
+.config-list li small {
+    display: block;
+    font-weight: normal;
+    font-size: 0.85em;
+    opacity: 0.9;
+    margin-top: 4px;
+}
+
+/* --- El resto del archivo se mantiene igual --- */
+
+.info-box {
+    background-color: #f7fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.info-box h4 { margin-top: 0; color: #2b6cb0; }
+.info-box ul { padding-left: 20px; margin-bottom: 0.5rem; }
+.info-box code { background-color: #e2e8f0; color: #2d3748; padding: 2px 6px; border-radius: 4px; font-family: 'Courier New', Courier, monospace; font-size: 0.9em; }
+.info-box pre { background-color: #2d3748; color: #f7fafc; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; font-size: 0.85em; }
+.config-card form { margin-top: 1.5rem; border-top: 1px solid #e2e8f0; padding-top: 1.5rem; }
+.config-card label { font-weight: bold; display: block; margin-bottom: 0.5rem; }
+.config-card input[type="file"] { display: block; width: 100%; padding: 0.5rem; border: 1px solid #cbd5e0; border-radius: 0.375rem; }
+.form-actions { margin-top: 1.5rem; }
+.btn-primary { padding: 0.6rem 1.2rem; background-color: #38a169; color: white; border: none; border-radius: 0.375rem; font-weight: bold; cursor: pointer; transition: background-color 0.3s ease; text-decoration: none; }
+.btn-primary:hover { background-color: #2f855a; }
+.btn-secondary { padding: 0.6rem 1.2rem; background-color: #a0aec0; color: white; border: none; border-radius: 0.375rem; font-weight: bold; cursor: pointer; transition: background-color 0.3s ease; text-decoration: none; display: inline-block; }
+.btn-secondary:hover { background-color: #718096; }
+.messages-wrapper { padding: 15px; }
+.messages { list-style: none; padding: 0; margin-bottom: 1rem; }
+.messages li { padding: 0.75rem; border-radius: 0.375rem; margin-bottom: 0.5rem; }
+.messages li.success { background-color: #c6f6d5; color: #22543d; border: 1px solid #9ae6b4; }
+.messages li.error { background-color: #fed7d7; color: #822727; border: 1px solid #feb2b2; }
+
+/* === MODO OSCURO === */
+html.theme-dark .config-header { background-color: #2d3748; border-bottom-color: #4a5568; color: #e2e8f0; }
+html.theme-dark .config-card { background-color: #2d3748; color: #e2e8f0; }
+html.theme-dark .config-card h2, html.theme-dark .config-card h3 { border-bottom-color: #4a5568; }
+html.theme-dark .config-list li a { background-color: #38a169; }
+html.theme-dark .config-list li a:hover { background-color: #2f855a; }
+html.theme-dark .info-box { background-color: #1a202c; border-color: #4a5568; }
+html.theme-dark .info-box h4 { color: #68d391; }
+html.theme-dark .info-box code { background-color: #4a5568; color: #e2e8f0; }
+html.theme-dark .config-card input[type="file"] { background-color: #1a202c; border-color: #4a5568; color: #e2e8f0; }
+html.theme-dark .config-card form { border-top-color: #4a5568; }
+html.theme-dark .messages li.success { background-color: #2f855a; color: #f0fff4; border-color: #38a169; }
+html.theme-dark .messages li.error { background-color: #c53030; color: #fff5f5; border-color: #e53e3e; }

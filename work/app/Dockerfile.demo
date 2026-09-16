@@ -1,0 +1,31 @@
+FROM python:3.12-slim AS builder
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY requirements.demo.txt .
+RUN python -m venv /venv \
+    && /venv/bin/pip install --upgrade pip \
+    && /venv/bin/pip install -r requirements.demo.txt
+
+FROM python:3.12-slim
+
+ENV PATH="/venv/bin:$PATH" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    DJANGO_SETTINGS_MODULE=fibergenius.settings_demo \
+    FIBERGENIUS_DEMO_DB=/data/fibergenius.sqlite3
+
+COPY --from=builder /venv /venv
+WORKDIR /app
+COPY . /app
+RUN chmod +x /app/entrypoint_demo.sh \
+    && mkdir -p /data
+
+EXPOSE 8000
+ENTRYPOINT ["/app/entrypoint_demo.sh"]

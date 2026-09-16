@@ -1,0 +1,703 @@
+/* =============================================================================
+   MAPA COMPONENTS — Estilos específicos para Leaflet, clusters, popups, eventos
+   Extraídos de estilos.css para evitar conflictos con el design system.
+   ============================================================================= */
+
+/* ─── Port Squares (OTU panel) ─── */
+.puerto-cuadro {
+    width: 30px;
+    height: 30px;
+    margin: 2px;
+    background-color: transparent;
+    text-align: center;
+    font-weight: bold;
+    line-height: 30px;
+    border-width: 3px;
+    border-style: solid;
+    border-radius: 5px;
+    cursor: pointer;
+    color: var(--text-primary, #1A202C);
+}
+.puerto-cuadro.monitoreado {
+    border-color: #28a745;
+}
+.puerto-cuadro.libre {
+    border-color: #6c757d;
+}
+.puerto-cuadro.highlighted-port {
+    background-color: #FFA500 !important;
+    border: 2px solid #cc8400;
+    color: #000;
+    transform: scale(1.1);
+    transition: all 0.2s ease-in-out;
+}
+
+/* ─── OTU Popup Panel ─── */
+#popup-panel {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 300px;
+    background: var(--bg-surface, #fff);
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 12px;
+    padding: 16px;
+    z-index: 1001;
+    display: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+    max-height: calc(100% - 24px);
+    overflow-y: auto;
+}
+[data-theme="dark"] #popup-panel {
+    background: var(--bg-surface, #1e293b);
+    border-color: var(--border-color, #334155);
+}
+
+/* ─── Route Summary Panel ─── */
+#ruta-summary-panel {
+    position: absolute;
+    bottom: 20px;
+    left: 10px;
+    z-index: 2000;
+    background-color: rgba(255, 255, 255, 0.95);
+    border: 1px solid #ccc;
+    border-radius: 10px;
+    padding: 15px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+    max-width: 340px;
+    font-family: var(--font-sans, system-ui, sans-serif);
+    display: none;
+    cursor: move;
+    user-select: none;
+}
+[data-theme="dark"] #ruta-summary-panel {
+    background-color: rgba(30, 41, 59, 0.95);
+    border-color: #475569;
+    color: #f1f5f9;
+}
+#ruta-summary-panel h4 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    color: #3b82f6;
+    border-bottom: 2px solid #3b82f6;
+    padding-bottom: 5px;
+    font-size: 14px;
+}
+[data-theme="dark"] #ruta-summary-panel h4 {
+    color: #60a5fa;
+    border-color: #60a5fa;
+}
+#ruta-summary-panel table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+#ruta-summary-panel th, #ruta-summary-panel td {
+    padding: 6px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color, #e2e8f0);
+}
+#ruta-summary-panel .summary-info {
+    font-weight: bold;
+}
+.summary-close-btn {
+    position: absolute;
+    top: 5px;
+    right: 10px;
+    background: none;
+    border: none;
+    font-size: 20px;
+    font-weight: bold;
+    cursor: pointer;
+    color: #888;
+}
+.summary-close-btn:hover { color: #000; }
+[data-theme="dark"] .summary-close-btn { color: #94a3b8; }
+[data-theme="dark"] .summary-close-btn:hover { color: #fff; }
+
+/* ─── Optical Summary Table ─── */
+.optical-summary-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+.optical-summary-table th, .optical-summary-table td {
+    padding: 4px;
+    border: 1px solid #ddd;
+    text-align: center;
+}
+.optical-summary-table th {
+    background-color: #f2f2f2;
+    font-weight: bold;
+}
+.optical-summary-table td:first-child {
+    text-align: left;
+}
+[data-theme="dark"] .optical-summary-table th {
+    background-color: #334155;
+}
+[data-theme="dark"] .optical-summary-table td {
+    border-color: #475569;
+}
+
+/* ─── Event Marker Icons ─── */
+.custom-icon-wrapper {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    color: white;
+    font-weight: bold;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+}
+.icon-wrapper {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.icon-img {
+    width: 100%;
+    height: 100%;
+}
+
+/* ─── Reservation Clusters ─── */
+.reservation-cluster {
+    background-color: rgba(40, 167, 69, 0.7);
+    border: 2px solid rgba(33, 136, 56, 0.9);
+    border-radius: 8px;
+}
+.reservation-cluster div {
+    background-color: rgba(40, 167, 69, 0.9);
+    border-radius: 6px;
+    width: 28px; height: 28px;
+    margin-left: 4px; margin-top: 4px;
+    color: #fff; text-align: center;
+    font-weight: bold; font-size: 14px;
+    line-height: 28px;
+}
+.marker-cluster-small { width: 28px; height: 28px; }
+.marker-cluster-small div { width: 26px; height: 26px; line-height: 26px; margin-left: 1px; margin-top: 1px; font-size: 12px; }
+.marker-cluster-medium { width: 36px; height: 36px; }
+.marker-cluster-medium div { width: 34px; height: 34px; line-height: 34px; margin-left: 1px; margin-top: 1px; font-size: 14px; }
+.marker-cluster-large { width: 44px; height: 44px; }
+.marker-cluster-large div { width: 42px; height: 42px; line-height: 42px; margin-left: 1px; margin-top: 1px; font-size: 16px; }
+
+/* ─── Optical Event Clusters (Green/Red) ─── */
+.cluster-icon {
+    width: 40px; height: 40px;
+    border-radius: 8px;
+    color: white; font-weight: bold; font-size: 16px;
+    display: flex; align-items: center; justify-content: center;
+    background-color: #2a6638;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+    border: 2px solid rgba(255,255,255,0.5);
+}
+
+/* ─── Regular Event Clusters (Purple/Red) ─── */
+.cluster-icon-regular {
+    background-color: #6a5acd;
+    width: 40px; height: 40px; border-radius: 50%;
+    color: white; font-weight: bold; font-size: 16px;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+    border: 2px solid rgba(255,255,255,0.5);
+}
+
+/* ─── Blinking Animations ─── */
+
+/* Optical icon fail blink */
+@keyframes optical-pulse {
+    0%, 100% { filter: drop-shadow(0 0 5px red) saturate(600%); }
+    50% { filter: drop-shadow(0 0 25px red) saturate(900%); }
+}
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+.icon-wrapper.blinking-icon .icon-img {
+    animation: blink 1.8s infinite, optical-pulse 1.8s infinite;
+}
+
+/* Optical cluster fail blink */
+.cluster-icon.blinking-cluster {
+    animation: cluster-pulse 1.8s infinite;
+}
+@keyframes cluster-pulse {
+    0%, 100% { background-color: #2a6638; box-shadow: 0 0 0 5px rgba(51, 170, 255, 0.4); }
+    50% { background-color: #ff0000; box-shadow: 0 0 0 10px rgba(255, 0, 0, 0.7); }
+}
+
+/* Regular event UNCLEARED blink */
+.custom-icon-wrapper.blinking-icon-regular {
+    animation: pulse-border-regular 1.8s infinite;
+}
+@keyframes pulse-border-regular {
+    0%, 100% { box-shadow: 0 0 0 5px rgba(255, 0, 0, 0.4); }
+    50% { box-shadow: 0 0 0 10px rgba(255, 0, 0, 0.7); }
+}
+
+/* Regular cluster UNCLEARED blink */
+.cluster-icon-regular.blinking-cluster-regular {
+    animation: cluster-pulse-regular 1.8s infinite;
+}
+@keyframes cluster-pulse-regular {
+    0%, 100% { background-color: #6a5acd; box-shadow: 0 0 0 5px rgba(106, 90, 205, 0.4); }
+    50% { background-color: #ff0000; box-shadow: 0 0 0 10px rgba(255, 0, 0, 0.7); }
+}
+
+/* ─── Port Tooltip ─── */
+#port-tooltip {
+    display: none;
+    position: absolute;
+    background-color: #333;
+    color: #fff;
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    z-index: 10000;
+    pointer-events: none;
+    white-space: nowrap;
+}
+
+/* ─── Modal ─── */
+.modal-overlay {
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 10000;
+}
+.modal-content {
+    background: white;
+    padding: 30px;
+    border-radius: 12px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+    text-align: center;
+    max-width: 400px;
+    width: 90%;
+    animation: modalFadeIn 0.3s ease-out;
+}
+@keyframes modalFadeIn {
+    from { opacity: 0; transform: translateY(-20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.modal-icon { font-size: 40px; margin-bottom: 10px; }
+.modal-btn {
+    background-color: #28a745;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 16px;
+    margin-top: 15px;
+}
+.modal-btn:hover { background-color: #218838; }
+[data-theme="dark"] .modal-content {
+    background: var(--bg-surface, #1e293b);
+    color: #f1f5f9;
+}
+
+/* ─── Leaflet Controls Dark Mode Fix ─── */
+[data-theme="dark"] .leaflet-control-container .leaflet-control {
+    background-color: #FFFFFF !important;
+    color: #333333 !important;
+    border: 2px solid rgba(0,0,0,0.2) !important;
+}
+[data-theme="dark"] .leaflet-control-container .leaflet-control a {
+    background-color: #FFFFFF !important;
+    color: #333333 !important;
+}
+
+/* ─── Fullscreen Mode ─── */
+.map-fullscreen .sidebar,
+.map-fullscreen .topbar,
+.map-fullscreen .noc-stats-bar {
+    display: none !important;
+}
+.map-fullscreen .main-wrapper {
+    margin-left: 0 !important;
+}
+.map-fullscreen .main-content {
+    margin-top: 0 !important;
+    height: 100vh !important;
+    padding: 0 !important;
+}
+.map-fullscreen .mapa-wrapper {
+    height: 100vh !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+.map-fullscreen .map-container,
+.map-fullscreen #map {
+    height: 100% !important;
+}
+
+/* ─── Rediseño del Popup de Ruta ─── */
+.ruta-popup-wrapper .leaflet-popup-content-wrapper {
+    border-radius: 12px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.15);
+    padding: 0;
+    overflow: hidden;
+    font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+}
+.ruta-popup-wrapper .leaflet-popup-content {
+    margin: 0;
+    width: 100% !important;
+}
+.ruta-popup-wrapper .leaflet-popup-tip {
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.ruta-popup {
+    padding: 0;
+}
+
+.ruta-popup__header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    color: #fff;
+}
+.ruta-popup__icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    background: rgba(255,255,255,0.2);
+    border-radius: 8px;
+    flex-shrink: 0;
+}
+.ruta-popup__title {
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1.2;
+}
+.ruta-popup__subtitle {
+    font-size: 11px;
+    opacity: 0.8;
+    margin-top: 2px;
+}
+
+.ruta-popup__grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    padding: 0;
+}
+.ruta-popup__field {
+    display: flex;
+    flex-direction: column;
+    padding: 10px 16px;
+    border-bottom: 1px solid #f1f5f9;
+}
+.ruta-popup__field:nth-child(odd) {
+    border-right: 1px solid #f1f5f9;
+}
+.ruta-popup__label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #94a3b8;
+    margin-bottom: 3px;
+}
+.ruta-popup__value {
+    font-size: 13px;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+/* ─── Sección del Toggle ─── */
+.ruta-popup__section {
+    padding: 10px 16px;
+    border-bottom: 1px solid #f1f5f9;
+}
+.ruta-popup__toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+.ruta-popup__toggle-info {
+    display: flex;
+    flex-direction: column;
+}
+.ruta-popup__toggle-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #334155;
+}
+.ruta-popup__toggle-count {
+    font-size: 10px;
+    color: #94a3b8;
+    margin-top: 1px;
+}
+
+/* ─── Toggle Switch tipo iOS ─── */
+.ruta-popup__switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 22px;
+    flex-shrink: 0;
+}
+.ruta-popup__switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+.ruta-popup__slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-color: #cbd5e1;
+    transition: 0.3s ease;
+    border-radius: 22px;
+}
+.ruta-popup__slider::before {
+    position: absolute;
+    content: "";
+    height: 16px;
+    width: 16px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.3s ease;
+    border-radius: 50%;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+}
+.ruta-popup__switch input:checked + .ruta-popup__slider {
+    background-color: #3b82f6;
+}
+.ruta-popup__switch input:checked + .ruta-popup__slider::before {
+    transform: translateX(18px);
+}
+
+/* ─── Botón de Actualizar Medida rediseñado ─── */
+.ruta-popup .btn-medir-ruta-popup {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: calc(100% - 32px);
+    margin: 12px 16px 14px;
+    border: none;
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-family: inherit;
+}
+.ruta-popup .popup-btn--ready {
+    background: linear-gradient(135deg, #22c55e, #16a34a);
+    color: #fff;
+}
+.ruta-popup .popup-btn--ready:hover {
+    background: linear-gradient(135deg, #16a34a, #15803d);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(22,163,74,0.3);
+}
+.ruta-popup .popup-btn--measuring {
+    background: #fef3c7;
+    color: #92400e;
+    cursor: not-allowed;
+}
+
+/* ─── Barra de Progreso de Medición ─── */
+.ruta-popup .popup-btn--progress {
+    background: #1e293b !important;
+    color: #e2e8f0;
+    padding: 8px 16px !important;
+    cursor: not-allowed;
+}
+.medicion-progress {
+    width: 100%;
+}
+.medicion-progress__text {
+    font-size: 12px;
+    font-weight: 600;
+    text-align: center;
+    margin-bottom: 6px;
+    color: #e2e8f0;
+}
+.medicion-progress__bar {
+    width: 100%;
+    height: 6px;
+    background: rgba(255,255,255,0.15);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.medicion-progress__fill {
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #60a5fa);
+    border-radius: 3px;
+    transition: width 0.8s ease;
+}
+.ruta-popup .popup-btn--etl {
+    background: linear-gradient(135deg, #06b6d4, #0891b2) !important;
+    color: #fff;
+    cursor: not-allowed;
+}
+
+/* ─── Panel Resumen de Ruta (Rediseñado) ─── */
+#ruta-summary-panel {
+    border-radius: 12px !important;
+    border: none !important;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.15) !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+    background: #fff !important;
+}
+.resumen-panel {
+    position: relative;
+    font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif);
+}
+.resumen-panel__close {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background: rgba(255,255,255,0.25);
+    border: none;
+    color: #fff;
+    font-size: 20px;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+    z-index: 2;
+    line-height: 1;
+}
+.resumen-panel__close:hover {
+    background: rgba(255,255,255,0.4);
+}
+.resumen-panel__header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    color: #fff;
+}
+.resumen-panel__title {
+    font-size: 14px;
+    font-weight: 700;
+}
+.resumen-panel__subtitle {
+    font-size: 12px;
+    opacity: 0.85;
+    margin-top: 1px;
+}
+.resumen-panel__info-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+}
+.resumen-panel__info-item {
+    display: flex;
+    flex-direction: column;
+    padding: 10px 16px;
+    border-bottom: 1px solid #f1f5f9;
+}
+.resumen-panel__info-item:nth-child(odd) {
+    border-right: 1px solid #f1f5f9;
+}
+.resumen-panel__info-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #94a3b8;
+    margin-bottom: 2px;
+}
+.resumen-panel__info-value {
+    font-size: 13px;
+    font-weight: 600;
+    color: #1e293b;
+}
+.resumen-panel__section-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 16px 6px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #3b82f6;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.resumen-panel__table {
+    width: calc(100% - 32px);
+    margin: 0 16px 14px;
+    border-collapse: separate;
+    border-spacing: 0;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    overflow: hidden;
+    font-size: 12px;
+}
+.resumen-panel__table thead th {
+    background: #f8fafc;
+    color: #64748b;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    padding: 8px 10px;
+    text-align: left;
+    border-bottom: 1px solid #e2e8f0;
+}
+.resumen-panel__table tbody td {
+    padding: 8px 10px;
+    color: #334155;
+    border-bottom: 1px solid #f1f5f9;
+}
+.resumen-panel__table tbody tr:last-child td {
+    border-bottom: none;
+}
+.resumen-panel__table tbody tr:hover {
+    background: #f8fafc;
+}
+
+/* ─── Dark mode overrides para panel resumen ─── */
+[data-theme="dark"] #ruta-summary-panel {
+    background: #1e293b !important;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.4) !important;
+}
+[data-theme="dark"] .resumen-panel__info-item {
+    border-color: #334155;
+}
+[data-theme="dark"] .resumen-panel__info-value {
+    color: #e2e8f0;
+}
+[data-theme="dark"] .resumen-panel__table {
+    border-color: #334155;
+}
+[data-theme="dark"] .resumen-panel__table thead th {
+    background: #0f172a;
+    color: #94a3b8;
+    border-color: #334155;
+}
+[data-theme="dark"] .resumen-panel__table tbody td {
+    color: #cbd5e1;
+    border-color: #1e293b;
+}
+[data-theme="dark"] .resumen-panel__table tbody tr:hover {
+    background: #334155;
+}
+
+
