@@ -1,0 +1,5 @@
+<a class="quality-control{% if item == seleccionado %} is-selected{% endif %}{% if not item.total %} is-clear{% endif %}" href="{{ item.url }}" {% if item == seleccionado %}aria-current="true"{% endif %}>
+    <span class="quality-control-title">{{ item.control.titulo }}</span>
+    <strong>{{ item.total|floatformat:"0g" }}</strong>
+    <span class="quality-control-footer">{% if item.total %}Ver registros afectados{% else %}Sin casos en este control{% endif %}<span aria-hidden="true">→</span></span>
+</a>

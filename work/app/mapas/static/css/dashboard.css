@@ -1,0 +1,657 @@
+/* static/css/dashboard.css */
+
+/* ---------------------------------- */
+/* 1. VARIABLES Y RESETEO GLOBAL      */
+/* ---------------------------------- */
+:root {
+    --color-primario: #4A90E2;
+    --color-fondo: #F0F2F5;
+    --color-superficie: #FFFFFF;
+    --color-borde: #D9DEE4;
+    --color-texto-principal: #242A31;
+    --color-texto-secundario: #6B7280;
+    --color-sombra: rgba(50, 50, 93, 0.1);
+
+    --fuente-principal: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --radio-borde: 10px;
+    --espaciado: 1.25rem;
+    --transicion-suave: all 0.3s ease;
+}
+
+*, *::before, *::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: var(--fuente-principal);
+    background-color: var(--color-fondo);
+    color: var(--color-texto-principal);
+    display: flex; /* Habilita flexbox para el layout principal */
+    flex-direction: column; /* Apila el header y el main-container */
+    min-height: 100vh; /* Asegura que el body ocupe al menos toda la pantalla */
+}
+body.dark-theme {
+    --color-fondo: #1A202C;
+    --color-superficie: #2D3748;
+    --color-borde: #4A5568;
+    --color-texto-principal: #F7FAFC;
+    --color-texto-secundario: #A0AEC0;
+    --color-sombra: rgba(0, 0, 0, 0.4);
+}
+/* Añade transiciones */
+body, .header, .stats-card, .table-container, .chart-container, .btn--secondary, .header__filters, .filter-group select {
+    transition: var(--transicion-suave);
+}
+/* ---------------------------------- */
+/* 2. HEADER Y COMPONENTES            */
+/* ---------------------------------- */
+.header {
+    background-color: var(--color-superficie);
+    padding: 0.15rem var(--espaciado);
+    display: flex;
+    flex-direction: column; /* Apilado en móvil por defecto */
+    align-items: center;
+    gap: 1rem;
+    border-bottom: 1px solid var(--color-borde);
+}
+
+.header-block {
+    display: flex;
+    align-items: center;
+    width: 100%;
+}
+
+.header-block--left,
+.header-block--center,
+.header-block--right {
+    justify-content: center; /* Centrado en móvil por defecto */
+}
+
+.header-block--right {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+.header__action-icons {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.action-button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0.5rem;
+    border-radius: 50%;
+    color: var(--color-texto-principal); /* Hereda el color */
+}
+.action-button:hover {
+    background-color: var(--color-borde);
+}
+.action-button .icon-text {
+    font-size: 1.6rem;
+    line-height: 1;
+}
+body.dark-theme .header__filters {
+    background-color: var(--color-superficie);
+}
+body.dark-theme .btn--secondary {
+    background-color: var(--color-borde);
+    color: var(--color-texto-principal);
+}
+body.dark-theme .responsive-table thead {
+    background-color: #4A5568;
+}
+
+/* --- Grupo Izquierdo --- */
+.header__logo img {
+    height: 120px;
+    width: auto;
+    margin-right: 1rem;
+}
+.header__stats {
+    display: flex;
+    gap: 0.5rem;
+}
+.stats-card {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    /* ESTILO POR DEFECTO (MODO CLARO) */
+    background-image: linear-gradient(145deg, #9fccf7, #84afff);
+    padding: 0.5rem 1rem;
+    border-radius: var(--radio-borde);
+    border: none;
+    box-shadow: 0 4px 12px var(--color-sombra);
+    transition: var(--transicion-suave);
+}
+.stats-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 16px var(--color-sombra);
+}
+.stats-card__title {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--color-texto-secundario);
+}
+.stats-card__value {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--color-primario);
+    background-color: #E6F1FF;
+    padding: 0.2rem 0.6rem;
+    border-radius: 20px;
+}
+
+/* AÑADE ESTE BLOQUE COMPLETO AL FINAL DE TU ARCHIVO, o en una sección de modo oscuro */
+/* ESTILO SOLO PARA MODO OSCURO */
+body.dark-theme .stats-card {
+    background-image: linear-gradient(145deg, #2F855A, #38A169); /* Degradado Verde */
+}
+body.dark-theme .stats-card__title {
+    color: #BEE3F8; /* Texto azul claro */
+}
+body.dark-theme .stats-card__value {
+    color: #1A202C; /* Texto oscuro */
+    background-color: #FFFFFF; /* Fondo blanco */
+}
+
+/* --- Grupo Central --- */
+.header__title {
+    font-size: 1.7rem;
+    font-weight: 600;
+    text-align: center;
+    white-space: nowrap; /* Evita que se parta en dos líneas */
+}
+
+/* --- Grupo Derecho (Filtros) --- */
+.header__filters {
+    background-color: var(--color-fondo);
+    padding: 1rem;
+    border-radius: var(--radio-borde);
+    width: 100%;
+}
+.filter-form {
+    display: flex;
+    flex-direction: column; /* Apilado en móvil */
+    gap: 1rem;
+}
+.filter-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+.filter-group label {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--color-texto-secundario);
+}
+.filter-group select {
+    width: 100%;
+    padding: 0.6rem;
+    border: 1px solid var(--color-borde);
+    border-radius: 8px;
+    background-color: var(--color-superficie);
+}
+.filter-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+}
+.filter-actions button, .filter-actions a {
+    width: 100%;
+    padding: 0.75rem;
+    border-radius: 8px;
+    border: none;
+    font-weight: 600;
+    text-align: center;
+    text-decoration: none;
+    cursor: pointer;
+    transition: var(--transicion-suave);
+}
+.btn--icon {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 0; /* Quitamos el padding original */
+    width: 44px;  /* Ancho fijo para hacerlo cuadrado */
+    height: 44px; /* Alto fijo para hacerlo cuadrado */
+    border-radius: 50%; /* Lo hacemos perfectamente redondo */
+    font-size: 1.5rem; /* Hacemos el icono un poco más grande */
+}
+
+/* Efecto hover específico para el botón-icono */
+.btn--icon:hover {
+    transform: rotate(90deg); /* Gira el icono al pasar el mouse */
+}
+
+/* Estilo para las etiquetas de los filtros en MODO OSCURO */
+body.dark-theme .filter-group label {
+    color: var(--color-texto-principal); /* Hereda el color de texto principal del tema oscuro */
+}
+
+/* Y para asegurar que los desplegables también se vean bien */
+body.dark-theme .filter-group select {
+    background-color: var(--color-superficie);
+    border-color: var(--color-borde);
+    color: var(--color-texto-principal);
+}
+
+
+.map-link {
+    display: flex;
+    align-items: center;
+}
+
+.map-icon {
+    font-size: 1.8rem; /* Tamaño del emoji */
+    line-height: 1;
+    transition: var(--transicion-suave);
+}
+.map-link:hover .map-icon {
+    transform: scale(1.15); /* Efecto al pasar el mouse */
+}
+
+/* ---------------------------------- */
+/* 3. CONTENIDO PRINCIPAL             */
+/* ---------------------------------- */
+.main-container {
+    padding: var(--espaciado);
+    flex-grow: 1; /* Le dice que ocupe todo el espacio vertical disponible */
+    overflow-y: auto; /* Permite el scroll SÓLO en esta sección */
+}
+
+.section-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    text-align: center;
+    margin-bottom: var(--espaciado);
+}
+hr {
+    border: none;
+    border-top: 1px solid var(--color-borde);
+    margin: calc(var(--espaciado) * 2) 0;
+}
+
+/* Tabla Top Rutas */
+.table-container {
+    background-color: var(--color-superficie);
+    border-radius: var(--radio-borde);
+    box-shadow: 0 4px 12px var(--color-sombra);
+    overflow-x: auto; /* Permite scroll horizontal en móvil si es necesario */
+    max-height: 420px;
+    overflow-y: auto;
+}
+.responsive-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.responsive-table th, .responsive-table td {
+    padding: 1rem;
+    text-align: center;
+}
+.responsive-table thead {
+    background-color: #34495E;
+    color: #FFFFFF;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    position: sticky;
+    top: 0;
+    z-index: 10; /* Asegura que el encabezado se muestre por encima del contenido del cuerpo */
+}
+.responsive-table tbody tr {
+    border-bottom: 1px solid var(--color-borde);
+}
+.responsive-table tbody tr:nth-of-type(even) {
+    background-color: var(--color-fondo);
+}
+.responsive-table tbody tr:last-of-type {
+    border-bottom: none;
+}
+.responsive-table tbody td {
+    font-size: 0.9rem;
+}
+.responsive-table td[data-label="Total"] strong {
+    color: var(--color-primario);
+    font-weight: 700;
+}
+
+/* Gráficos */
+.charts-grid {
+    display: grid;
+    grid-template-columns: 1fr; /* Una columna por defecto en móvil */
+    gap: var(--espaciado);
+}
+.chart-container {
+    background-color: var(--color-superficie);
+    padding: var(--espaciado);
+    border-radius: var(--radio-borde);
+    box-shadow: 0 4px 12px var(--color-sombra);
+    height: 400px;
+    position: relative;
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between; /* Título a la izquierda, botón a la derecha */
+    align-items: center;
+    margin-bottom: var(--espaciado);
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+/* Ajuste para que el título no ocupe todo el espacio y deje sitio al botón */
+.section-header .section-title {
+    flex-grow: 1; /* Le dice al título que ocupe todo el espacio sobrante */
+    text-align: center; /* Centra el texto dentro de ese espacio */
+    margin-bottom: 0; /* Esto ya estaba bien */
+}
+
+/* Estilo para el nuevo botón de exportar todo */
+.btn--export-all {
+    /* Mantenemos lo básico */
+    background-color: transparent;
+    border: none;
+    cursor: pointer;
+    transition: var(--transicion-suave);
+
+    /* Ajustes para el icono */
+    padding: 0;
+    width: 38px; /* Un poco más grande para el header */
+    height: 38px;
+}
+
+/* Regla para la imagen dentro del botón */
+.btn--export-all img {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+/* Efecto hover */
+.btn--export-all:hover {
+    transform: scale(1.1);
+}
+
+/* Estilo para cuando esté deshabilitado (ya no necesita cambiar el texto) */
+.btn--export-all:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+    animation: pulse 1.5s infinite; /* ¡Efecto visual extra! */
+}
+
+/* Animación opcional para el estado de carga */
+@keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+    100% { transform: scale(1); }
+}
+
+/* --- Estilos para la Barra de Herramientas de la Tabla --- */
+
+.section-top-bar {
+    display: flex;
+    justify-content: space-between; /* Empuja el título a la izquierda y los botones a la derecha */
+    align-items: center; /* Los alinea verticalmente */
+    margin-bottom: 1rem;
+    gap: 1rem;
+    flex-wrap: wrap; /* Para que se adapten en pantallas pequeñas */
+}
+
+/* El título ya tiene la clase .section-title, que debería tener text-align: center.
+   Lo ajustamos para que se alinee a la izquierda dentro de este contenedor. */
+.section-top-bar .section-title {
+    flex-grow: 1;
+    text-align: center;
+    margin-bottom: 0; /* Quitamos el margen inferior para que se alinee bien */
+}
+
+.toggle-buttons {
+    display: flex;
+    border: 1px solid var(--color-borde);
+    border-radius: 8px;
+    overflow: hidden; /* Para que los bordes redondeados se apliquen bien */
+}
+
+.toggle-btn {
+    padding: 0.5rem 1rem;
+    border: none;
+    background-color: transparent;
+    cursor: pointer;
+    font-weight: 500;
+    color: var(--color-texto-secundario);
+    transition: var(--transicion-suave);
+}
+
+.toggle-btn:not(:last-child) {
+    border-right: 1px solid var(--color-borde);
+}
+
+.toggle-btn.active {
+    background-color: var(--color-primario);
+    color: white;
+    font-weight: 600;
+}
+
+body.dark-theme .toggle-btn {
+    color: var(--color-texto-secundario);
+}
+body.dark-theme .toggle-btn.active {
+    background-color: var(--color-primario);
+    color: var(--color-texto-principal);
+}
+
+.toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem; /* Espacio entre el botón de exportar y el grupo Top/All */
+}
+
+.export-btn {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 0.5rem;
+    border: 1px solid var(--color-borde);
+    border-radius: 8px;
+    font-size: 1.2rem;
+    text-decoration: none;
+    background-color: var(--color-superficie);
+    color: var(--color-texto-principal);
+    transition: var(--transicion-suave);
+}
+
+.export-btn:hover {
+    background-color: var(--color-fondo);
+    border-color: var(--color-primario);
+    transform: scale(1.05);
+}
+
+/* ---------------------------------- */
+/* 4. MEDIA QUERIES PARA RESPONSIVE   */
+/* ---------------------------------- */
+
+/* --- Vista de Tablet (a partir de 768px) --- */
+@media (min-width: 768px) {
+    .header {
+        flex-direction: row; /* Elementos en una fila */
+        justify-content: space-between; /* Espacio entre los bloques */
+        align-items: center; /* Alineación vertical */
+        /* Eliminamos flex-wrap para forzar una sola línea */
+    }
+
+    .header-block {
+        width: auto; /* El ancho se adapta al contenido */
+    }
+
+    /* 1. El bloque izquierdo se mantiene como está */
+    .header-block--left {
+        flex-direction: row;
+    }
+
+    /* 2. El bloque central (título) debe crecer para ocupar el espacio sobrante */
+    .header-block--center {
+        flex-grow: 1; /* ¡Esta es la clave! */
+        text-align: center; /* Asegura que el título quede centrado en su espacio */
+    }
+
+    /* 3. El bloque derecho (filtros) ya no necesita 100% de ancho */
+    .header-block--right {
+        width: auto;
+        order: 0; /* Reseteamos el orden */
+        justify-content: flex-end; /* Alineamos su contenido a la derecha */
+    }
+
+    .header__filters {
+        width: auto; /* El contenedor de filtros se adapta a su contenido */
+    }
+
+    .filter-form {
+        flex-direction: row; /* Filtros en una fila */
+        align-items: flex-end; /* Alinea etiquetas y selects verticalmente */
+        gap: 1rem;
+    }
+
+    .filter-actions {
+        display: flex; /* Botones en una fila */
+    }
+
+    .charts-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .chart-container--full-width {
+        grid-column: 1 / 3; /* Ocupa desde la línea de inicio 1 a la 3 */
+    }
+}
+
+/* --- Vista de Escritorio (a partir de 1024px) --- */
+@media (min-width: 1200px) {
+    .header {
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .header__logo img {
+    height: 120px;
+    width: auto;
+    margin-right: 1rem;
+    }
+
+    .header-block--left,
+    .header-block--center,
+    .header-block--right {
+        flex-direction: row;
+    }
+    
+    .header-block--center {
+        flex-grow: 1;
+    }
+
+    .header__logo img {
+        height: 100px;
+    }
+    
+    .header__filters {
+        width: auto;
+    }
+    
+    .filter-form {
+        flex-direction: row;
+        align-items: center;
+        gap: 0.75rem;
+    }
+    
+    .filter-actions {
+        display: flex;
+        align-items: flex-end;
+    }
+    
+    .charts-grid {
+        grid-template-columns: repeat(3, 1fr);
+    }
+    .chart-container--full-width {
+        grid-column: 1 / 4; /* Ocupa desde la línea de inicio 1 a la 4 */
+    }
+}
+
+@media (max-width: 767px) {
+    .main-container {
+        padding: var(--espaciado) 0.5rem; /* Reduce el padding horizontal */
+    }
+    
+    .responsive-table td[data-label] {
+        display: block;
+        text-align: right;
+        position: relative;
+        padding-left: 50%; /* Espacio para la etiqueta */
+        border-bottom: 1px solid var(--color-borde);
+    }
+    .header {
+        flex-direction: column;
+        align-items: center;
+        gap: 1.5rem;
+    }
+    
+    /* Orden de los bloques en móvil */
+    /* Orden de los bloques principales en móvil */
+    .header-block--center { order: 1; } /* 1. Título */
+    .header-block--left   { order: 2; } /* 2. Logo y Stats */
+    .header-block--right  { order: 3; } /* 3. Filtros e Iconos */
+    
+    .header-block--left,
+    .header-block--right {
+        flex-direction: column; /* Apila el contenido interno de los bloques */
+        gap: 1rem;
+        width: 100%; /* Ocupan todo el ancho */
+    }
+
+    .header__filters {
+        width: 100%;
+    }
+    .filter-form {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .filter-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .main-container {
+        padding: var(--espaciado) 0.5rem;
+    }
+    
+    .charts-grid {
+        grid-template-columns: 1fr; /* Una columna para los gráficos */
+    }
+    
+    .responsive-table td[data-label]::before {
+        content: attr(data-label);
+        position: absolute;
+        left: 1rem;
+        width: 45%;
+        text-align: left;
+        font-weight: bold;
+        color: var(--color-texto-secundario);
+    }
+    
+    .responsive-table thead {
+        display: none; /* Oculta la cabecera original */
+    }
+    
+    .responsive-table tr {
+        display: block;
+        margin-bottom: 1rem;
+        border: 1px solid var(--color-borde);
+        border-radius: var(--radio-borde);
+        overflow: hidden;
+    }
+
+    .responsive-table td:last-child {
+        border-bottom: none;
+    }
+}

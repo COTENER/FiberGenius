@@ -1,0 +1,541 @@
+.accesos-header {
+    position: sticky;
+    top: 0;
+    left: 0;
+    z-index: 10;
+    background-color: white;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 15px;
+    border-bottom: 1px solid #ccc;
+}
+.contenedor-scroll {
+    overflow-x: auto;
+    width: 100%;
+}
+
+.btn-agregar {
+    padding: 0.5rem 1rem;
+    background-color: #38a169;
+    color: white;
+    text-decoration: none;
+    border-radius: 0.375rem;
+    font-weight: bold;
+    transition: background-color 0.3s ease;
+}
+
+.btn-agregar:hover {
+    background-color: #2f855a;
+}
+
+.accesos-tabla {
+    width: 100%;
+    border-collapse: collapse;
+    background-color: white;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    border-radius: 0.5rem;
+    overflow: hidden;
+}
+
+.accesos-tabla th,
+.accesos-tabla td {
+    padding: 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.accesos-tabla th {
+    background-color: #edf2f7;
+    font-weight: bold;
+}
+
+.acciones {
+    padding: 0; /* Quita espacio adicional */
+    text-align: center;
+}
+
+.acciones-wrapper {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.5rem;
+    height: 100%;
+}
+
+
+.btn-editar,
+.btn-eliminar {
+    display: inline-block;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.9rem;
+    border-radius: 0.375rem;
+    color: white;
+    text-decoration: none;
+}
+
+.btn-editar {
+    background-color: #3182ce;
+}
+.btn-editar:hover {
+    background-color: #2b6cb0;
+}
+
+.btn-eliminar {
+    background-color: #e53e3e;
+}
+.btn-eliminar:hover {
+    background-color: #c53030;
+}
+
+.modal {
+    display: none; /* Oculto por defecto */
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+}
+
+.modal-contenido {
+    background-color: white;
+    padding: 2rem;
+    border-radius: 0.5rem;
+    max-width: 400px;
+    text-align: center;
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+.modal-acciones {
+    margin-top: 1.5rem;
+    display: flex;
+    justify-content: space-around;
+}
+
+.btn-confirmar {
+    background-color: #e53e3e;
+    color: white;
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 0.375rem;
+}
+
+.btn-cancelar {
+    background-color: #a0aec0;
+    color: white;
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 0.375rem;
+}
+
+.btn-confirmar:hover {
+    background-color: #c53030;
+}
+
+.btn-cancelar:hover {
+    background-color: #718096;
+}
+
+.tooltip {
+    position: relative;
+    display: inline-block;
+}
+
+.tooltip .tooltip-text {
+    visibility: hidden;
+    background-color: #2d3748;
+    color: #fff;
+    text-align: center;
+    border-radius: 0.375rem;
+    padding: 0.3rem 0.6rem;
+    position: absolute;
+    z-index: 1;
+    bottom: 125%; /* Posiciona arriba del ícono */
+    left: 50%;
+    transform: translateX(-50%);
+    opacity: 0;
+    transition: opacity 0.3s;
+    white-space: nowrap;
+    font-size: 0.75rem;
+}
+
+.tooltip:hover .tooltip-text {
+    visibility: visible;
+    opacity: 1;
+}
+
+.tooltip .tooltip-text.active {
+    visibility: visible;
+    opacity: 1;
+}
+
+.paginacion {
+    display: flex;
+    justify-content: center;
+    margin-top: 1.5rem;
+}
+
+.pagination-list {
+    list-style: none;
+    display: flex;
+    gap: 0.5rem;
+    padding: 0;
+}
+
+.btn-paginacion {
+    display: inline-block;
+    padding: 0.5rem 0.9rem;
+    background-color: #edf2f7;
+    color: #1a202c;
+    border-radius: 0.375rem;
+    text-decoration: none;
+    font-weight: bold;
+    transition: background-color 0.3s;
+}
+
+.btn-paginacion:hover {
+    background-color: #cbd5e0;
+}
+
+.btn-paginacion.active {
+    background-color: #2b6cb0;
+    color: white;
+}
+
+.btn-paginacion.disabled {
+    background-color: #e2e8f0;
+    color: #a0aec0;
+    cursor: default;
+}
+
+/* === MODO OSCURO === */
+
+html.theme-dark .accesos-header {
+    background-color: #2d3748;
+    border-bottom: 1px solid #4a5568;
+    color: #e2e8f0;
+}
+
+html.theme-dark .accesos-tabla {
+    background-color: #2d3748;
+    color: #e2e8f0;
+}
+
+html.theme-dark .accesos-tabla th {
+    background-color: #4a5568;
+    color: #e2e8f0;
+}
+
+html.theme-dark .accesos-tabla td {
+    color: #e2e8f0;
+}
+
+html.theme-dark .accesos-tabla td::before {
+    color: #cbd5e0;
+}
+html.theme-dark .btn-agregar:hover {
+    background-color: #2f855a;
+}
+html.theme-dark .btn-editar {
+    background-color: #4299e1;
+}
+html.theme-dark .btn-editar:hover {
+    background-color: #2b6cb0;
+}
+html.theme-dark .btn-eliminar {
+    background-color: #e53e3e;
+}
+html.theme-dark .btn-eliminar:hover {
+    background-color: #c53030;
+}
+html.theme-dark .modal-contenido {
+    background-color: #2d3748;
+    color: #e2e8f0;
+}
+html.theme-dark .btn-confirmar {
+    background-color: #e53e3e;
+    color: white;
+}
+html.theme-dark .btn-confirmar:hover {
+    background-color: #c53030;
+}
+html.theme-dark .btn-cancelar {
+    background-color: #a0aec0;
+    color: white;
+}
+html.theme-dark .btn-cancelar:hover {
+    background-color: #718096;
+}
+html.theme-dark .tooltip .tooltip-text {
+    background-color: #4a5568;
+    color: white;
+}
+
+html.theme-dark .btn-paginacion {
+    background-color: #4a5568;
+    color: white;
+}
+html.theme-dark .btn-paginacion:hover {
+    background-color: #619177;
+}
+html.theme-dark .btn-paginacion.active {
+    background-color: #2b6cb0;
+    color: white;
+}
+html.theme-dark .btn-paginacion.disabled {
+    background-color: #718096;
+    color: #a0aec0;
+}
+
+/* Estilos base */
+.badge-status-servidor,
+.badge-status-soporte {
+    color: black;
+    font-weight: bold;
+    padding: 4px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+}
+
+/* Servidor */
+.badge-status-servidor.operativo {
+    background-color: #55D41A;
+}
+
+.badge-status-servidor.apagado {
+    background-color: #D62B09;
+}
+
+/* Soporte */
+.badge-status-soporte.con-soporte {
+    background-color: #55D41A;
+}
+
+.badge-status-soporte.sin-soporte {
+    background-color: #D62B09;
+}
+
+.badge-status-soporte.interno {
+    background-color: #a5a5a5;
+}
+
+.password-container {
+    display: flex;
+    align-items: center;
+    gap: 5px; /* Espacio entre el input y el ícono */
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+/* --- RESPONSIVE para MÓVILES --- */
+@media (max-width: 768px) {
+    .accesos-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.75rem;
+        text-align: center;
+    }
+
+    .btn-agregar {
+        width: 100%;
+        text-align: center;
+        margin-top: 0.5rem;
+    }
+
+    .accesos-tabla tr {
+        margin-bottom: 1rem;
+        border-bottom: 2px solid #e2e8f0;
+    }
+
+    .accesos-tabla td {
+        text-align: center;
+        padding-left: 0;
+        position: relative;
+        padding-top: 1.5rem;
+    }
+
+    .modal-contenido {
+        width: 90%;
+        padding: 1rem;
+    }
+
+    .acciones {
+    justify-content: center;
+    flex-wrap: wrap;
+    }
+
+    .btn-editar,
+    .btn-eliminar {
+        min-width: auto;
+        width: auto;
+        padding: 0.4rem 0.6rem;
+        font-size: 1rem;
+        flex: 0 0 auto;
+    }
+
+    .tooltip .tooltip-text {
+        bottom: auto;
+        top: 120%; /* Posiciona debajo del ícono */
+        font-size: 0.8rem;
+    }
+
+    .pagination-list {
+        flex-wrap: wrap; /* Permite que los botones se envuelvan */
+        justify-content: center; /* Centra la fila de botones */
+        gap: 0.25rem; /* Reduce el espacio entre botones */
+    }
+
+    .btn-paginacion {
+        padding: 0.4rem 0.6rem; /* Haz los botones más pequeños */
+        font-size: 0.8rem; /* Y la fuente también */
+    }
+}
+
+/* --- RESPONSIVE para TABLETS --- */
+@media (min-width: 769px) and (max-width: 1024px) {
+    .accesos-tabla th,
+    .accesos-tabla td {
+        padding: 0.6rem;
+        font-size: 0.95rem;
+    }
+
+    .btn-agregar {
+        padding: 0.5rem 1rem;
+        font-size: 1rem;
+    }
+
+    .btn-editar,
+    .btn-eliminar {
+        font-size: 0.85rem;
+        padding: 0.4rem 0.8rem;
+    }
+
+    .acciones {
+        justify-content: center;
+        gap: 0.75rem;
+    }
+}
+
+.acciones-header {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.btn-exportar {
+    padding: 0.5rem 0.8rem;
+    background-color: #4299e1;
+    color: white;
+    text-decoration: none;
+    border-radius: 0.375rem;
+    font-weight: bold;
+    transition: background-color 0.3s ease;
+}
+
+.btn-exportar:hover {
+    background-color: #2b6cb0;
+}
+
+.filtro-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin: 15px 0;
+    align-items: center;
+}
+
+.filtro-form select,
+.filtro-form .btn-filtrar,
+.filtro-form .btn-limpiar {
+    padding: 0.4rem 0.7rem;
+    border-radius: 0.375rem;
+    border: 1px solid #cbd5e0;
+    font-size: 0.9rem;
+}
+
+.filtro-form .btn-filtrar {
+    background-color: #38a169;
+    color: white;
+    border: none;
+    cursor: pointer;
+}
+
+.filtro-form .btn-limpiar {
+    background-color: #a0aec0;
+    color: white;
+    border: none;
+    cursor: pointer;
+}
+
+.filtro-form .btn-filtrar:hover {
+    background-color: #2f855a;
+}
+
+.filtro-form .btn-limpiar:hover {
+    background-color: #718096;
+}
+
+/* === ESTILOS PARA FILTROS EN MODO OSCURO === */
+
+/* Solo los <select> se vuelven oscuros */
+html.theme-dark .filtro-form select {
+    background-color: #2d3748;
+    border: 1px solid #4a5568;
+    color: #e2e8f0;
+}
+
+/* El botón de filtrar MANTIENE su color verde, pero con un borde a juego */
+html.theme-dark .filtro-form .btn-filtrar {
+    background-color: #38a169; 
+    border: 1px solid #2f855a; 
+    color: white;
+}
+
+/* El botón de limpiar tiene un gris más oscuro y apropiado */
+html.theme-dark .filtro-form .btn-limpiar {
+    background-color: #718096;
+    border: 1px solid #4a5568;
+    color: white;
+}
+
+/* Y definimos los hovers para modo oscuro */
+html.theme-dark .filtro-form .btn-filtrar:hover {
+    background-color: #48bb78; 
+}
+
+html.theme-dark .filtro-form .btn-limpiar:hover {
+    background-color: #a0aec0;
+}
+
+html.theme-dark .btn-exportar {
+    background-color: #3182ce;
+}
+
+html.theme-dark .btn-exportar:hover {
+    background-color: #2b6cb0;
+}
+
+html.theme-dark .badge-status-servidor.operativo,
+html.theme-dark .badge-status-soporte.con-soporte {
+    background-color: #38a169;
+    color: white;
+}
+
+html.theme-dark .badge-status-servidor.apagado,
+html.theme-dark .badge-status-soporte.sin-soporte {
+    background-color: #e53e3e;
+    color: white;
+}
+
+html.theme-dark .badge-status-soporte.interno {
+    color: white;
+}
+

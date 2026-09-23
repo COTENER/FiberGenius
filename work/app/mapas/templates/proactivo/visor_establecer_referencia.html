@@ -1,0 +1,569 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Configurar Traza de Referencia{% endblock %}
+
+{% block extra_css %}
+    <style>
+        .header-bar {
+            background: var(--bg-surface);
+            border-bottom: 1px solid var(--border-color);
+            padding: 12px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+    
+        .header-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 18px;
+            font-weight: 600;
+        }
+    
+        .dashboard-layout {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            height: calc(100vh - 120px); /* Más bajo para evitar scroll */
+        }
+    
+        .topbar-setup {
+            background: var(--bg-surface);
+            border-bottom: 1px solid var(--border-color);
+            padding: 16px 24px;
+            display: flex;
+            align-items: flex-start;
+            gap: 24px;
+        }
+    
+        .chart-container {
+            flex: 1;
+            padding: 20px;
+            background: var(--bg-body);
+            display: flex;
+            flex-direction: column;
+            min-height: 350px;
+            max-height: 50vh; /* Altura máxima reducida */
+        }
+    
+        #echarts-visor {
+            flex: 1;
+            background: var(--bg-surface);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+        }
+    
+        .form-group { margin-bottom: 24px; }
+        .form-label { display: block; margin-bottom: 8px; font-weight: 500; font-size: 14px; color: var(--text-secondary); }
+        
+        .form-control {
+            width: 100%; padding: 12px 16px; background: var(--bg-input);
+            border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-primary);
+            font-size: 14px; transition: all 0.2s;
+        }
+        .form-control:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2); }
+    
+        .btn-submit {
+            width: 100%; background: var(--accent); color: white; border: none; padding: 12px;
+            border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer;
+            display: flex; justify-content: center; align-items: center; gap: 8px; transition: all 0.2s;
+        }
+        .btn-submit:hover { background: var(--accent-hover); }
+        
+        .status-card {
+            background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 8px; padding: 16px; margin-bottom: 24px;
+        }
+
+        /* SaaS Modal Styles */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+            background: rgba(15, 23, 42, 0.7); backdrop-filter: blur(4px);
+            display: none; align-items: center; justify-content: center; z-index: 1000;
+        }
+        .modal-content {
+            background: var(--bg-surface); border: 1px solid var(--border-color);
+            border-radius: 12px; padding: 32px; max-width: 450px; width: 90%;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+            text-align: center;
+        }
+        .modal-icon {
+            width: 48px; height: 48px; background: rgba(239, 68, 68, 0.1);
+            color: var(--danger); border-radius: 50%; display: flex; align-items: center;
+            justify-content: center; margin: 0 auto 16px;
+        }
+        .modal-title { font-size: 18px; font-weight: 700; margin-bottom: 8px; color: var(--text-primary); }
+        .modal-text { font-size: 14px; color: var(--text-secondary); margin-bottom: 24px; line-height: 1.5; }
+        .modal-actions { display: flex; gap: 12px; }
+        .btn-cancel {
+            flex: 1; padding: 10px; border-radius: 8px; font-size: 14px; font-weight: 600;
+            background: var(--bg-body); border: 1px solid var(--border-color); color: var(--text-primary);
+            cursor: pointer; transition: all 0.2s;
+        }
+        .btn-cancel:hover { background: var(--bg-hover); }
+        .btn-confirm {
+            flex: 1; padding: 10px; border-radius: 8px; font-size: 14px; font-weight: 600;
+            background: var(--danger); color: white; border: none;
+            cursor: pointer; transition: all 0.2s;
+        }
+        .btn-confirm:hover { background: var(--danger-dark); }
+    </style>
+{% endblock %}
+
+{% block content %}
+<div class="header-bar">
+    <div class="header-title">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor" style="color: var(--accent)"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" /></svg>
+        Configuración de Referencia: {{ ruta.nombre }}
+    </div>
+</div>
+
+<div class="dashboard-layout">
+    <div class="topbar-setup" style="flex-wrap: wrap; align-items: center;">
+        <div style="flex: 1; min-width: 300px; border-right: 1px solid var(--border-color); padding-right: 20px;">
+            <div style="display: flex; gap: 16px; margin-bottom: 8px;">
+                <div style="flex: 1;">
+                    <label style="font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">RFTS (OTU)</label>
+                    <div style="font-size: 13px; font-weight: 600; color: var(--text-primary);">{{ ruta.otu|default:"No Asignado" }}</div>
+                </div>
+                <div style="flex: 1;">
+                    <label style="font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.5px;">Puerto</label>
+                    <div style="font-size: 13px; font-weight: 600; color: var(--text-primary);">
+                        {% if ruta.puerto %}
+                            Puerto {{ ruta.puerto.numero }}
+                        {% else %}
+                            No Asignado
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            
+            <div style="display: flex; align-items: center; gap: 12px; margin-top: 12px; margin-bottom: 8px;">
+                <label style="font-size: 12px; color: var(--text-secondary); font-weight: 600;">Perfil de Umbrales:</label>
+                <select id="perfilSelector" class="form-control" style="width: auto; padding: 4px 8px; font-size: 13px;" onchange="asignarPerfil(this.value)">
+                    <option value="">-- Seleccionar Perfil --</option>
+                    {% for p in perfiles %}
+                    <option value="{{ p.id }}" {% if perfil_activo and perfil_activo.id == p.id %}selected{% endif %}>{{ p.nombre_perfil }}</option>
+                    {% endfor %}
+                </select>
+                <span id="perfilStatus" style="font-size: 12px; color: var(--success); display: none; transition: opacity 0.3s;">Guardado ✓</span>
+            </div>
+            
+            {% if perfil_activo %}
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; color: var(--text-secondary); background: var(--bg-surface-2); padding: 6px 10px; border-radius: 6px;">
+                <span>Empalme: <strong>{{ perfil_activo.splice_loss }}dB</strong></span> &bull;
+                <span>Reflectancia: <strong>{{ perfil_activo.reflectance }}dB</strong></span> &bull;
+                <span>Minor: <strong>{{ perfil_activo.atenuacion_minor_min }}dB</strong></span> &bull;
+                <span>Major: <strong>{{ perfil_activo.atenuacion_major_min }}dB</strong></span> &bull;
+                <span>Critical: <strong>{{ perfil_activo.atenuacion_critical_min }}dB</strong></span> &bull;
+                <span style="color: var(--danger);">Margen Corte: <strong>+{{ perfil_activo.margen_corte_fibra_db }}dB</strong></span>
+            </div>
+            {% endif %}
+        </div>
+
+        {% if referencia_actual %}
+        <div class="status-card" style="margin-bottom: 0; padding: 12px 20px; display: flex; align-items: center; gap: 24px; min-width: max-content;">
+            <div>
+                <h4 style="color: var(--success); margin: 0 0 4px 0; font-size: 14px; display: flex; align-items: center; gap: 6px;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                    Referencia Activa
+                </h4>
+                <div style="font-size: 13px; display: flex; gap: 16px;">
+                    <span><strong style="color: var(--text-primary);">{{ referencia_actual.nombre }}</strong></span>
+                    <span><span style="color: var(--text-secondary);"></span> <strong style="color: var(--text-primary);">{{ referencia_actual.fecha_creacion|date:"d/m/Y H:i" }}</strong></span>
+                </div>
+            </div>
+            <button id="btnShowForm" class="btn-submit" style="width: auto; background: transparent; border: 1px solid var(--accent); color: var(--accent); padding: 8px 16px;" onclick="document.getElementById('formSection').style.display='flex'; this.style.display='none';">
+                Reemplazar
+            </button>
+        </div>
+        {% endif %}
+
+        <div id="formSection" style="{% if referencia_actual %}display:none;{% else %}display:flex;{% endif %} align-items: flex-end; gap: 16px;">
+            <div class="form-group" style="margin-bottom: 0;">
+                <label class="form-label">Nombre para la nueva traza</label>
+                <input type="text" id="nombre_ref" class="form-control" placeholder="Ej. Baseline_Nuevo" autofocus>
+            </div>
+            <button class="btn-submit" id="btnDisparar" style="width: auto;" onclick="dispararReferencia()">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                Disparar Láser
+            </button>
+        </div>
+    </div>
+
+    <div class="chart-container">
+        <div id="echarts-visor"></div>
+    </div>
+</div>
+
+<!-- Modal SaaS Confirmación -->
+<div class="modal-overlay" id="confirmModal">
+    <div class="modal-content">
+        <div class="modal-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+        </div>
+        <div class="modal-title">¿Reemplazar Traza Oficial?</div>
+        <div class="modal-text">Está a punto de capturar una nueva curva <strong style="color:var(--text-primary)" id="modalRefName"></strong>.<br>Esto actualizará la base matemática para todas las alarmas futuras en este enlace. ¿Desea proceder con el disparo físico?</div>
+        <div class="modal-actions">
+            <button class="btn-cancel" onclick="closeModal('confirmModal')">Cancelar</button>
+            <button class="btn-confirm" onclick="executeDisparo()">Sí, Disparar y Guardar</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal SaaS Éxito -->
+<div class="modal-overlay" id="successModal">
+    <div class="modal-content">
+        <div class="modal-icon" style="background: rgba(16, 185, 129, 0.1); color: var(--success);">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+        </div>
+        <div class="modal-title">¡Referencia Configurada!</div>
+        <div class="modal-text">La Traza de Referencia se ha capturado del equipo VeEX y guardado en la base de datos exitosamente. El motor matemático ya está usando esta curva.</div>
+        <div class="modal-actions">
+            <button class="btn-confirm" style="background: var(--success); width: 100%;" onclick="window.location.reload()">Aceptar y Recargar</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'vendor/echarts/echarts-5.5.0.min.js' %}"></script>
+<script>
+    function asignarPerfil(perfilId) {
+        if(!perfilId) return;
+        
+        fetch('/api/proactivo/asignar-perfil/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: JSON.stringify({
+                route_name: '{{ ruta.nombre }}',
+                perfil_id: perfilId
+            })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if(data.status === 'success') {
+                const statusEl = document.getElementById('perfilStatus');
+                statusEl.style.display = 'inline';
+                setTimeout(() => { statusEl.style.display = 'none'; location.reload(); }, 1500);
+            } else {
+                alert('Error asignando perfil: ' + data.message);
+            }
+        })
+        .catch(err => console.error(err));
+    }
+
+    let myChart;
+    
+    document.addEventListener('DOMContentLoaded', function() {
+        const chartDom = document.getElementById('echarts-visor');
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        myChart = echarts.init(chartDom, isDark ? 'dark' : null, { renderer: 'canvas' });
+        
+        {% if referencia_actual %}
+            fetch(`/api/proactivo/referencia-datos/{{ referencia_actual.id }}/`)
+            .then(res => res.json())
+            .then(res => {
+                if(res.status === 'success') {
+                    renderRealReference(res.data, false);
+                } else {
+                    renderMockReference(false);
+                }
+            })
+            .catch(() => renderMockReference(false));
+        {% else %}
+            myChart.showLoading({ text: 'Esperando configuración de referencia...', color: '#3b82f6', textColor: isDark ? '#f8fafc' : '#0f172a', maskColor: 'transparent' });
+        {% endif %}
+        
+        window.addEventListener('resize', () => myChart.resize());
+        
+        // Escuchar cambios de tema
+        const observer = new MutationObserver(function(mutations) {
+            mutations.forEach(function(mutation) {
+                if (mutation.attributeName === "data-theme") {
+                    const newTheme = document.documentElement.getAttribute('data-theme');
+                    const opts = myChart.getOption();
+                    myChart.dispose();
+                    myChart = echarts.init(chartDom, newTheme === 'dark' ? 'dark' : null, { renderer: 'canvas' });
+                    myChart.setOption(opts);
+                }
+            });
+        });
+        observer.observe(document.documentElement, {attributes: true});
+    });
+
+    function renderRealReference(data, isNew) {
+        myChart.hideLoading();
+        
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        const axisColor = isDark ? '#94a3b8' : '#475569';
+        const gridColor = isDark ? '#334155' : '#e2e8f0';
+
+        // Inteligencia: Calcular el piso de ruido (Tomando el tope máximo del ruido al final de la fibra)
+        const endPoints = data.y && data.y.length > 0 ? data.y.slice(-300) : [0]; // Tomamos los últimos 300 puntos
+        const noiseCeiling = Math.max(...endPoints); 
+        const margenCorteStr = "{{ margen_corte|default:'2.0' }}".replace(',', '.');
+        const margenCorte = parseFloat(margenCorteStr) || 2.0; 
+        const umbralCorteY = noiseCeiling === -Infinity ? -15 : noiseCeiling + margenCorte;
+
+        // Procesar eventos
+        const markPoints = data.events.map(ev => {
+            if(ev.type === 'END') {
+                return { type: 'max', name: 'Fin Fibra', coord: [ev.distance, noiseFloor], itemStyle: {color: '#ef4444'}, value: 'END' };
+            } else if(ev.loss > 0) {
+                return { type: 'pin', name: `Evento ${ev.number}`, coord: [ev.distance, data.y[data.x.indexOf(ev.distance)] || -10], itemStyle: {color: '#f59e0b'}, value: ev.loss + 'dB' };
+            }
+            return null;
+        }).filter(Boolean);
+
+        const option = {
+            backgroundColor: 'transparent',
+            tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+            legend: { data: ['Traza de Referencia (Real)'], textStyle: { color: axisColor }, top: 10 },
+            toolbox: {
+                show: true,
+                feature: { dataZoom: { yAxisIndex: 'none' }, restore: {}, saveAsImage: {} }
+            },
+            dataZoom: [
+                { type: 'inside', start: 0, end: 100 },
+                { type: 'slider', start: 0, end: 100, bottom: 10 }
+            ],
+            grid: { left: '4%', right: '4%', bottom: '15%', containLabel: true },
+            xAxis: { 
+                type: 'category', 
+                data: data.x, 
+                axisLabel: { formatter: (val) => Number(val).toLocaleString() + ' m', color: axisColor },
+                axisLine: { lineStyle: { color: gridColor } },
+                splitLine: { show: true, lineStyle: { color: gridColor, type: 'dashed' } }
+            },
+            yAxis: { 
+                type: 'value', 
+                axisLabel: { formatter: '{value} dB', color: axisColor }, 
+                axisLine: { lineStyle: { color: gridColor } },
+                splitLine: { show: true, lineStyle: { color: gridColor, opacity: 0.5 } }
+            },
+            series: [
+                {
+                    name: 'Traza de Referencia (Real)',
+                    type: 'line',
+                    data: data.y,
+                    lineStyle: { color: isNew ? '#10b981' : '#0ea5e9', width: 2 },
+                    itemStyle: { color: isNew ? '#10b981' : '#0ea5e9' },
+                    symbol: 'none',
+                    markLine: {
+                        symbol: ['none', 'none'],
+                        label: { formatter: `Margen Corte: ${margenCorte.toFixed(1)} dB`, color: '#ef4444', position: 'insideStartTop' },
+                        lineStyle: { color: '#ef4444', type: 'solid', width: 2, opacity: 0.7 },
+                        data: [{ yAxis: umbralCorteY }]
+                    },
+                    markPoint: { data: markPoints }
+                }
+            ]
+        };
+        myChart.setOption(option, true);
+    }
+
+    // Fallback si no hay datos reales (Simulador realista de curva OTDR)
+    function renderMockReference(isNew) {
+        myChart.hideLoading();
+        // Usar la distancia real si existe, o simular 30km
+        const endDistance = {% if ruta.distancia %}{{ ruta.distancia }} * 1000{% else %}26350{% endif %}; 
+        const numPoints = 3500;
+        const xData = Array.from({length: numPoints}, (_, i) => i * 10); // 35km total mostrado
+        
+        const yData = xData.map(x => {
+            const distanceKm = x / 1000;
+            let baseLoss = -0.5 - (distanceKm * 0.2); 
+            
+            // Corte abrupto en la distancia real del enlace (Ej. 26.35km)
+            if (x >= endDistance) return -45 + (Math.random() * 5); 
+            
+            return baseLoss + (Math.random() * 0.1 - 0.05);
+        });
+
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        const axisColor = isDark ? '#94a3b8' : '#475569';
+        const gridColor = isDark ? '#334155' : '#e2e8f0';
+
+        const option = {
+            backgroundColor: 'transparent',
+            tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+            legend: { data: ['Traza de Referencia (Simulada)'], textStyle: { color: axisColor }, top: 10 },
+            toolbox: {
+                show: true,
+                feature: { dataZoom: { yAxisIndex: 'none' }, restore: {}, saveAsImage: {} }
+            },
+            dataZoom: [
+                { type: 'inside', start: 0, end: 100 },
+                { type: 'slider', start: 0, end: 100, bottom: 10 }
+            ],
+            grid: { left: '4%', right: '4%', bottom: '15%', containLabel: true },
+            xAxis: { 
+                type: 'category', 
+                data: xData, 
+                axisLabel: { formatter: (val) => Number(val).toLocaleString() + ' m', color: axisColor },
+                axisLine: { lineStyle: { color: gridColor } },
+                splitLine: { show: true, lineStyle: { color: gridColor, type: 'dashed' } }
+            },
+            yAxis: { 
+                type: 'value', 
+                axisLabel: { formatter: '{value} dB', color: axisColor }, 
+                max: 5, min: -50,
+                axisLine: { lineStyle: { color: gridColor } },
+                splitLine: { show: true, lineStyle: { color: gridColor, opacity: 0.5 } }
+            },
+            series: [
+                {
+                    name: 'Traza de Referencia (Simulada)',
+                    type: 'line',
+                    data: yData,
+                    lineStyle: { color: isNew ? '#10b981' : '#0ea5e9', width: 2 },
+                    itemStyle: { color: isNew ? '#10b981' : '#0ea5e9' },
+                    symbol: 'none'
+                }
+            ]
+        };
+        myChart.setOption(option, true);
+    }
+
+    function dispararReferencia() {
+        const nombre = document.getElementById('nombre_ref').value.trim();
+        if (!nombre) return alert('Ingrese un nombre para la referencia.');
+
+        {% if referencia_actual %}
+        // Mostrar Modal en lugar de confirm()
+        document.getElementById('modalRefName').textContent = nombre;
+        document.getElementById('confirmModal').style.display = 'flex';
+        {% else %}
+        // Si no hay referencia, disparar directo
+        executeDisparo();
+        {% endif %}
+    }
+
+    function closeModal(modalId) {
+        document.getElementById(modalId).style.display = 'none';
+    }
+
+    function executeDisparo() {
+        closeModal('confirmModal');
+        const nombre = document.getElementById('nombre_ref').value.trim();
+
+        const btn = document.getElementById('btnDisparar');
+        btn.disabled = true;
+        btn.innerHTML = `<svg style="animation: spin 1s linear infinite; margin-right:8px;" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" stroke-opacity="0.25"></circle><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg> Disparando...`;
+
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        myChart.showLoading({ 
+            text: 'Conectando con equipo VeEX y disparando láser...', 
+            color: '#3b82f6', 
+            textColor: isDark ? '#f8fafc' : '#0f172a', 
+            maskColor: isDark ? 'rgba(15, 23, 42, 0.8)' : 'rgba(255, 255, 255, 0.8)' 
+        });
+
+        // 1. Iniciar OnDemand Traza física
+        fetch("{% url 'iniciar_traza_ondemand' %}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: JSON.stringify({ route_name: "{{ ruta.nombre }}" })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if(data.status === 'success') {
+                myChart.showLoading({ text: 'Midiendo enlace físico (10 - 20 segs)...' });
+                pollStatus(data.traza_id, nombre);
+            } else {
+                alert('Error al contactar equipo VeEX: ' + data.message);
+                resetButton(btn);
+            }
+        })
+        .catch(error => {
+            alert('Error de red: ' + error);
+            resetButton(btn);
+        });
+    }
+
+    function pollStatus(trazaId, nombreRef) {
+        const interval = setInterval(() => {
+            fetch(`/api/traza-en-vivo/status/${trazaId}/`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'Completed') {
+                    clearInterval(interval);
+                    myChart.showLoading({ text: 'Traza finalizada. Procesando archivo binario y guardando referencia...' });
+                    promoverReferencia(trazaId, nombreRef);
+                } else if (data.status === 'Failed') {
+                    clearInterval(interval);
+                    alert('Fallo físico en la medición VeEX: ' + data.error_message);
+                    resetButton(document.getElementById('btnDisparar'));
+                }
+            })
+            .catch(e => {
+                clearInterval(interval);
+                alert('Error consultando estado: ' + e);
+                resetButton(document.getElementById('btnDisparar'));
+            });
+        }, 5000);
+    }
+
+    function promoverReferencia(trazaId, nombreRef) {
+        fetch("{% url 'promover_referencia' %}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            body: JSON.stringify({ 
+                traza_id: trazaId,
+                nombre_referencia: nombreRef 
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if(data.status === 'success') {
+                // Confirmación visual
+                renderMockReference(true); 
+                myChart.hideLoading();
+                setTimeout(() => {
+                    document.getElementById('successModal').style.display = 'flex';
+                }, 500);
+            } else {
+                alert('Error al guardar referencia en base de datos: ' + data.message);
+                resetButton(document.getElementById('btnDisparar'));
+            }
+        })
+        .catch(e => {
+            alert('Error al promover referencia: ' + e);
+            resetButton(document.getElementById('btnDisparar'));
+        });
+    }
+
+    function resetButton(btn) {
+        btn.disabled = false;
+        btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg> Disparar Láser y Guardar`;
+        myChart.hideLoading();
+    }
+
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+</script>
+{% endblock %}

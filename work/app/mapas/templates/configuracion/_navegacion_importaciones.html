@@ -1,0 +1,138 @@
+{% load static %}
+<link rel="stylesheet" href="{% static 'css/import-navigation.css' %}?v=20260906">
+<div class="import-navigation" id="importNavigation">
+    <header class="page-header">
+        <div>
+            <h1 class="page-header__title">¿Qué quieres cargar?</h1>
+            <p class="page-header__subtitle">Elige una tarea. No necesitas completar todas las cargas para empezar.</p>
+        </div>
+        <a class="btn btn--secondary" href="#import-history-title">Ver resultados anteriores</a>
+    </header>
+
+    <section class="import-start card" aria-labelledby="import-start-title">
+        <div>
+            <span class="badge badge--accent">Inicio rápido</span>
+            <h2 id="import-start-title">Tengo ODF y sus conexiones</h2>
+            <p>Dos archivos: ODF con capacidad y conexiones A/B. Puedes dejar la troncal pendiente.</p>
+        </div>
+        <button type="button" class="btn btn--primary" id="startOdfGuide" aria-expanded="false" aria-controls="odfConnectionGuide">Guiarme paso a paso</button>
+    </section>
+
+    <section class="import-task card" id="odfConnectionGuide" aria-labelledby="odf-guide-title" hidden>
+        <div class="import-section-heading">
+            <h2 id="odf-guide-title" tabindex="-1">Cargar ODF y conexiones</h2>
+            <button type="button" class="btn btn--secondary" id="closeOdfGuide">Cerrar guía</button>
+        </div>
+        <p>Descarga la plantilla de cada paso, completa tus datos y revisa el resultado antes de continuar. Si el ODF ya existe, comienza por el paso 2.</p>
+        <ol class="import-task-steps">
+            <li>
+                <h3>1. Registrar ODF</h3>
+                <p>Nombre y capacidad. Sus puertos se crean automáticamente. Site, sala y rack pueden quedar los tres vacíos.</p>
+                {% if fg_import_access.odf_inventario %}<button type="button" class="btn btn--primary" data-open-import="odf_inventario" data-import-title="Cargar ODF y capacidad">Preparar archivo de ODF</button>{% endif %}
+            </li>
+            <li>
+                <h3>2. Conectar las fibras</h3>
+                <p>Una fila por fibra con sus puertos A/B. Informa al menos un extremo; conserva las columnas del otro aunque estén vacías.</p>
+                {% if fg_import_access.terminaciones_fibra %}<button type="button" class="btn btn--primary" data-open-import="terminaciones_fibra" data-import-title="Cargar Terminaciones de Fibra">Preparar conexiones A/B</button>{% endif %}
+            </li>
+            <li>
+                <h3>3. Revisar el resultado</h3>
+                <p>Consulta el historial. Si falló un archivo, revisa el motivo, corrígelo y vuelve a cargarlo. No se guardan filas de una carga fallida.</p>
+                <a class="btn btn--secondary" href="#import-history-title">Consultar resultado</a>
+            </li>
+        </ol>
+        <p class="import-note">No necesitas cargar antes Sites, puertos vacíos ni fibras globales. Si una fibra ya existe y no puede identificarse por sus conexiones, utiliza la plantilla técnica precargada; no crees otra para reemplazarla.</p>
+    </section>
+
+    <div class="import-section-heading">
+        <h2>Importación guiada del inventario</h2>
+        <p>Abre solo el área que necesitas. Las opciones adicionales no son pasos obligatorios.</p>
+    </div>
+    <div class="import-areas" id="guidedImportGrid">
+        <details class="import-area card" data-import-area="infraestructura">
+            <summary><span class="import-area-number" aria-hidden="true">01</span><span><strong>Infraestructura</strong><small>Registrar ODF, ubicación y datos de puertos.</small></span></summary>
+            <div class="import-options">
+                {% if fg_import_access.sites_inventario %}<button type="button" class="import-option" data-import-type="sites_inventario" data-open-import="sites_inventario" data-import-title="Cargar Sites (.csv)">
+                    <span class="badge badge--info">Según la información disponible</span><h3>Cargar Sites (.csv)</h3>
+                    <p>Ubicación de la red. Puedes añadir dirección y coordenadas ahora o más adelante.</p>
+                </button>{% endif %}
+                {% if fg_import_access.odf_inventario %}<button type="button" class="import-option" data-import-type="odf_inventario" data-open-import="odf_inventario" data-import-title="Cargar ODF y capacidad">
+                    <span class="badge badge--accent">Crea sus puertos</span><h3>Cargar ODF y capacidad</h3>
+                    <p>Registra los ODF. La capacidad genera sus puertos libres; la ubicación puede quedar pendiente.</p>
+                </button>{% endif %}
+                {% if fg_import_access.puertos_odf_inventario %}<button type="button" class="import-option" data-import-type="puertos_odf_inventario" data-open-import="puertos_odf_inventario" data-import-title="Cargar datos adicionales de puertos ODF">
+                    <span class="badge badge--info">Opcional</span><h3>Datos adicionales de puertos</h3>
+                    <p>Bandeja, conector, patchcord, destino y notas. No conecta fibras ni cambia el estado de puertos existentes.</p>
+                </button>{% endif %}
+            </div>
+        </details>
+
+        <details class="import-area card" data-import-area="fibras">
+            <summary><span class="import-area-number" aria-hidden="true">02</span><span><strong>Fibras y conexiones</strong><small>Registrar hilos y conectarlos a sus puertos ODF.</small></span></summary>
+            <div class="import-options">
+                {% if fg_import_access.fibras_globales %}<button type="button" class="import-option" data-import-type="fibras_globales" data-open-import="fibras_globales" data-import-title="Cargar inventario global de fibras">
+                    <span class="badge badge--info">Sin conexión conocida</span><h3>Cargar inventario global de fibras</h3>
+                    <p>Registra fibras aunque todavía no conozcas su ODF ni su troncal. También permite actualizar sus datos globales.</p>
+                </button>{% endif %}
+                {% if fg_import_access.terminaciones_fibra %}<button type="button" class="import-option" data-import-type="terminaciones_fibra" data-open-import="terminaciones_fibra" data-import-title="Cargar Terminaciones de Fibra">
+                    <span class="badge badge--accent">Requiere ODF y puertos</span><h3>Cargar Terminaciones de Fibra</h3>
+                    <p>Conecta los extremos A/B en una sola fila. Puede crear una fibra nueva o completar una conexión identificada.</p>
+                </button>{% endif %}
+            </div>
+            <div class="import-note">
+                <strong>¿Quieres mover una conexión o cambiar el estado de un puerto?</strong>
+                <p>Es una operación explícita, no una carga descriptiva. Usa Gestionar conexión o las operaciones masivas de Puertos ODF.</p>
+                {% if perms.mapas.view_detallepuertoodf %}<a href="{% url 'planta_interna' %}" class="btn btn--secondary">Ir a Puertos ODF</a>{% endif %}
+            </div>
+        </details>
+
+        <details class="import-area card" data-import-area="recorrido">
+            <summary><span class="import-area-number" aria-hidden="true">03</span><span><strong>Troncales y recorrido</strong><small>Definir por qué tramos pasa cada fibra.</small></span></summary>
+            <p class="import-note">Cuando conozcas el recorrido: troncal → tramos → fibras por tramo. Si un dato ya está cargado, no necesitas repetir ese paso.</p>
+            <div class="import-options">
+                {% if fg_import_access.ruta_otu %}<button type="button" class="import-option" data-import-type="ruta_otu" data-open-import="ruta_otu" data-import-title="Cargar Troncales y Datos Generales">
+                    <span class="badge badge--accent">Primero, la troncal</span><h3>Cargar Troncales y Datos Generales</h3>
+                    <p>Nombre y datos generales. No exige OTU, mapa ni conexiones completas.</p>
+                </button>{% endif %}
+                {% if fg_import_access.tramos_inventario %}<button type="button" class="import-option" data-import-type="tramos_inventario" data-open-import="tramos_inventario" data-import-title="Cargar Inventario Técnico de Tramos (.csv)">
+                    <span class="badge badge--accent">Después, sus tramos</span><h3>Cargar Inventario Técnico de Tramos (.csv)</h3>
+                    <p>Divide el recorrido en uno o varios tramos ordenados. Requiere una troncal existente.</p>
+                </button>{% endif %}
+                {% if fg_import_access.fibras_inventario %}<button type="button" class="import-option" data-import-type="fibras_inventario" data-open-import="fibras_inventario" data-import-title="Cargar Fibras por Tramo (.csv)">
+                    <span class="badge badge--accent">Por último, las asignaciones</span><h3>Cargar Fibras por Tramo (.csv)</h3>
+                    <p>Indica qué fibra existente pasa por cada tramo y su posición. Requiere fibras y tramos ya registrados.</p>
+                </button>{% endif %}
+            </div>
+        </details>
+
+        <details class="import-area card" data-import-area="complementos">
+            <summary><span class="import-area-number" aria-hidden="true">04</span><span><strong>Complementos</strong><small>Añadir el mapa, reservas y elementos físicos.</small></span></summary>
+            <div class="import-options">
+                {% if fg_import_access.coordenadas_csv %}<button type="button" class="import-option" data-import-type="coordenadas_csv" data-open-import="coordenadas_csv" data-import-title="Cargar recorridos en el mapa (.csv)">
+                    <span class="badge badge--info">Opcional · requiere troncal</span><h3>Cargar recorridos en el mapa (.csv)</h3>
+                    <p>Dibuja la geometría de la troncal. No asigna fibras ni crea tramos técnicos.</p>
+                </button>{% endif %}
+                {% if fg_import_access.reservas %}<button type="button" class="import-option" data-import-type="reservas" data-open-import="reservas" data-import-title="Cargar reservas y elementos (.csv)">
+                    <span class="badge badge--info">Opcional · requiere troncal</span><h3>Cargar reservas y elementos (.csv)</h3>
+                    <p>Reservas de cable, mufas, cámaras y postes georreferenciados. No equivale a reservar un puerto.</p>
+                </button>{% endif %}
+            </div>
+        </details>
+    </div>
+
+    <details class="import-advanced card" id="advancedImports">
+        <summary><strong>Avanzado / Integraciones</strong><span>OTU, ONMSI y compatibilidad con archivos anteriores.</span></summary>
+        <p>No son requisitos para cargar el inventario físico. Se conservan los formatos y permisos existentes.</p>
+        <div class="import-advanced-actions">
+            {% if fg_import_access.equipos_otu %}<button type="button" class="btn btn--secondary" data-open-import="equipos_otu" data-import-title="Cargar Equipos y Puertos OTU">Equipos y puertos OTU</button>{% endif %}
+            {% if fg_import_access.asociar_puertos %}<button type="button" class="btn btn--secondary" data-open-import="asociar_puertos" data-import-title="Asociar Puertos a Troncales">Asociación OTU / troncal</button>{% endif %}
+            {% if fg_import_access.id_rutas %}<button type="button" class="btn btn--secondary" data-open-import="id_rutas" data-import-title="Cargar IDs de Rutas (ONMSI)">IDs de rutas ONMSI</button>{% endif %}
+            {% if fg_import_access.coordenadas_rutas %}<button type="button" class="btn btn--secondary" data-open-import="coordenadas_rutas" data-import-title="Coordenadas de rutas (ZIP)">Geografía por ruta (ZIP)</button>{% endif %}
+            {% if fg_import_access.coordenadas_inventario %}<button type="button" class="btn btn--secondary" data-open-import="coordenadas_inventario" data-import-title="Trazado geográfico segmentado (ZIP)">Geografía segmentada (ZIP)</button>{% endif %}
+            {% if perms.mapas.view_terminacionfibra or perms.mapas.add_terminacionfibra or perms.mapas.change_terminacionfibra %}
+            <a href="{% url 'plantilla_terminaciones_fibra' %}" class="btn btn--secondary" download>Plantilla técnica precargada</a>
+            {% endif %}
+        </div>
+    </details>
+    <noscript><p class="import-note">Activa JavaScript para preparar los archivos y consultar el progreso de las importaciones.</p></noscript>
+</div>

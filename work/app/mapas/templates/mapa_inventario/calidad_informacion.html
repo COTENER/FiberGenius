@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% load static l10n %}
+{% block title %}Calidad de información — Fiber Genius{% endblock %}
+{% block page_title %}Carga y calidad / Calidad de información{% endblock %}
+{% block extra_css %}<link rel="stylesheet" href="{% static 'css/calidad-informacion.css' %}?v=20260911-visual">{% endblock %}
+{% block content %}
+<section class="quality-dashboard" aria-labelledby="quality-title">
+    <header class="quality-heading">
+        <div class="quality-heading-main">
+            <span class="quality-heading-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6z"/><path d="m8 12 3 3 5-6"/></svg></span>
+            <div><span class="quality-eyebrow">Inventario · Calidad de datos</span><h1 id="quality-title">Calidad de información</h1><p>Una mirada a lo que falta completar y a lo que necesita revisión.</p></div>
+        </div>
+        <div class="quality-heading-meta"><span class="quality-readonly">Consulta de solo lectura</span><small>Actualizado {{ actualizado|date:"d/m/Y H:i" }}</small></div>
+    </header>
+    <form method="get" class="quality-filters" aria-label="Filtros de calidad">
+        <label for="quality-site">Site<select id="quality-site" name="site" onchange="this.form.requestSubmit()">
+            <option value="">Todos los Sites</option>
+            {% if site_desconocido %}<option value="{{ site }}" selected>{{ site }} (sin coincidencia)</option>{% endif %}
+            {% for nombre in sites %}<option value="{{ nombre }}" {% if nombre == site %}selected{% endif %}>{{ nombre }}</option>{% endfor %}
+        </select></label>
+        <label for="quality-control">Explorar un control<select id="quality-control" name="control" onchange="this.form.requestSubmit()">
+            <option value="" {% if not seleccionado %}selected{% endif %}>Vista general</option>
+            {% if pendientes %}<optgroup label="Información por completar">{% for item in pendientes %}<option value="{{ item.control.codigo }}" {% if item == seleccionado %}selected{% endif %}>{{ item.control.titulo }}</option>{% endfor %}</optgroup>{% endif %}
+            {% if inconsistencias %}<optgroup label="Inconsistencias">{% for item in inconsistencias %}<option value="{{ item.control.codigo }}" {% if item == seleccionado %}selected{% endif %}>{{ item.control.titulo }}</option>{% endfor %}</optgroup>{% endif %}
+        </select></label>
+        <button class="btn btn--primary" type="submit">Actualizar</button>
+        <a class="btn btn--secondary" href="{% url 'calidad_informacion' %}?site=" data-clear-site-context="true">Limpiar filtros</a>
+    </form>
+    {% if site_desconocido %}<p class="quality-warning" role="status">No existe un Site con ese nombre. No se ha sustituido el filtro por todos los Sites.</p>{% endif %}
+    {% if site %}<p class="quality-scope">Mostrando relaciones de <strong>{{ site }}</strong>. Los activos sin ubicación conocida deben revisarse en “Todos los Sites”.</p>{% endif %}
+
+    <div class="quality-summary" aria-label="Resumen de controles">
+        <a class="quality-stat" href="#quality-pending-title">
+            <div class="quality-stat-top"><span>Información por completar</span><span class="quality-stat-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 19h16M6 15v-4m6 4V5m6 10V8"/></svg></span></div>
+            <strong>{{ total_pendientes|floatformat:"0g" }}</strong><small>Observaciones pendientes <span aria-hidden="true">↗</span></small>
+        </a>
+        <a class="quality-stat quality-stat--review" href="#quality-issues-title">
+            <div class="quality-stat-top"><span>Inconsistencias detectadas</span><span class="quality-stat-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 3 10 17H2zM12 9v5m0 3v.1"/></svg></span></div>
+            <strong>{{ total_inconsistencias|floatformat:"0g" }}</strong><small>Contradicciones entre registros <span aria-hidden="true">↗</span></small>
+        </a>
+        <a class="quality-stat quality-stat--clear" href="#quality-controls-title">
+            <div class="quality-stat-top"><span>Controles sin casos detectados</span><span class="quality-stat-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></svg></span></div>
+            <strong>{{ controles_sin_casos }} <span class="quality-stat-denominator">/ {{ tarjetas|length }}</span></strong><small>Controles, no porcentaje de calidad <span aria-hidden="true">↗</span></small>
+        </a>
+    </div>
+    <p class="quality-count-note">Se cuentan observaciones, no activos únicos. Un registro puede tener varios pendientes.</p>
+
+    <div class="quality-visual-grid">
+        <section class="quality-panel quality-ranking" aria-labelledby="quality-pending-title">
+            <header class="quality-panel-heading"><div><span class="quality-eyebrow">Completitud</span><h2 id="quality-pending-title">¿Dónde falta información?</h2><p>Selecciona una barra para ver los registros afectados.</p></div><span class="quality-count">{{ pendientes|length }} controles</span></header>
+            {% if pendientes %}
+            <div class="quality-axis" aria-hidden="true"><span>Observaciones por control</span><span>Mayor volumen primero</span></div>
+            <ul class="quality-bars" aria-label="Pendientes por control, de mayor a menor">
+                {% for item in pendientes %}
+                <li><a class="quality-bar-link{% if item == seleccionado %} is-selected{% endif %}{% if not item.total %} is-clear{% endif %}" href="{{ item.url }}" {% if item == seleccionado %}aria-current="true"{% endif %}>
+                    <span class="quality-bar-heading"><span>{{ item.control.titulo }}</span><strong>{{ item.total|floatformat:"0g" }} <span class="quality-bar-arrow" aria-hidden="true">↗</span></strong></span>
+                    <span class="quality-bar-track" aria-hidden="true"><span class="quality-bar-fill" style="width:{{ item.ancho_barra|unlocalize }}%"></span></span>
+                    <span class="quality-bar-hint">{% if not item.total %}Sin casos detectados{% else %}Ver registros{% endif %}</span>
+                </a></li>
+                {% endfor %}
+            </ul>
+            <footer class="quality-panel-foot">Las barras comparan cantidades; no representan porcentajes de completitud.</footer>
+            {% else %}<p class="quality-empty">Tu perfil no tiene habilitados controles de información pendiente.</p>{% endif %}
+        </section>
+        <div class="quality-side">
+            <section class="quality-panel" aria-labelledby="quality-controls-title">
+                <header class="quality-panel-heading"><div><span class="quality-eyebrow">Resultado actual</span><h2 id="quality-controls-title">Estado de los controles</h2></div></header>
+                <div class="quality-ring-layout">
+                    <div class="quality-ring" role="img" aria-label="{{ tarjetas|length }} controles: {% for segmento in segmentos_controles %}{{ segmento.total }} {{ segmento.titulo|lower }}{% if not forloop.last %}, {% endif %}{% endfor %}.">
+                        <svg viewBox="0 0 120 120" aria-hidden="true" focusable="false">
+                            <circle class="quality-ring-track" cx="60" cy="60" r="48"/>
+                            {% for segmento in segmentos_controles %}{% if segmento.total %}<circle class="quality-ring-segment quality-ring--{{ segmento.clave }}" cx="60" cy="60" r="48" pathLength="100" stroke-dasharray="{{ segmento.longitud|unlocalize }} 100" stroke-dashoffset="{{ segmento.desfase|unlocalize }}"/>{% endif %}{% endfor %}
+                        </svg>
+                        <div class="quality-ring-center" aria-hidden="true"><strong>{{ tarjetas|length }}</strong><span>controles</span></div>
+                    </div>
+                    <ul class="quality-ring-legend">{% for segmento in segmentos_controles %}<li><i class="quality-dot quality-dot--{{ segmento.clave }}" aria-hidden="true"></i><span>{{ segmento.titulo }}</span><strong>{{ segmento.total }}</strong></li>{% endfor %}</ul>
+                </div>
+                <p class="quality-panel-foot">“Sin casos” también puede significar que no hay registros evaluables. No certifica todo el inventario.</p>
+            </section>
+            <section class="quality-panel quality-review-panel" aria-labelledby="quality-issues-title">
+                <header class="quality-panel-heading"><div><span class="quality-eyebrow">Consistencia</span><h2 id="quality-issues-title">Relaciones por revisar</h2><p>Inconsistencias, no alarmas de servicio.</p></div><span class="quality-count">{{ inconsistencias|length }}</span></header>
+                <ul class="quality-issues">
+                    {% for item in inconsistencias %}<li><a class="quality-issue{% if item.total %} has-cases{% endif %}{% if item == seleccionado %} is-selected{% endif %}" href="{{ item.url }}" {% if item == seleccionado %}aria-current="true"{% endif %}>
+                        <span class="quality-issue-mark" aria-hidden="true">{% if item.total %}!{% else %}—{% endif %}</span><span>{{ item.control.titulo }}<small>{% if item.total %}Revisar registros{% else %}Sin casos detectados{% endif %}</small></span><strong>{{ item.total|floatformat:"0g" }}</strong><span aria-hidden="true">›</span>
+                    </a></li>{% empty %}<li class="quality-empty">Tu perfil no tiene habilitados estos controles.</li>{% endfor %}
+                </ul>
+                <footer class="quality-panel-foot">Las correcciones se realizan desde los flujos habituales, nunca automáticamente.</footer>
+            </section>
+        </div>
+    </div>
+
+    {% if seleccionado %}
+    <section class="quality-results quality-panel" id="registros-calidad" aria-labelledby="quality-results-title" tabindex="-1">
+        <header class="quality-results-heading"><div><span class="quality-eyebrow">{% if seleccionado.control.grupo == 'pendientes' %}Información por completar{% else %}Inconsistencia{% endif %}</span><h2 id="quality-results-title">{{ seleccionado.control.titulo }}</h2><p>{{ seleccionado.control.explicacion }}</p></div><div class="quality-detail-actions"><span class="quality-count">{{ seleccionado.total|floatformat:"0g" }} registros</span><a href="{{ url_resumen }}">Cerrar detalle</a></div></header>
+        <div class="quality-next"><strong>Cómo revisarlo</strong><span>{{ seleccionado.control.siguiente_paso }}</span></div>
+        <form method="get" action="#registros-calidad" class="quality-search" role="search">
+            <input type="hidden" name="site" value="{{ site }}"><input type="hidden" name="control" value="{{ seleccionado.control.codigo }}">
+            <label for="quality-search">Buscar en este control</label><input id="quality-search" name="q" value="{{ q }}" placeholder="Nombre, código o número de fibra" maxlength="150">
+            <button class="btn btn--secondary" type="submit">Buscar</button>
+            {% if q %}<a href="{{ seleccionado.url }}">Quitar búsqueda</a>{% endif %}
+        </form>
+        <div class="quality-table-scroll" tabindex="0" role="region" aria-label="Registros afectados">
+            <table class="quality-table"><thead><tr><th scope="col">Registro</th><th scope="col">Site / ubicación</th><th scope="col">Información registrada</th><th scope="col">Revisión</th></tr></thead><tbody>
+            {% for registro in registros %}<tr><td><strong>{{ registro.nombre }}</strong><small>{{ registro.contexto }}</small></td><td>{{ registro.site }}</td><td>{{ registro.detalle }}</td><td><a class="btn btn--secondary" href="{{ registro.url }}" data-open-asset-360 aria-label="Ver detalle de {{ registro.nombre }}">Ver detalle</a></td></tr>
+            {% empty %}<tr><td colspan="4" class="quality-empty">{% if q %}No hay coincidencias con esta búsqueda.{% else %}Sin casos en este control para el filtro seleccionado.{% endif %}</td></tr>{% endfor %}
+            </tbody></table>
+        </div>
+        <nav class="quality-pagination" aria-label="Páginas de registros afectados"><span>{{ page_obj.paginator.count|floatformat:"0g" }} resultados{% if q %} filtrados{% endif %} · Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}</span><div>{% if anterior %}<a class="btn btn--secondary" href="{{ anterior }}">Anterior</a>{% endif %}{% if siguiente %}<a class="btn btn--secondary" href="{{ siguiente }}">Siguiente</a>{% endif %}</div></nav>
+    </section>
+    {% else %}
+    <div class="quality-explore-hint"><span aria-hidden="true">↗</span><div><strong>Del indicador al registro</strong><p>Selecciona una barra o una inconsistencia para abrir su detalle aquí.</p></div></div>
+    {% endif %}
+    <details class="quality-methodology"><summary>Cómo interpretar este dashboard</summary><div>
+        <p>Los totales suman observaciones: un mismo activo puede aparecer en varios controles. Las barras comparan cantidades absolutas, no tasas de error. El anillo cuenta controles, no fibras ni ODF.</p>
+        <p>Los datos pendientes no son alarmas de servicio ni bloquean cargas válidas. Los controles sin casos no certifican todo el inventario. Las comprobaciones se limitan a los permisos de tu perfil y al Site seleccionado.</p>
+        <p>Calculado al abrir o actualizar la página, sin histórico de tendencias. La ficha de fibra conserva el diagnóstico detallado de recorrido, terminaciones y compatibilidad de Sites. No se reparan ni se completan datos automáticamente.</p>
+    </div></details>
+</section>
+{% endblock %}
