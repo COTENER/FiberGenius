@@ -3,7 +3,7 @@
 
     let capacityCharts = [];
     let dashboardMap = null;
-    let dashboardTileLayer = null;
+    let dashboardBaseMap = null;
     let dashboardMapTarget = null;
 
     function readJSON(id, fallback) {
@@ -446,31 +446,16 @@
         });
     }
 
-    function tileUrlForTheme(target) {
-        const dark = document.documentElement.getAttribute('data-theme') === 'dark';
-        return dark ? target.dataset.tileDark : target.dataset.tileLight;
-    }
-
     function refreshMapTheme() {
         if (!dashboardMap || !dashboardMapTarget || !window.L) return;
-        if (dashboardTileLayer) dashboardMap.removeLayer(dashboardTileLayer);
-        dashboardTileLayer = L.tileLayer(tileUrlForTheme(dashboardMapTarget), {
-            attribution: dashboardMapTarget.dataset.attribution || '&copy; OpenStreetMap contributors',
+        if (dashboardBaseMap) { dashboardBaseMap.followTheme(); return; }
+        dashboardBaseMap = window.FGBaseMap(dashboardMap, dashboardMapTarget, {
             maxZoom: 20,
+            onStatus(failed) {
+                const warning = document.getElementById('dashboard-map-tile-warning');
+                if (warning) warning.hidden = !failed;
+            },
         });
-        const layer = dashboardTileLayer;
-        const warning = document.getElementById('dashboard-map-tile-warning');
-        let failed = false;
-        layer.on('loading', () => { failed = false; });
-        layer.on('tileerror', () => {
-            failed = true;
-            if (warning && dashboardTileLayer === layer) warning.hidden = false;
-        });
-        layer.on('load', () => {
-            if (warning && dashboardTileLayer === layer) warning.hidden = !failed;
-        });
-        dashboardTileLayer.addTo(dashboardMap);
-        dashboardTileLayer.bringToBack();
     }
 
     function configureMapSearch(entries) {

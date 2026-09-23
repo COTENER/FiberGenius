@@ -6,6 +6,7 @@
 
 {% block extra_css %}
 <link rel="stylesheet" href="{% static 'vendor/leaflet/leaflet-1.9.4.css' %}">
+<link rel="stylesheet" href="{% static 'css/map-basemap.css' %}?v=20260921-streets">
 <link rel="stylesheet" href="{% static 'css/dashboard-inventario-v2.css' %}?v=20260908-dashboard-review">
 {% endblock %}
 
@@ -18,5 +19,7 @@
 {% block extra_js %}
 <script src="{% static 'vendor/chartjs/chart-4.5.1.umd.min.js' %}"></script>
 <script src="{% static 'vendor/leaflet/leaflet-1.9.4.js' %}"></script>
-<script src="{% static 'js/dashboard-inventario-v3.js' %}?v=20260908-dashboard-review"></script>
+{{ fg_map_config|json_script:"fg-map-config" }}
+<script src="{% static 'js/map-basemap.js' %}?v=20260921-streets"></script>
+<script src="{% static 'js/dashboard-inventario-v3.js' %}?v=20260921-map-fallback"></script>
 {% endblock %}

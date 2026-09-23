@@ -1,0 +1,30 @@
+.fg-basemap-control {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-width: min(240px, calc(100vw - 80px));
+    padding: 6px 8px;
+    border: 1px solid #d8e2ef;
+    border-radius: 8px;
+    background: #fff;
+    color: #24364d;
+    box-shadow: 0 2px 8px #10243a18;
+    font: 12px/1.4 system-ui, sans-serif;
+    text-align: left;
+}
+.fg-basemap-control select, .fg-basemap-control button {
+    font: inherit;
+    color: inherit;
+    background: transparent;
+    border: 0;
+    min-height: 28px;
+    cursor: pointer;
+}
+.fg-basemap-control button { color: #145cc5; text-align: left; text-decoration: underline; }
+.fg-basemap-control [hidden] { display: none; }
+.fg-basemap-control [role="status"] { max-width: 220px; }
+[data-theme="dark"] .fg-basemap-control { background: #172338; color: #e4edf8; border-color: #3d506b; }
+[data-theme="dark"] .fg-basemap-control option { background: #172338; }
+[data-theme="dark"] .fg-basemap-control button { color: #90bcff; }
+[data-basemap-theme="satellite"] .leaflet-tile-pane,
+[data-basemap-theme="streets"] .leaflet-tile-pane { filter: none !important; }

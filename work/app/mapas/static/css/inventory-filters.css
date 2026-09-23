@@ -13,6 +13,13 @@
     width: 100%;
 }
 
+/* Fit the available content column, including when the inspector is open.
+   Viewport breakpoints alone cannot account for the sidebar and inspector. */
+.inventory-filter-grid[class*="inventory-filter-grid--"],
+.network-panel .inventory-filter-grid[class*="inventory-filter-grid--"] {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+}
+
 .inventory-filter-grid--six {
     grid-template-columns:
         minmax(270px, 1.8fr)

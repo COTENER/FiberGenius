@@ -3,6 +3,11 @@
 Guía de cierre, 2026-09-16. No constituye evidencia de instalación en BHP.
 No cambia el diseño del inventario ni requiere vaciar sus tablas.
 
+Actualización de preparación, 2026-09-22: seguir también `CHECKLIST_ENTREGA.md`
+y consultar `PREPARACION_ENTREGA_ETAPA_6_20260922.md` para distinguir pruebas
+locales de ensayos aún pendientes. Las evidencias del 16 de septiembre que se
+conservan al final son históricas, no una certificación del código actual.
+
 ## Alcance y configuración
 
 Usar `fibergenius.settings_production`, nunca `settings_pruebas` o `runserver`.
@@ -55,6 +60,10 @@ de compilación aprobadas. No modificar el entorno del servidor para construir.
 
    El instalador usa `--no-index --require-hashes` y no reemplaza un `.venv`
    existente. No instala IIS, PostgreSQL ni servicios; tampoco migra datos.
+   Además de `pip check`, compara las versiones instaladas con el
+   `requirements.lock` del código mediante `scripts/check_dependencies.py`.
+   Se detiene si faltan paquetes o pertenecen a otra versión; no basta con
+   que sean compatibles entre sí. El comprobador no descarga ni instala nada.
 5. Probar de verdad con Internet deshabilitado. La preparación de scripts no
    acredita por sí sola que todas las dependencias se hayan construido.
 

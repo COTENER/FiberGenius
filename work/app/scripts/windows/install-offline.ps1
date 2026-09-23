@@ -9,6 +9,10 @@ $Bundle = (Resolve-Path -LiteralPath $BundlePath).Path
 $LockFile = Join-Path $Bundle 'requirements.offline.lock'
 $Wheels = Join-Path $Bundle 'wheels'
 $VenvPath = Join-Path $ProjectRoot '.venv'
+$VersionCheck = Join-Path $ProjectRoot 'scripts\check_dependencies.py'
+$SourceLock = Join-Path $ProjectRoot 'requirements.lock'
+if (-not (Test-Path -LiteralPath $VersionCheck -PathType Leaf)) { throw 'Falta check_dependencies.py en la version.' }
+if (-not (Test-Path -LiteralPath $SourceLock -PathType Leaf)) { throw 'Falta requirements.lock en la version.' }
 if (Test-Path -LiteralPath $VenvPath) {
     throw 'Use una copia nueva de la version: no se reemplaza el entorno existente.'
 }
@@ -23,4 +27,6 @@ $RuntimePython = Join-Path $VenvPath 'Scripts\python.exe'
 if ($LASTEXITCODE -ne 0) { throw 'Instalacion incompleta; no iniciar Fiber Genius.' }
 & $RuntimePython -m pip check
 if ($LASTEXITCODE -ne 0) { throw 'Dependencias inconsistentes.' }
+& $RuntimePython $VersionCheck --lock $SourceLock
+if ($LASTEXITCODE -ne 0) { throw 'Las versiones instaladas no coinciden con el lock de esta version. No iniciar Fiber Genius.' }
 Write-Host 'Dependencias instaladas. Pendientes: configurar .env, check, migraciones, estaticos y aceptacion.'

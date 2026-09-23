@@ -2302,7 +2302,10 @@ class SeguridadYRendimientoTests(TestCase):
         self.assertIn('route-selection-label', script)
         self.assertIn("nearestDistance <= 35", script)
         self.assertIn("classList.add('is-route-endpoint')", script)
-        self.assertIn("state.map.on('baselayerchange'", script)
+        self.assertIn('window.FGBaseMap(state.map, mapElement', script)
+        self.assertIn('onChange() { applyRouteFocusStyles(); }', script)
+        self.assertContains(mapa, 'id="fg-map-config"')
+        self.assertContains(mapa, 'js/map-basemap.js')
         self.assertIn('custom-network-marker-icon', script)
         self.assertNotIn('/static/img/iconos/${tipo}-icono.png', script)
 

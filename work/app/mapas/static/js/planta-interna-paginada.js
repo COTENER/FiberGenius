@@ -1309,6 +1309,6 @@
     elements.rack.value = incoming.get('rack') || '';
     if (['10', '25', '50', '100', '200'].includes(incoming.get('page_size'))) elements.pageSize.value = incoming.get('page_size');
     inspectorToggle?.addEventListener('click', () => setInspectorCollapsed(!inspector.classList.contains('is-collapsed')));
-    setInspectorCollapsed(window.innerWidth <= 1180);
+    window.FGResponsive.bindInspector(inspector, setInspectorCollapsed);
     load();
 })();

@@ -5,9 +5,9 @@
 {% block page_title %}Inventario / Puertos ODF{% endblock %}
 
 {% block extra_css %}
-<link rel="stylesheet" href="{% static 'css/puertos-odf.css' %}?v=20260825-fiber-context-1">
-<link rel="stylesheet" href="{% static 'css/network-inventory.css' %}?v=20260816-ranking-toggle-1">
-<link rel="stylesheet" href="{% static 'css/inventory-filters.css' %}?v=20260723-1">
+<link rel="stylesheet" href="{% static 'css/puertos-odf.css' %}?v=20260923-visual-revert">
+<link rel="stylesheet" href="{% static 'css/network-inventory.css' %}?v=20260923-fixed-inspectors">
+<link rel="stylesheet" href="{% static 'css/inventory-filters.css' %}?v=20260923-visual-revert">
 {% endblock %}
 
 {% block content %}
@@ -61,9 +61,9 @@
             <span class="ports-kpi__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12v18l-6-4-6 4V3Z"/></svg></span>
             <div><span>Reservados</span><strong id="ports-stat-reserved">0</strong><small>Asignados para uso futuro</small></div>
         </article>
-        <article class="ports-kpi ports-kpi--red">
+        <article class="ports-kpi ports-kpi--indigo" title="Destino descriptivo no informado en puertos ocupados o reservados. No indica una falla de conexión.">
             <span class="ports-kpi__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 17h.01"/></svg></span>
-            <div><span>Sin destino</span><strong id="ports-stat-review">0</strong><small>Requieren revisión</small></div>
+            <div><span>Sin destino informado</span><strong id="ports-stat-review">0</strong><small>Ocupados o reservados</small></div>
         </article>
     </section>
 
@@ -113,7 +113,7 @@
             <div class="network-inspector__title"><strong>Análisis de puertos</strong><span>Resumen filtrado y detalle seleccionado</span></div>
             <button id="network-inspector-toggle" type="button" aria-label="Contraer panel" aria-expanded="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg></button>
         </header>
-        <div class="network-inspector__body">
+        <div class="network-inspector__body" tabindex="0" role="region" aria-label="Contenido del panel de análisis">
             <section class="network-inspector-card network-inspector-card--summary">
                 <header><div><strong>Distribución por estado</strong><span>Según los filtros activos</span></div></header>
                 <div id="ports-inspector-summary" class="network-state-summary"></div>
@@ -273,5 +273,5 @@
 
 {% block extra_js %}
 <script src="{% static 'js/inventory-edit.js' %}?v=20260905"></script>
-<script src="{% static 'js/planta-interna-paginada.js' %}?v=20260908-search-downloads"></script>
+<script src="{% static 'js/planta-interna-paginada.js' %}?v=20260923-visual-revert"></script>
 {% endblock %}

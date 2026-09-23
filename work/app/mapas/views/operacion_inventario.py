@@ -196,7 +196,11 @@ def _filtro_puertos(request):
 
 
 def _resumen_puertos(queryset):
-    sin_destino = Q(destino__isnull=True) | Q(destino__exact="")
+    # Completitud descriptiva, no diagnóstico de la conexión oficial.
+    # Un puerto libre no necesita destino y no debe generar un pendiente.
+    sin_destino = ~Q(estado_puerto="LIBRE") & (
+        Q(destino__isnull=True) | Q(destino__exact="")
+    )
     con_patchcord = (
         ~Q(patchcord__isnull=True)
         & ~Q(patchcord__exact="")
@@ -1125,7 +1129,7 @@ def _cobertura_completa_fibra(fibra):
     return bool(total_tramos > 0 and total_asignados == total_tramos)
 
 
-def _serializar_fibras(fibras):
+def _serializar_fibras(fibras, *, para_exportacion=False):
     fibras = list(fibras)
     resultado = []
     for fibra in fibras:
@@ -1144,7 +1148,7 @@ def _serializar_fibras(fibras):
             for item in asignaciones
             if item.tramo.codigo_tramo
         ))
-        trazabilidad = obtener_trazabilidad_fibra(fibra)
+        trazabilidad = None if para_exportacion else obtener_trazabilidad_fibra(fibra)
         calidad = evaluar_completitud_fibra(fibra)
         presentacion = obtener_presentacion_orientada_fibra(fibra)
         origen = presentacion["origen"]
@@ -1196,7 +1200,7 @@ def _serializar_fibras(fibras):
                 estado_efectivo != "DISPONIBLE"
                 or cobertura_completa
             ),
-            "detail_url": reverse("asset_360", args=["fibra", fibra.pk]),
+            "detail_url": None if para_exportacion else reverse("asset_360", args=["fibra", fibra.pk]),
         })
     return resultado
 
@@ -1817,7 +1821,7 @@ def create_tramo_manual(request):
                     status=404,
                 )
             tramos = list(
-                InventarioTramo.objects.select_for_update()
+                InventarioTramo.objects.select_for_update(of=("self",))
                 .select_related("origen_nodo", "destino_nodo")
                 .filter(ruta=ruta)
                 .order_by("tramo_secuencia", "pk")
@@ -1990,25 +1994,28 @@ def _xlsx_response(nombre, titulo, encabezados, filas: Iterable):
 
 
 def _filas_puertos(queryset):
-    for puerto in queryset.iterator(chunk_size=1000):
-        terminacion = next(iter(puerto.terminaciones_oficiales), None)
+    # La relación oficial permite como máximo una terminación por puerto.
+    # Proyectar columnas conserva filtros/orden y evita construir miles de
+    # objetos de Site, Sala, Rack, ODF, Fibra y Ruta para una descarga tabular.
+    columnas = queryset.prefetch_related(None).values_list(
+        'odf_obj__rack_obj__sala__hub_site__nombre',
+        'odf_obj__rack_obj__sala__nombre', 'odf_obj__rack_obj__nombre',
+        'odf_obj__odf', 'bandeja', 'puerto_odf',
+        'terminaciones_fibra__pk', 'terminaciones_fibra__fibra__ruta_id',
+        'terminaciones_fibra__fibra__ruta__nombre',
+        'terminaciones_fibra__fibra__fibra_numero', 'terminaciones_fibra__extremo',
+        'estado_puerto', 'tipo_conector', 'patchcord', 'destino',
+    )
+    for fila in columnas.iterator(chunk_size=1000):
+        site, sala, rack, odf, bandeja, puerto, terminacion, ruta_id, ruta, numero, extremo, estado, conector, patchcord, destino = fila
         fibra_oficial = (
-            f"{terminacion.fibra.nombre_troncal} / "
-            f"{terminacion.fibra.fibra_numero} · Extremo {terminacion.extremo}"
+            f"{ruta if ruta_id else 'Troncal pendiente'} / "
+            f"{numero} · Extremo {extremo}"
             if terminacion else ""
         )
         yield (
-            puerto.odf_obj.hub_site,
-            puerto.odf_obj.sala,
-            puerto.odf_obj.rack,
-            puerto.odf_obj.odf,
-            puerto.bandeja,
-            puerto.puerto_odf,
-            fibra_oficial,
-            puerto.estado_puerto,
-            puerto.tipo_conector,
-            puerto.patchcord,
-            puerto.destino,
+            site, sala, rack, odf, bandeja, puerto, fibra_oficial,
+            estado, conector, patchcord, destino,
         )
 
 
@@ -2087,7 +2094,7 @@ def _filas_tramos(queryset):
 
 def _filas_fibras(queryset):
     for lote in _iterar_lotes(queryset):
-        for item in _serializar_fibras(lote):
+        for item in _serializar_fibras(lote, para_exportacion=True):
             yield (
                 item["troncal"],
                 item["numero"],

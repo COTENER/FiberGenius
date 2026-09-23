@@ -1,5 +1,9 @@
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import transaction
 from django.test import TestCase
 from django.urls import reverse
 
@@ -15,6 +19,7 @@ from .models import (
     TerminacionFibra,
 )
 from .views.importacion import _procesar_terminaciones_fibra
+from .services.puertos import conectar_puertos_masivo, reservar_puerto
 
 
 def _csv(nombre, contenido):
@@ -121,6 +126,66 @@ class ImportacionTerminacionesFibraTests(TestCase):
             ).count(),
             2,
         )
+
+    def test_servicio_masivo_revalida_reserva_con_objeto_desactualizado(self):
+        reservar_puerto(puerto_id=self.puerto_b_1.pk, usuario=self.usuario)
+        # El objeto entregado conserva la lectura anterior a la reserva.
+        self.assertEqual(self.puerto_b_1.estado_puerto, 'LIBRE')
+        conexiones = [
+            {'fibra': self.fibra_1, 'puerto': self.puerto_a_1, 'extremo': 'A'},
+            {'fibra': self.fibra_1, 'puerto': self.puerto_b_1, 'extremo': 'B'},
+        ]
+        with self.assertRaisesRegex(ValidationError, 'ODF-B.*1.*reservado'):
+            conectar_puertos_masivo(conexiones, usuario=self.usuario, origen='EXCEL')
+
+        self.puerto_a_1.refresh_from_db()
+        self.puerto_b_1.refresh_from_db()
+        self.odf_b.refresh_from_db()
+        self.assertEqual(self.puerto_a_1.estado_puerto, 'LIBRE')
+        self.assertEqual(self.puerto_b_1.estado_puerto, 'RESERVADO')
+        self.assertEqual(self.odf_b.puertos_reservados, 1)
+        self.assertEqual(self.odf_b.puertos_ocupados, 0)
+        self.assertFalse(TerminacionFibra.objects.exists())
+        self.assertFalse(AuditoriaPuertoODF.objects.filter(accion='CONECTAR').exists())
+        self.assertEqual(AuditoriaPuertoODF.objects.filter(accion='RESERVAR').count(), 1)
+
+    def test_importacion_revierte_lote_si_reserva_cambia_tras_validacion(self):
+        formatos = {
+            'tecnico': '\n'.join([
+                'Codigo Fibra,Fibra,Extremo,ODF,Puerto',
+                'PRUEBA-RESERVA-F003,F3,A,ODF-A,1',
+                'PRUEBA-RESERVA-F003,F3,B,ODF-B,1',
+            ]),
+            'simplificado': '\n'.join([
+                'Fibra,ODF A,Puerto A,ODF B,Puerto B',
+                'F3,ODF-A,1,ODF-B,1',
+            ]),
+        }
+        for formato, contenido in formatos.items():
+            with self.subTest(formato=formato), transaction.atomic():
+                fibras_antes = InventarioFibra.objects.count()
+
+                def reservar_antes_de_escribir(conexiones, **kwargs):
+                    reservar_puerto(puerto_id=self.puerto_b_1.pk, usuario=self.usuario)
+                    return conectar_puertos_masivo(conexiones, **kwargs)
+
+                # Simula la ventana entre validación y escritura. La reserva
+                # simulada pertenece a esta transacción y también se revierte;
+                # el caso del servicio verifica aparte que una reserva previa
+                # se conserva al rechazar el lote. No simula hilos PostgreSQL.
+                with patch('mapas.services.puertos.conectar_puertos_masivo',
+                           side_effect=reservar_antes_de_escribir) as conectar:
+                    with self.assertRaisesRegex(ValidationError, 'reservado'):
+                        _procesar_terminaciones_fibra(_csv('reserva.csv', contenido))
+                conectar.assert_called_once()
+                self.assertEqual(InventarioFibra.objects.count(), fibras_antes)
+                self.assertFalse(InventarioFibra.objects.filter(fibra_numero='F3').exists())
+                self.assertFalse(TerminacionFibra.objects.exists())
+                self.assertFalse(AuditoriaPuertoODF.objects.exists())
+                self.puerto_a_1.refresh_from_db()
+                self.puerto_b_1.refresh_from_db()
+                self.assertEqual(self.puerto_a_1.estado_puerto, 'LIBRE')
+                self.assertEqual(self.puerto_b_1.estado_puerto, 'LIBRE')
 
     def test_importa_sin_superar_limite_sql_con_mas_de_mil_puertos(self):
         odf = self._crear_odf('SITE-GRANDE', 'ODF-GRANDE')

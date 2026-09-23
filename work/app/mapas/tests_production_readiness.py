@@ -154,6 +154,41 @@ class PostgreSQLRestoreCommandTests(SimpleTestCase):
 
 
 class ReleaseToolTests(SimpleTestCase):
+    def test_dependency_check_reports_missing_and_changed_versions(self):
+        from importlib.metadata import PackageNotFoundError
+        from scripts.check_dependencies import compare_versions
+
+        def installed(name):
+            if name == 'missing':
+                raise PackageNotFoundError(name)
+            return {'django': '6.0.7', 'waitress': '3.0.2'}[name]
+
+        self.assertEqual(compare_versions(
+            {'django': '6.0.8', 'waitress': '3.0.2', 'missing': '1.0'}, installed,
+        ), [
+            {'package': 'django', 'expected': '6.0.8', 'installed': '6.0.7'},
+            {'package': 'missing', 'expected': '1.0', 'installed': None},
+        ])
+
+    def test_dependency_check_accepts_exact_versions(self):
+        from scripts.check_dependencies import compare_versions
+        self.assertEqual(compare_versions({'sample': '1.0'}, lambda name: '1.0'), [])
+
+    def test_dependency_check_reads_source_lock(self):
+        from scripts.check_dependencies import read_pins
+        pins = read_pins(Path(settings.BASE_DIR) / 'requirements.lock')
+        self.assertEqual(pins['django'], '6.0.8')
+        self.assertIn('psycopg2-binary', pins)
+
+    def test_dependency_check_rejects_incomplete_or_ambiguous_locks(self):
+        from scripts.check_dependencies import read_pins
+        from unittest.mock import patch
+        hashed = 'sample==1.0 --hash=sha256:' + 'a' * 64
+        for content in ('', 'sample>=1.0', 'sample==1.0', hashed + '\n' + hashed):
+            with self.subTest(content=content), patch.object(Path, 'read_text', return_value=content):
+                with self.assertRaises(ValueError):
+                    read_pins('unused.lock')
+
     def test_runner_only_trusts_local_iis_and_uses_upload_limit(self):
         from scripts.run_production import main
         original_path = sys.path[:]

@@ -178,6 +178,30 @@ class ImportacionOperacionesPuertosTests(TestCase):
             puerto_odf=self.puertos[1],
         ).exists())
 
+    def test_operacion_explicita_conectar_sigue_consumiendo_reserva(self):
+        reservar_puerto(puerto_id=self.puertos[1].pk, usuario=self.admin)
+        fila = [
+            self.odf_a.odf, '2', 'Conectar', self.fibra.codigo_fibra,
+            'A', 'No', 'No',
+        ]
+        revision = self._post([fila], 'validar', encabezados=ENCABEZADOS_OFICIALES)
+        self.assertEqual(revision.status_code, 200)
+        self.assertTrue(revision.json()['can_apply'])
+        self.puertos[1].refresh_from_db()
+        self.assertEqual(self.puertos[1].estado_puerto, 'RESERVADO')
+        self.assertFalse(TerminacionFibra.objects.exists())
+
+        respuesta = self._post([fila], 'aplicar', encabezados=ENCABEZADOS_OFICIALES)
+        self.assertEqual(respuesta.status_code, 200)
+        self.puertos[1].refresh_from_db()
+        self.assertEqual(self.puertos[1].estado_puerto, 'OCUPADO')
+        self.assertTrue(TerminacionFibra.objects.filter(
+            fibra=self.fibra, extremo='A', puerto_odf=self.puertos[1],
+        ).exists())
+        self.assertTrue(AuditoriaPuertoODF.objects.filter(
+            accion='CONECTAR', estado_anterior='RESERVADO', estado_nuevo='OCUPADO',
+        ).exists())
+
     def test_validacion_revierte_y_aplicacion_confirma_todo_el_archivo(self):
         filas = [
             self._fila('1', 'Reservar'),

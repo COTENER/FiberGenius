@@ -66,24 +66,19 @@ async function checkNavigation(source) {
 }
 
 function checkTiles(source) {
-    let notice = null;
-    const layer = () => ({handlers: {}, on(event, handler) { this.handlers[event] = handler; }});
-    const light = layer(), dark = layer(), state = {tileLayer: light};
-    const context = vm.createContext({baseMaps: {light, dark}, state,
-        document: {getElementById: () => notice, createElement: () => ({setAttribute() {}, remove() { notice = null; }})},
-        mapElement: {classList: {remove() {}}, parentElement: {appendChild: value => { notice = value; }}}});
-    vm.runInContext(section(source, '        const tileStatus =', '        const theme ='), context);
-    light.handlers.loading(); light.handlers.tileerror(); light.handlers.load();
-    ok(notice); // load no equivale a una tesela descargada.
-    dark.handlers.loading(); dark.handlers.tileload(); dark.handlers.load();
-    ok(notice); // Una capa inactiva no oculta el fallo de la activa.
-    light.handlers.loading(); light.handlers.tileload(); light.handlers.tileerror(); light.handlers.load();
-    ok(notice); // Recuperación parcial no equivale a recuperación completa.
-    light.handlers.loading(); light.handlers.tileload(); light.handlers.load(); eq(notice, null);
-    dark.handlers.loading(); dark.handlers.tileerror(); dark.handlers.load(); eq(notice, null);
-    state.tileLayer = dark; vm.runInContext('updateTileNotice(state.tileLayer)', context); ok(notice);
-    state.tileLayer = light; vm.runInContext('updateTileNotice(state.tileLayer)', context); eq(notice, null);
-    light.handlers.loading(); light.handlers.load(); eq(notice, null); // sin falsos éxitos nuevos
+    const state = {map: {}}, mapElement = {};
+    let refreshed = 0;
+    const context = vm.createContext({state, mapElement,
+        applyRouteFocusStyles() { refreshed++; },
+        window: {FGBaseMap(map, target, options) {
+            eq(map, state.map); eq(target, mapElement);
+            options.onChange(); return {shared: true};
+        }},
+    });
+    vm.runInContext(section(source, '        state.baseMap =', '        setupFullscreenControl();'), context);
+    eq(refreshed, 1); eq(state.baseMap.shared, true);
+    // Error, partial recovery, stale events and retries now live in the shared controller.
+    require('./map-basemap.cjs');
 }
 
 async function checkTable(name) {

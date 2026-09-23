@@ -212,6 +212,29 @@ def _dividir_en_lotes(valores, tamano=500):
         yield valores[indice:indice + tamano]
 
 
+@contextmanager
+def _contexto_fila_csv(numero):
+    """Conserva la fila también en validaciones que ocurren durante save()."""
+    try:
+        yield
+    except (ValidationError, ValueError) as exc:
+        raise ValueError(f'fila {numero}: {exc}') from exc
+
+
+def _elementos_con_progreso(elementos, inicio, fin, etapa):
+    total = len(elementos)
+    ultima = time.monotonic()
+    _reportar_progreso(inicio, etapa, procesadas=0, total=total)
+    for indice, elemento in enumerate(elementos, 1):
+        yield elemento
+        if indice == total or time.monotonic() - ultima >= 0.5:
+            _reportar_progreso(
+                inicio + int((fin - inicio) * indice / max(total, 1)),
+                etapa, procesadas=indice, total=total,
+            )
+            ultima = time.monotonic()
+
+
 def _observacion_global_desde_terminacion(valor):
     """Retira de la nota global datos redundantes del extremo y su puerto."""
     texto = _texto(valor)
@@ -843,6 +866,7 @@ def _procesar_sites_inventario(file, lote=None):
             )
             preparadas.append({
                 'nombre': nombre,
+                'fila': numero_fila,
                 'latitud': latitud,
                 'longitud': longitud,
                 'coordenadas_informadas': coordenadas_informadas,
@@ -858,7 +882,7 @@ def _procesar_sites_inventario(file, lote=None):
         for site in HubSite.objects.select_for_update().all()
     }
     creadas = actualizadas = 0
-    for item in preparadas:
+    for item in _elementos_con_progreso(preparadas, 45, 95, 'Guardando sites'):
         site = existentes.get(item['nombre'].casefold())
         anterior_negocio = _estado_negocio(site)
         creada = site is None
@@ -873,8 +897,9 @@ def _procesar_sites_inventario(file, lote=None):
             site.direccion = item['direccion']
             campos_site.append('direccion')
         site.lote_importacion = lote
-        site.full_clean()
-        site.save(update_fields=campos_site if not creada else None)
+        with _contexto_fila_csv(item['fila']):
+            site.full_clean()
+            site.save(update_fields=campos_site if not creada else None)
         existentes[item['nombre'].casefold()] = site
         creadas += int(creada)
         actualizadas += int(not creada and anterior_negocio != _estado_negocio(site))
@@ -1031,150 +1056,24 @@ def _procesar_fibras_globales(file, lote=None):
             errores.append(f'fila {numero_fila}: {exc}')
     _errores_csv(errores, 'Fibras globales')
 
-    existentes = {
-        fibra.codigo_fibra.casefold(): fibra
-        for fibra in InventarioFibra.objects.select_for_update()
-        .select_related('ruta').all()
-    }
-    por_ruta_numero = defaultdict(list)
-    for fibra in existentes.values():
-        if fibra.ruta_id:
-            por_ruta_numero[
-                (fibra.ruta_id, fibra.fibra_numero.casefold())
-            ].append(fibra)
+    from ..services.importacion_fibras import guardar_fibras_globales_masivo
 
-    def resolver_fibra_existente(item):
-        if item['codigo']:
-            return existentes.get(item['codigo'].casefold())
-        candidatas = por_ruta_numero.get(
-            (item['ruta'].pk, item['fibra_numero'].casefold()),
-            [],
+    def progreso_fibras(fase, procesadas, total):
+        inicio, amplitud = (45, 20) if fase == 'validar' else (65, 30)
+        _reportar_progreso(
+            inicio + int(amplitud * procesadas / max(total, 1)),
+            'Validando reglas de fibras' if fase == 'validar'
+            else 'Guardando fibras y auditoría; pendiente de confirmación',
+            procesadas=procesadas, total=total,
         )
-        return candidatas[0] if len(candidatas) == 1 else None
 
-    conflictos = []
-    numeros_en_troncal = {}
-    for item in preparadas:
-        if item['ruta'] is not None:
-            clave_numero = (item['ruta'].pk, item['fibra_numero'].casefold())
-            if clave_numero in numeros_en_troncal:
-                conflictos.append(
-                    f"fila {item['fila']}: {item['fibra_numero']} está repetida en "
-                    f"la troncal {item['ruta'].nombre} (fila {numeros_en_troncal[clave_numero]})."
-                )
-            numeros_en_troncal[clave_numero] = item['fila']
-        candidatas_legacy = (
-            por_ruta_numero.get(
-                (item['ruta'].pk, item['fibra_numero'].casefold()),
-                [],
-            )
-            if not item['codigo'] else []
+    try:
+        creadas, actualizadas = guardar_fibras_globales_masivo(
+            preparadas, usuario=getattr(lote, 'usuario', None), lote=lote,
+            progreso=progreso_fibras,
         )
-        if len(candidatas_legacy) > 1:
-            conflictos.append(
-                f"fila {item['fila']}: {item['ruta'].nombre} / "
-                f"{item['fibra_numero']} es ambiguo; informe Codigo Fibra"
-            )
-            continue
-        fibra = resolver_fibra_existente(item)
-        if item['ruta'] is not None:
-            otras = por_ruta_numero.get((item['ruta'].pk, item['fibra_numero'].casefold()), [])
-            if any(f.pk != getattr(fibra, 'pk', None) for f in otras):
-                conflictos.append(f"fila {item['fila']}: {item['fibra_numero']} ya pertenece a otra fibra de la troncal {item['ruta'].nombre}.")
-        if (
-            fibra is not None
-            and fibra.ruta_id
-            and item['ruta'] is not None
-            and fibra.ruta_id != item['ruta'].pk
-        ):
-            conflictos.append(
-                f"fila {item['fila']}: {item['codigo']} ya pertenece a "
-                f"la troncal {fibra.ruta.nombre}"
-            )
-    _errores_csv(conflictos, 'Fibras globales')
-
-    from ..services.fibras import (
-        actualizar_metadatos_fibra,
-        asignar_ruta_fibra,
-        crear_fibra,
-        establecer_estado_fibra_informado,
-        restablecer_estado_fibra,
-    )
-
-    usuario = getattr(lote, 'usuario', None) if lote else None
-    creadas = actualizadas = 0
-    for item in preparadas:
-        fibra = resolver_fibra_existente(item)
-        anterior_negocio = _estado_negocio(fibra)
-        creada = fibra is None
-        if creada:
-            fibra = crear_fibra(
-                fibra_numero=item['fibra_numero'],
-                codigo_fibra=item['codigo'],
-                ruta=item['ruta'],
-                estado=item['estado'] or 'SIN_INFORMACION',
-                condicion_fisica=(
-                    item['condicion_fisica'] or 'SIN_VERIFICAR'
-                ),
-                nombre_fibra=item['servicio'] or '',
-                tipo_conector=item['conector'] or '',
-                observaciones=item['observaciones'] or '',
-                usuario=usuario,
-                origen='EXCEL',
-                lote_importacion=lote,
-                materializar_tramo_unico=False,
-            )
-        else:
-            cambios = {'fibra_numero': item['fibra_numero']}
-            if item['condicion_fisica'] is not None:
-                cambios['condicion_fisica'] = item['condicion_fisica']
-            if item['servicio'] is not None:
-                cambios['nombre_fibra'] = item['servicio']
-            if item['conector'] is not None:
-                cambios['tipo_conector'] = item['conector']
-            if item['observaciones'] is not None:
-                cambios['observaciones'] = item['observaciones']
-            actualizar_metadatos_fibra(
-                fibra=fibra,
-                usuario=usuario,
-                origen='EXCEL',
-                lote_importacion=lote,
-                **cambios,
-            )
-            if item['estado'] == 'SIN_INFORMACION':
-                restablecer_estado_fibra(
-                    fibra=fibra,
-                    usuario=usuario,
-                    origen='EXCEL',
-                    lote_importacion=lote,
-                )
-            elif item['estado'] is not None:
-                establecer_estado_fibra_informado(
-                    fibra=fibra,
-                    estado=item['estado'],
-                    usuario=usuario,
-                    origen='EXCEL',
-                    lote_importacion=lote,
-                )
-            if item['ruta'] is not None and fibra.ruta_id is None:
-                fibra, _, _ = asignar_ruta_fibra(
-                    fibra=fibra,
-                    ruta=item['ruta'],
-                    usuario=usuario,
-                    origen='EXCEL',
-                    lote_importacion=lote,
-                    materializar_tramo_unico=False,
-                )
-        existentes[fibra.codigo_fibra.casefold()] = fibra
-        if fibra.ruta_id:
-            clave_ruta_numero = (
-                fibra.ruta_id,
-                fibra.fibra_numero.casefold(),
-            )
-            if fibra not in por_ruta_numero[clave_ruta_numero]:
-                por_ruta_numero[clave_ruta_numero].append(fibra)
-        creadas += int(creada)
-        actualizadas += int(not creada and anterior_negocio != _estado_negocio(fibra))
+    except ValidationError as exc:
+        _errores_csv(exc.messages, 'Fibras globales')
 
     resultado = _resultado(len(df), creadas, actualizadas)
     resultado['informaciones'] = [
@@ -1558,7 +1457,9 @@ def _procesar_ruta_otu(file, lote=None):
         for ruta in Ruta.objects.select_for_update().all()
     }
     errores_modelo = []
-    for numero_fila, ruta_nombre, ruta_datos in preparadas:
+    for numero_fila, ruta_nombre, ruta_datos in _elementos_con_progreso(
+        preparadas, 45, 60, 'Verificando reglas de troncales'
+    ):
         existente = existentes.get(ruta_nombre.casefold())
         candidata = copy.copy(existente) if existente is not None else Ruta(
             nombre=ruta_nombre
@@ -1574,7 +1475,9 @@ def _procesar_ruta_otu(file, lote=None):
     _errores_csv(errores_modelo, 'Troncales y datos generales')
 
     creadas = actualizadas = 0
-    for _, ruta_nombre, ruta_datos in preparadas:
+    for numero_fila, ruta_nombre, ruta_datos in _elementos_con_progreso(
+        preparadas, 60, 95, 'Guardando troncales'
+    ):
         ruta = existentes.get(ruta_nombre.casefold())
         anterior_negocio = _estado_negocio(ruta)
         creada = ruta is None
@@ -1582,7 +1485,8 @@ def _procesar_ruta_otu(file, lote=None):
             ruta = Ruta(nombre=ruta_nombre)
         for campo, valor in ruta_datos.items():
             setattr(ruta, campo, valor)
-        ruta.save(update_fields=list(ruta_datos) if not creada else None)
+        with _contexto_fila_csv(numero_fila):
+            ruta.save(update_fields=list(ruta_datos) if not creada else None)
         existentes[ruta.nombre.casefold()] = ruta
         creadas += int(creada)
         actualizadas += int(not creada and anterior_negocio != _estado_negocio(ruta))
@@ -2569,10 +2473,10 @@ def _procesar_tramos_inventario(file, lote=None):
     creadas = actualizadas = 0
     advertencias = []
     nodos_resueltos = {}
-    for item in sorted(
+    for item in _elementos_con_progreso(sorted(
         preparadas,
         key=lambda fila: (fila['ruta'].pk, fila['secuencia']),
-    ):
+    ), 45, 95, 'Guardando tramos técnicos'):
         tramo = objetivos[item['fila']]
         anterior_negocio = _estado_negocio(tramo)
         creada = tramo is None
@@ -2644,7 +2548,8 @@ def _procesar_tramos_inventario(file, lote=None):
             ):
                 if campo in item['campos_informados']:
                     setattr(tramo, campo, item[campo])
-        tramo.save()
+        with _contexto_fila_csv(item['fila']):
+            tramo.save()
         creadas += int(creada)
         actualizadas += int(not creada and anterior_negocio != _estado_negocio(tramo))
         if lote is not None:
@@ -2686,15 +2591,14 @@ def _procesar_fibras_inventario(file, lote=None):
         ruta.nombre.casefold(): ruta
         for ruta in Ruta.objects.all().only('pk', 'nombre')
     }
+    nombres_ruta_archivo = {
+        _texto(nombre).casefold() for nombre in df['ruta'] if _texto(nombre)
+    }
     tramos = list(
         InventarioTramo.objects.filter(
             ruta_id__in=[
                 ruta.pk for ruta in rutas.values()
-                if ruta.nombre.casefold() in {
-                    _texto(nombre).casefold()
-                    for nombre in df['ruta']
-                    if _texto(nombre)
-                }
+                if ruta.nombre.casefold() in nombres_ruta_archivo
             ]
         ).select_related('ruta')
     )
@@ -2841,16 +2745,10 @@ def _procesar_fibras_inventario(file, lote=None):
             errores.append(f'fila {indice}: {exc}')
     _errores_csv(errores, 'Detalle de fibras por tramo')
 
-    ids_tramo = sorted({item['tramo'].pk for item in preparadas})
     fibras_consultadas_por_codigo = {
         fibra.codigo_fibra.casefold(): fibra
-        for fibra in InventarioFibra.objects.filter(
-            codigo_fibra__in=[
-                item['codigo_estable']
-                for item in preparadas
-                if item['codigo_estable']
-            ]
-        )
+        for codigos in _dividir_en_lotes(sorted({item['codigo_estable'] for item in preparadas}))
+        for fibra in InventarioFibra.objects.filter(codigo_fibra__in=codigos)
     }
     faltan_fibras = []
     rutas_por_fibra = defaultdict(set)
@@ -2890,174 +2788,34 @@ def _procesar_fibras_inventario(file, lote=None):
     from ..services.fibras import asignar_ruta_fibra
 
     fibras_asignadas = {}
-    for item in preparadas:
+    for item in _elementos_con_progreso(
+        preparadas, 45, 50, 'Verificando asociación de fibras y troncales'
+    ):
         fibra = item['fibra_consultada']
         if fibra.pk in fibras_asignadas:
             item['fibra_consultada'] = fibras_asignadas[fibra.pk]
             continue
         if fibra.ruta_id is None:
-            fibra, _, _ = asignar_ruta_fibra(
-                fibra=fibra,
-                ruta=item['ruta'],
-                numero_hilo=item['numero_hilo'],
-                usuario=getattr(lote, 'usuario', None) if lote else None,
-                origen='EXCEL',
-                lote_importacion=lote,
-            )
+            with _contexto_fila_csv(item['fila']):
+                fibra, _, _ = asignar_ruta_fibra(
+                    fibra=fibra,
+                    ruta=item['ruta'],
+                    numero_hilo=item['numero_hilo'],
+                    usuario=getattr(lote, 'usuario', None) if lote else None,
+                    origen='EXCEL',
+                    lote_importacion=lote,
+                )
         fibras_asignadas[fibra.pk] = fibra
         item['fibra_consultada'] = fibra
 
-    ids_fibra = sorted({
-        item['fibra_consultada'].pk for item in preparadas
-    })
-    fibras_bloqueadas = {
-        fibra.pk: fibra
-        for fibra in InventarioFibra.objects.select_for_update()
-        .filter(pk__in=ids_fibra)
-        .order_by('pk')
-    }
-    tramos_bloqueados = {
-        tramo.pk: tramo
-        for tramo in InventarioTramo.objects.select_for_update().filter(
-            pk__in=ids_tramo
-        ).order_by('pk')
-    }
-    fibras_existentes_por_codigo = {
-        fibra.codigo_fibra.casefold(): fibra
-        for fibra in fibras_bloqueadas.values()
-    }
-    asignaciones = list(
-        FibraTramo.objects.select_for_update()
-        .filter(tramo_id__in=ids_tramo)
-        .select_related('fibra')
-        .order_by('pk')
-    )
-    asignaciones_por_posicion = {
-        (item.tramo_id, item.numero_hilo.casefold()): item
-        for item in asignaciones
-    }
-    asignaciones_por_logica = {
-        (item.tramo_id, item.fibra_id): item
-        for item in asignaciones
-        if item.fibra_id
-    }
-    from ..services.fibras import snapshot_asignacion, auditar_asignacion
-    anteriores_asignaciones = {a.pk: snapshot_asignacion(a) for a in asignaciones}
-    valores_anteriores = {a.pk: _estado_negocio(a) for a in asignaciones}
-    tocadas_asignaciones = {}
-
-    conflictos = []
-    for item in preparadas:
-        fibra = fibras_existentes_por_codigo.get(
-            item['codigo_estable'].casefold()
+    from ..services.importacion_tramos import guardar_asignaciones_tramo_masivo
+    try:
+        asignaciones_creadas, asignaciones_actualizadas = guardar_asignaciones_tramo_masivo(
+            preparadas, lote=lote, usuario=getattr(lote, 'usuario', None),
+            progreso=_reportar_progreso,
         )
-        posicion = asignaciones_por_posicion.get(
-            (item['tramo'].pk, item['numero_hilo'].casefold())
-        )
-        if (
-            posicion
-            and posicion.fibra_id
-            and (
-                fibra is None
-                or posicion.fibra_id != fibra.pk
-            )
-        ):
-            conflictos.append(
-                f"fila {item['fila']}: {item['numero_hilo']} ya pertenece "
-                'a otra fibra lógica'
-            )
-    _errores_csv(conflictos, 'Detalle de fibras por tramo')
-
-    asignaciones_creadas = asignaciones_actualizadas = 0
-    fibras_tocadas = {}
-    for item in preparadas:
-        tramo = tramos_bloqueados[item['tramo'].pk]
-        fibra = fibras_existentes_por_codigo.get(
-            item['codigo_estable'].casefold()
-        )
-        fibras_tocadas[fibra.pk] = fibra
-
-        clave_posicion = (
-            tramo.pk, item['numero_hilo'].casefold()
-        )
-        asignacion = asignaciones_por_posicion.get(clave_posicion)
-        clave_asignacion_logica = (
-            tramo.pk,
-            fibra.pk,
-        )
-        asignacion_logica = asignaciones_por_logica.get(
-            clave_asignacion_logica
-        )
-        if asignacion is None:
-            if asignacion_logica is not None:
-                clave_anterior = (
-                    tramo.pk,
-                    asignacion_logica.numero_hilo.casefold(),
-                )
-                asignaciones_por_posicion.pop(clave_anterior, None)
-                asignacion = asignacion_logica
-                asignacion.numero_hilo = item['numero_hilo']
-            else:
-                asignacion = FibraTramo(
-                    tramo=tramo,
-                    numero_hilo=item['numero_hilo'],
-                )
-        elif (
-            asignacion_logica is not None
-            and asignacion_logica.pk != asignacion.pk
-        ):
-            asignacion_logica.fibra = None
-            asignacion_logica.estado = 'SIN_INFORMACION'
-            asignacion_logica._omitir_sincronizacion_estado = True
-            asignacion_logica.save(
-                update_fields=['fibra', 'estado']
-            )
-            tocadas_asignaciones[asignacion_logica.pk] = asignacion_logica
-        creada = asignacion.pk is None
-        asignacion.fibra = fibra
-        if item['estado'] is not None:
-            asignacion.estado = item['estado']
-        elif creada:
-            asignacion.estado = 'SIN_INFORMACION'
-        if item['observaciones'] is not None:
-            asignacion.observaciones = item['observaciones']
-        asignacion.lote_importacion = lote
-        asignacion._omitir_sincronizacion_estado = True
-        asignacion.save()
-        tocadas_asignaciones[asignacion.pk] = asignacion
-        asignaciones_creadas += int(creada)
-        asignaciones_actualizadas += int(
-            not creada and valores_anteriores.get(asignacion.pk) != _estado_negocio(asignacion)
-        )
-        asignaciones_por_posicion[clave_posicion] = asignacion
-        asignaciones_por_logica[clave_asignacion_logica] = asignacion
-
-    from ..services.fibras import sincronizar_estado_fibra
-    for asignacion in tocadas_asignaciones.values():
-        auditar_asignacion(asignacion, anteriores_asignaciones.get(asignacion.pk),
-                          usuario=getattr(lote, 'usuario', None), origen='EXCEL', lote=lote)
-
-    for fibra in fibras_tocadas.values():
-        if fibra.origen_estado != 'INFORMADO':
-            sincronizar_estado_fibra(
-                fibra,
-                origen='EXCEL',
-                lote_importacion=lote,
-                causa='IMPORTACION_FIBRA_TRAMO',
-            )
-
-    for tramo_id in ids_tramo:
-        conteos = {
-            fila['estado']: fila['total']
-            for fila in FibraTramo.objects.filter(tramo_id=tramo_id)
-            .values('estado')
-            .annotate(total=Count('pk'))
-        }
-        InventarioTramo.objects.filter(pk=tramo_id).update(
-            hilos_ocupados=conteos.get('OCUPADO', 0),
-            hilos_reservados=conteos.get('RESERVADO', 0),
-            hilos_libres=conteos.get('DISPONIBLE', 0),
-        )
+    except ValidationError as exc:
+        _errores_csv(exc.messages, 'Detalle de fibras por tramo')
 
     resultado = _resultado(
         len(df),
@@ -3992,6 +3750,7 @@ def _procesar_odfs_inventario(file, lote=None):
                     datos[campo] = valor
             preparadas.append({
                 'nombre': odf_nombre,
+                'fila': numero_fila,
                 'hub_site': hub_site,
                 'sala': sala,
                 'rack': rack,
@@ -4003,18 +3762,19 @@ def _procesar_odfs_inventario(file, lote=None):
     _errores_csv(errores, 'Inventario de ODFs')
 
     creadas = actualizadas = 0
-    for item in preparadas:
+    for item in _elementos_con_progreso(preparadas, 45, 95, 'Guardando ODF y su capacidad de puertos'):
         anterior_negocio = _estado_negocio(InventarioODF.objects.select_for_update().filter(odf__iexact=item['nombre']).first())
-        odf_obj, creada = guardar_odf_normalizado(
-            odf_nombre=item['nombre'],
-            hub_nombre=item['hub_site'],
-            sala_nombre=item['sala'],
-            rack_nombre=item['rack'],
-            defaults=item['datos'],
-            lote=lote,
-        )
-        if creada and item['capacidad'] is not None:
-            ajustar_puertos_a_capacidad(odf_obj, item['capacidad'])
+        with _contexto_fila_csv(item['fila']):
+            odf_obj, creada = guardar_odf_normalizado(
+                odf_nombre=item['nombre'],
+                hub_nombre=item['hub_site'],
+                sala_nombre=item['sala'],
+                rack_nombre=item['rack'],
+                defaults=item['datos'],
+                lote=lote,
+            )
+            if creada and item['capacidad'] is not None:
+                ajustar_puertos_a_capacidad(odf_obj, item['capacidad'])
         creadas += int(creada)
         actualizadas += int(not creada and anterior_negocio != _estado_negocio(odf_obj))
 
@@ -4193,11 +3953,24 @@ def _procesar_puertos_odf_inventario(file, lote=None):
                 f'{total_proyectado} puertos.'
             )
 
-    DetallePuertoODF.objects.bulk_create(crear, batch_size=2000)
+    total_guardar = len(crear) + len(actualizar)
+    guardadas = 0
+    _reportar_progreso(50, 'Guardando metadatos de puertos', procesadas=0, total=total_guardar)
+    for grupo in _dividir_en_lotes(crear, 500):
+        DetallePuertoODF.objects.bulk_create(grupo, batch_size=500)
+        guardadas += len(grupo)
+        _reportar_progreso(50 + int(40 * guardadas / max(total_guardar, 1)),
+                          'Guardando metadatos de puertos', procesadas=guardadas, total=total_guardar)
     for campos, grupo in grupos_actualizacion.items():
         # 80 filas mantienen la sentencia bajo el límite de variables de SQLite;
         # PostgreSQL también procesa este tamaño de manera estable.
-        DetallePuertoODF.objects.bulk_update(grupo, campos, batch_size=80)
+        for parcial in _dividir_en_lotes(grupo, 500):
+            DetallePuertoODF.objects.bulk_update(parcial, campos, batch_size=80)
+            guardadas += len(parcial)
+            _reportar_progreso(50 + int(40 * guardadas / max(total_guardar, 1)),
+                              'Guardando metadatos de puertos', procesadas=guardadas, total=total_guardar)
+
+    _reportar_progreso(95, 'Verificando contadores de puertos ODF')
 
     conteos = {
         (fila['odf_obj_id'], fila['estado_puerto']): fila['total']
@@ -4397,7 +4170,7 @@ def _resultado_progreso_lote(lote, nombre_amigable=None):
 def _procesar_lote_atomicamente(lote_id, procesador_func, archivo):
     """Mantiene datos y cierre de auditoría dentro de una sola transacción."""
     with transaction.atomic():
-        lote = LoteImportacion.objects.select_for_update().select_related(
+        lote = LoteImportacion.objects.select_for_update(of=('self',)).select_related(
             'usuario'
         ).get(pk=lote_id)
         if lote.estado in {'COMPLETADO', 'COMPLETADO_CON_ERRORES'}:
@@ -4412,6 +4185,7 @@ def _procesar_lote_atomicamente(lote_id, procesador_func, archivo):
                 transaction.set_rollback(True)
         else:
             resultado = procesador_func(archivo, lote=lote)
+        _reportar_progreso(98, 'Confirmando resultado de la carga')
         resultado = _cerrar_lote_exitoso(lote, resultado)
     return lote, resultado
 
@@ -4518,7 +4292,7 @@ def _ejecutar_importacion_en_segundo_plano(
             # Sin confirmación de la BD no se inventa un resultado definitivo.
             # Se conserva el archivo pendiente para recuperación.
             _publicar_progreso_seguro(
-                codigo, estado='PROCESANDO', porcentaje=0,
+                codigo, estado='PROCESANDO',
                 etapa='Resultado pendiente de confirmar',
                 mensaje='Consulte el historial antes de volver a cargar el archivo.',
             )
@@ -4544,8 +4318,8 @@ def _ejecutar_importacion_en_segundo_plano(
 @require_GET
 def progreso_importacion(request, codigo):
     """La BD decide el resultado y propietario; el JSON solo aporta avance."""
-    # Solo una lectura por UUID, sin escrituras durante el sondeo. SQLite
-    # permite lectores mientras el importador mantiene su transacción abierta.
+    # Solo lectura por UUID. SQLite puede bloquear lectores al volcar su caché
+    # de escritura; una espera no equivale a que haya fallado la importación.
     try:
         lotes = LoteImportacion.objects.filter(codigo=codigo).only(
             'codigo', 'usuario_id', 'tipo', 'archivo_origen', 'estado',

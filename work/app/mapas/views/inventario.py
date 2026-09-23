@@ -11,8 +11,9 @@ from ..ui_access import screen_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.views.decorators.http import require_http_methods, require_POST
 from django.views.decorators.gzip import gzip_page
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, OperationalError, transaction
 from django.db.models import Q
+from django.db.models.deletion import ProtectedError
 from django.urls import reverse
 from ..models import (
     Ruta, CoordenadaRuta, InventarioFibra, InventarioTramo, TerminacionFibra,
@@ -1565,7 +1566,7 @@ def update_detalle_fibra(request):
                 status=400,
             )
 
-        fibra = InventarioFibra.objects.select_for_update().filter(
+        fibra = InventarioFibra.objects.select_for_update(of=('self',)).filter(
             id=fibra_id
         ).select_related('ruta').first()
         if not fibra:
@@ -1885,7 +1886,12 @@ def update_detalle_puerto(request):
             transaction.set_rollback(True)
             mensaje = '; '.join(exc.messages) if isinstance(exc, ValidationError) else 'Los datos del puerto no son válidos.'
             return JsonResponse({"status": "error", "message": mensaje}, status=400)
+        except OperationalError:
+            # Salir del atomic con la excepción revierte antes de que el
+            # middleware convierta un bloqueo transitorio en respuesta 503.
+            raise
         except Exception:
+            transaction.set_rollback(True)
             logger.exception("Error inesperado al actualizar un puerto ODF")
             return JsonResponse({"status": "error", "message": "No se pudo actualizar el puerto."}, status=500)
     return JsonResponse({"status": "error", "message": "Método no permitido"}, status=405)
@@ -2025,6 +2031,9 @@ def gestionar_conexion_puerto(request):
             status=409,
         )
     except PermissionDenied:
+        raise
+    except OperationalError:
+        # Los servicios atómicos ya revirtieron antes de publicar el reintento.
         raise
     except Exception:
         logger.exception('Error inesperado al gestionar la conexión del puerto ODF')
@@ -2464,9 +2473,22 @@ def delete_ruta_manual(request):
             # Si no tiene nada de geo, es una ruta creada 100% manual sin mapa. Borrado total.
             ruta.delete()
             return JsonResponse({'status': 'success', 'message': 'Ruta eliminada correctamente'})
+    except ProtectedError:
+        # El recolector puede rechazar las fibras después de borrar los tramos.
+        # Revertir también las señales, contadores y relaciones ya modificadas.
+        transaction.set_rollback(True)
+        return JsonResponse({
+            'status': 'error',
+            'message': (
+                'No se puede eliminar la ruta porque tiene relaciones protegidas, '
+                'como empalmes o asociaciones de monitoreo. No se eliminó ningún dato.'
+            ),
+        }, status=400)
     except ERRORES_DATOS_ENTRADA:
+        transaction.set_rollback(True)
         return JsonResponse({'status': 'error', 'message': 'La solicitud para eliminar la ruta no es válida.'}, status=400)
     except Exception:
+        transaction.set_rollback(True)
         logger.exception("Error inesperado al eliminar una ruta")
         return JsonResponse({'status': 'error', 'message': 'No se pudo eliminar la ruta.'}, status=500)
 

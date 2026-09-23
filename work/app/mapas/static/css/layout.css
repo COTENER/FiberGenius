@@ -6,6 +6,7 @@
 .app {
     display: flex;
     min-height: 100vh;
+    min-height: 100dvh;
 }
 
 /* ─── Sidebar ─── */
@@ -371,12 +372,14 @@
 
 /* ─── Main Content ─── */
 .main-wrapper {
+    min-width: 0;
     flex: 1;
     margin-left: var(--sidebar-width);
     transition: margin-left var(--transition-base);
     display: flex;
     flex-direction: column;
     height: 100vh;
+    height: 100dvh;
     min-height: 0;
     overflow: hidden;
 }
@@ -385,6 +388,7 @@
 }
 
 .main-content {
+    min-width: 0;
     flex: 1;
     min-height: 0;
     padding: var(--space-6);
@@ -410,6 +414,7 @@
 
 /* ─── Responsive ─── */
 @media (max-width: 1024px) {
+    #sidebar-toggle { display: none; }
     .sidebar {
         transform: translateX(-100%);
         width: var(--sidebar-width);

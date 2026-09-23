@@ -6,7 +6,7 @@
             sites: L.layerGroup(),
             routeSelection: L.layerGroup()
         },
-        tileLayer: null,
+        baseMap: null,
         data: [],
         sites: [],
         filters: {
@@ -98,97 +98,36 @@
         const mapElement = document.getElementById('map');
         state.map = L.map('map', {
             zoomControl: false,
-            attributionControl: false,
+            attributionControl: true,
             preferCanvas: true
         }).setView([-12.046374, -77.042793], 6); // Centro general de Perú como default
 
         L.control.zoom({ position: 'bottomright' }).addTo(state.map);
 
+        // Attribution can wrap after a provider change or on narrow screens.
+        // Reserve its real height for the sibling controls; never hide credits.
+        const attribution = state.map.attributionControl.getContainer();
+        const syncAttributionSpace = () => mapElement.parentElement.style.setProperty(
+            '--map-attribution-height', `${Math.ceil(attribution.getBoundingClientRect().height)}px`
+        );
+        syncAttributionSpace();
+        if (window.ResizeObserver) {
+            const attributionObserver = new ResizeObserver(syncAttributionSpace);
+            attributionObserver.observe(attribution);
+            state.map.on('unload', () => attributionObserver.disconnect());
+        } else {
+            window.addEventListener('resize', syncAttributionSpace);
+            state.map.on('baselayerchange', syncAttributionSpace);
+            state.map.on('unload', () => window.removeEventListener('resize', syncAttributionSpace));
+        }
+
         state.layerGroups.tramos.addTo(state.map);
         state.layerGroups.sites.addTo(state.map);
         state.layerGroups.routeSelection.addTo(state.map);
 
-        const attribution = mapElement.dataset.tileAttribution || 'Cartografía configurable';
-        const createLayer = (url) => url ? L.tileLayer(url, { maxZoom: 19, attribution }) : null;
-        const mapClaro = createLayer(mapElement.dataset.tileLight);
-        const mapOscuro = createLayer(mapElement.dataset.tileDark);
-        const satelite = createLayer(mapElement.dataset.tileSatellite);
-        const baseMaps = {};
-        const basemapThemes = new Map();
-        if (mapClaro) {
-            baseMaps['Mapa claro'] = mapClaro;
-            basemapThemes.set(mapClaro, 'light');
-        }
-        if (mapOscuro) {
-            baseMaps['Mapa oscuro'] = mapOscuro;
-            basemapThemes.set(mapOscuro, 'dark');
-        }
-        if (satelite) {
-            baseMaps['Satélite'] = satelite;
-            basemapThemes.set(satelite, 'satellite');
-        }
-
-        const tileStatus = new Map();
-        const showOfflineNotice = () => {
-            if (document.getElementById('map-offline-notice')) return;
-            const notice = document.createElement('div');
-            notice.id = 'map-offline-notice';
-            notice.className = 'map-offline-notice';
-            notice.setAttribute('role', 'status');
-            notice.textContent = 'Mapa base no disponible o incompleto. El inventario de troncales continúa visible.';
-            mapElement.parentElement.appendChild(notice);
-        };
-        const updateTileNotice = (layer) => {
-            if (state.tileLayer !== layer) return;
-            const status = tileStatus.get(layer);
-            if (status.errors) {
-                showOfflineNotice();
-            } else if (status.complete && status.loaded > 0) {
-                mapElement.classList.remove('map-fallback-grid');
-                const notice = document.getElementById('map-offline-notice');
-                if (notice) notice.remove();
-            }
-        };
-        Object.values(baseMaps).forEach((layer) => {
-            const status = { errors: 0, loaded: 0, complete: false };
-            tileStatus.set(layer, status);
-            layer.on('loading', () => {
-                status.errors = 0;
-                status.loaded = 0;
-                status.complete = false;
-            });
-            layer.on('tileerror', () => {
-                status.errors += 1;
-                updateTileNotice(layer);
-            });
-            layer.on('tileload', () => { status.loaded += 1; });
-            layer.on('load', () => {
-                // Leaflet también emite load cuando todas las teselas fallan.
-                status.complete = true;
-                updateTileNotice(layer);
-            });
+        state.baseMap = window.FGBaseMap(state.map, mapElement, {
+            onChange() { applyRouteFocusStyles(); syncAttributionSpace(); },
         });
-
-        const theme = document.documentElement.getAttribute('data-theme') || 'light';
-        const isDark = theme === 'dark' || document.body.classList.contains('dark-mode');
-
-        const preferredLayer = isDark ? (mapOscuro || mapClaro) : (mapClaro || mapOscuro);
-        if (preferredLayer) {
-            state.tileLayer = preferredLayer;
-            preferredLayer.addTo(state.map);
-            mapElement.dataset.basemapTheme = basemapThemes.get(preferredLayer) || (isDark ? 'dark' : 'light');
-        }
-        else showOfflineNotice();
-
-        if (Object.keys(baseMaps).length) {
-            L.control.layers(baseMaps, null, { position: 'topright', collapsed: true }).addTo(state.map);
-            state.map.on('baselayerchange', (event) => {
-                state.tileLayer = event.layer;
-                updateTileNotice(event.layer);
-                mapElement.dataset.basemapTheme = basemapThemes.get(event.layer) || 'light';
-                applyRouteFocusStyles();
-            });
-        }
 
         setupFullscreenControl();
         setupLayerPanel();

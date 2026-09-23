@@ -226,7 +226,7 @@ def actualizar_fibras_masivo(
     for indice in range(0, len(ids), 500):
         lote_ids = ids[indice:indice + 500]
         for fibra in (
-            InventarioFibra.objects.select_for_update()
+            InventarioFibra.objects.select_for_update(of=("self",))
             .select_related("ruta")
             .filter(pk__in=lote_ids)
             .order_by("pk")
@@ -460,7 +460,7 @@ def sincronizar_estado_fibra(
 ) -> str:
     """Infiere bajo bloqueo; un estado INFORMADO siempre tiene prioridad."""
     bloqueada = (
-        InventarioFibra.objects.select_for_update()
+        InventarioFibra.objects.select_for_update(of=("self",))
         .select_related("ruta")
         .get(pk=fibra.pk)
     )
@@ -639,7 +639,7 @@ def asignar_ruta_fibra(
 ):
     """Asigna la troncal conservando identidad, estado, servicio y terminaciones."""
     bloqueada = (
-        InventarioFibra.objects.select_for_update()
+        InventarioFibra.objects.select_for_update(of=("self",))
         .select_related("ruta")
         .get(pk=fibra.pk)
     )

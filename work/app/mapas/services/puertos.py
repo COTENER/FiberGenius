@@ -34,9 +34,11 @@ class ConexionDesactualizada(ValidationError):
 
 
 def _bloquear_fibra(fibra_id):
+    # Las relaciones opcionales se leen, pero no se bloquean mediante su JOIN.
+    # PostgreSQL no permite FOR UPDATE sobre el lado nullable del OUTER JOIN.
     try:
         return (
-            InventarioFibra.objects.select_for_update()
+            InventarioFibra.objects.select_for_update(of=("self",))
             .select_related("ruta")
             .get(pk=fibra_id)
         )
@@ -46,7 +48,7 @@ def _bloquear_fibra(fibra_id):
 
 def _bloquear_terminacion(fibra, extremo):
     return (
-        TerminacionFibra.objects.select_for_update()
+        TerminacionFibra.objects.select_for_update(of=("self",))
         .select_related("fibra__ruta", "puerto_odf__odf_obj")
         .filter(fibra=fibra, extremo=extremo)
         .order_by("pk")
@@ -175,11 +177,13 @@ def conectar_puertos_masivo(
     origen="SISTEMA",
     lote_importacion=None,
 ):
-    """Conecta un lote ya validado con las mismas invariantes del servicio unitario.
+    """Registra altas/recargas de terminaciones sin consumir reservas.
 
     Cada elemento debe aportar ``fibra``, ``puerto``, ``extremo`` y puede aportar
     ``tipo_conector``. El bloqueo y las restricciones se vuelven a comprobar dentro
     de la transacción; ``bulk_create`` evita una operación SQL por terminación.
+    Las reservas solo se consumen con una operación explícita de conexión,
+    mediante ``conectar_puerto``, no mediante esta carga de inventario.
     """
     conexiones = list(conexiones)
     if not conexiones:
@@ -224,7 +228,7 @@ def conectar_puertos_masivo(
     fibras = {}
     for lote_ids in _lotes(sorted(ids_fibra)):
         for fibra in (
-            InventarioFibra.objects.select_for_update()
+            InventarioFibra.objects.select_for_update(of=("self",))
             .select_related("ruta")
             .filter(pk__in=lote_ids)
             .order_by("pk")
@@ -236,7 +240,7 @@ def conectar_puertos_masivo(
     por_extremo = {}
     for lote_ids in _lotes(sorted(ids_fibra)):
         for terminacion in (
-            TerminacionFibra.objects.select_for_update()
+            TerminacionFibra.objects.select_for_update(of=("self",))
             .select_related("fibra__ruta", "puerto_odf__odf_obj")
             .filter(fibra_id__in=lote_ids)
             .order_by("pk")
@@ -291,7 +295,15 @@ def conectar_puertos_masivo(
             )
         if existente and existente.puerto_odf_id != puerto.pk:
             raise MovimientoRequiereConfirmacion(existente)
-        if puerto.estado_puerto not in {"LIBRE", "RESERVADO", "OCUPADO"}:
+        # Comprobar la lectura bloqueada, no el objeto recibido ni la validación
+        # previa del CSV: otro usuario pudo reservarlo mientras se leía el lote.
+        if puerto.estado_puerto == "RESERVADO":
+            raise ValidationError(
+                f"El puerto {puerto.odf_obj.odf} / {puerto.puerto_odf} está "
+                "reservado; consuma la reserva mediante una operación explícita. "
+                "No se aplicó la carga de terminaciones."
+            )
+        if puerto.estado_puerto not in {"LIBRE", "OCUPADO"}:
             raise ValidationError("El puerto no tiene un estado válido para conectarlo.")
 
         conector = (

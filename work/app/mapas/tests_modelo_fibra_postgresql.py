@@ -99,7 +99,7 @@ class ConcurrenciaModeloFibraPostgreSQLTests(TransactionTestCase):
         for puerto in puertos:
             puerto.refresh_from_db()
             ocupado = TerminacionFibra.objects.filter(puerto_odf=puerto).exists()
-            self.assertEqual(puerto.estado_puerto == 'Ocupado', ocupado)
+            self.assertEqual(puerto.estado_puerto == 'OCUPADO', ocupado)
 
     def test_informado_gana_a_inferencia_y_no_deja_auditoria_falsa(self):
         ruta = Ruta.objects.create(nombre='PG-ESTADO')

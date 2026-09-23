@@ -18,7 +18,7 @@
 
     /* KPI Header Cards */
     .user-kpi-container {
-        display: flex; gap: 24px; margin-bottom: 24px;
+        display: flex; flex-wrap: wrap; gap: 24px; margin-bottom: 24px;
     }
     .kpi-card-user {
         background: var(--dt-bg); border: 1px solid var(--dt-border);
@@ -72,6 +72,7 @@
 
     /* Table Container */
     .table-section {
+        min-width: 0; max-width: 100%; overflow-x: auto;
         background: var(--dt-bg); border-radius: 16px; border: 1px solid var(--dt-border);
         padding: 24px; box-shadow: 0 4px 20px rgba(0,0,0,0.02); margin-bottom: 40px;
     }

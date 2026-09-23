@@ -16,26 +16,22 @@ eq(Array.from(c.relatedSiteNames({ sites_relacionados: [], tramos: [{ hub_site: 
 eq(Array.from(c.relatedSiteNames({ tramos: [{ hub_site: 'SITE-A', destino: 'SITE-B' }] })), ['SITE-A', 'SITE-B']);
 
 const warning = { hidden: true };
-const layers = [];
+let mapControllerOptions, themeUpdates = 0;
 const context = {
-    window: { L: true },
-    document: { getElementById: () => warning },
-    tileUrlForTheme: () => 'local-tiles',
-    L: { tileLayer: () => {
-        const layer = { handlers: {}, on(event, fn) { this.handlers[event] = fn; }, addTo() {}, bringToBack() {} };
-        layers.push(layer); return layer;
+    window: { L: true, FGBaseMap(map, target, options) {
+        mapControllerOptions = options;
+        return { followTheme() { themeUpdates++; } };
     } },
+    document: { getElementById: () => warning },
 };
 vm.createContext(context);
-vm.runInContext('let dashboardMap={removeLayer(){}}, dashboardMapTarget={dataset:{}}, dashboardTileLayer=null;\n' + extract('    function refreshMapTheme(', '    function configureMapSearch('), context);
+vm.runInContext('let dashboardMap={}, dashboardMapTarget={dataset:{}}, dashboardBaseMap=null;\n' + extract('    function refreshMapTheme(', '    function configureMapSearch('), context);
 context.refreshMapTheme();
-layers[0].handlers.loading(); layers[0].handlers.tileerror();
+mapControllerOptions.onStatus(true);
 eq(warning.hidden, false);
-layers[0].handlers.load(); eq(warning.hidden, false);
-layers[0].handlers.loading(); layers[0].handlers.load(); eq(warning.hidden, true);
+mapControllerOptions.onStatus(false); eq(warning.hidden, true);
 context.refreshMapTheme();
-layers[0].handlers.tileerror(); eq(warning.hidden, true); // Evento de la capa anterior.
-layers[1].handlers.tileerror(); eq(warning.hidden, false);
+eq(themeUpdates, 1); // The shared controller preserves a selected backup.
 
 eq(source.includes("labels.push('Sin estado informado')"), true);
 eq(source.includes('Sin cobertura / estado'), false);

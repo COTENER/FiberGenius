@@ -813,7 +813,13 @@ function recoverImport(url) {
 }
 
 function renderImportExecution(data) {
-    lastImportProgress = {...lastImportProgress, ...data};
+    data = {...lastImportProgress, ...data};
+    // El avance representa trabajo completado, no tiempo estimado. Una
+    // respuesta atrasada o la recuperación de conexión no lo reinician.
+    if (!['COMPLETADO', 'COMPLETADO_CON_ERRORES', 'FALLIDO'].includes(data.estado)) {
+        data.porcentaje = Math.max(Number(lastImportProgress.porcentaje || 0), Number(data.porcentaje || 0));
+    }
+    lastImportProgress = data;
     const execution = document.getElementById('importExecution');
     const percentage = Math.max(0, Math.min(100, Number(data.porcentaje || 0)));
     execution.hidden = false;
@@ -880,7 +886,7 @@ async function pollImportProgress(url) {
         if ([403, 404].includes(response.status)) {
             rememberImport(null);
             restoreImportControls();
-            renderImportExecution({estado: 'PROCESANDO', porcentaje: 0, etapa: 'Avance no disponible',
+            renderImportExecution({...lastImportProgress, estado: 'PROCESANDO', etapa: 'Avance no disponible',
                 mensaje: 'Consulte el historial antes de volver a cargar; esto no confirma que la importación falló.'});
             return;
         }

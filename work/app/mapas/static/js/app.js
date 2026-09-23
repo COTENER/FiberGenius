@@ -15,10 +15,10 @@
     const userTrigger   = document.getElementById('user-dropdown-trigger');
 
     // ─── Sidebar Toggle (Desktop) ───
-    function applySidebarState(collapsed) {
+    function applySidebarState(collapsed, persist = true) {
         if (!sidebar) return;
         sidebar.classList.toggle('sidebar--collapsed', collapsed);
-        localStorage.setItem('fg-sidebar', collapsed ? 'collapsed' : 'expanded');
+        if (persist) localStorage.setItem('fg-sidebar', collapsed ? 'collapsed' : 'expanded');
         if (sidebarToggle) {
             sidebarToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
             sidebarToggle.setAttribute('aria-label', collapsed ? 'Expandir menú principal' : 'Colapsar menú principal');
@@ -26,10 +26,22 @@
     }
 
     // Restore sidebar state
-    if (window.innerWidth > 1024) {
-        const saved = localStorage.getItem('fg-sidebar');
-        if (saved === 'collapsed') applySidebarState(true);
+    const mobileLayout = window.matchMedia('(max-width: 1024px)');
+    function setMobileMenu(open) {
+        if (!sidebar) return;
+        sidebar.classList.toggle('mobile-open', open);
+        sidebar.inert = mobileLayout.matches && !open;
+        if (mobileToggle) {
+            mobileToggle.setAttribute('aria-expanded', String(open));
+            mobileToggle.setAttribute('aria-label', open ? 'Cerrar menú principal' : 'Abrir menú principal');
+        }
     }
+    function syncSidebarLayout() {
+        applySidebarState(!mobileLayout.matches && localStorage.getItem('fg-sidebar') === 'collapsed', false);
+        setMobileMenu(false);
+    }
+    mobileLayout.addEventListener('change', syncSidebarLayout);
+    syncSidebarLayout();
 
     if (sidebarToggle) {
         sidebarToggle.addEventListener('click', function () {
@@ -41,16 +53,13 @@
     // ─── Mobile Sidebar ───
     if (mobileToggle) {
         mobileToggle.addEventListener('click', function () {
-            sidebar.classList.toggle('mobile-open');
-            const open = sidebar.classList.contains('mobile-open');
-            mobileToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-            mobileToggle.setAttribute('aria-label', open ? 'Cerrar menú principal' : 'Abrir menú principal');
+            const open = !sidebar.classList.contains('mobile-open');
+            setMobileMenu(open);
         });
     }
     if (sidebarOverlay) {
         sidebarOverlay.addEventListener('click', function () {
-            sidebar.classList.remove('mobile-open');
-            if (mobileToggle) mobileToggle.setAttribute('aria-expanded', 'false');
+            setMobileMenu(false);
         });
     }
 
@@ -104,11 +113,11 @@
         });
     }
 
-    // ─── Close mobile sidebar on window resize ───
-    window.addEventListener('resize', function () {
-        if (window.innerWidth > 1024 && sidebar) {
-            sidebar.classList.remove('mobile-open');
-            if (mobileToggle) mobileToggle.setAttribute('aria-expanded', 'false');
+    // Keyboard dismissal; breakpoint changes are handled by syncSidebarLayout.
+    document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && sidebar?.classList.contains('mobile-open')) {
+            setMobileMenu(false);
+            mobileToggle?.focus();
         }
     });
 })();

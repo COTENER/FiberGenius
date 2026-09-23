@@ -65,6 +65,10 @@ FIBERGENIUS_MAP_TILE_DARK = config(
     'FIBERGENIUS_MAP_TILE_DARK',
     default='https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
 )
+FIBERGENIUS_MAP_TILE_STREETS = config(
+    'FIBERGENIUS_MAP_TILE_STREETS',
+    default='https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+)
 FIBERGENIUS_MAP_TILE_SATELLITE = config(
     'FIBERGENIUS_MAP_TILE_SATELLITE',
     default='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
@@ -72,6 +76,10 @@ FIBERGENIUS_MAP_TILE_SATELLITE = config(
 FIBERGENIUS_MAP_ATTRIBUTION = config(
     'FIBERGENIUS_MAP_ATTRIBUTION',
     default='&copy; CARTO / Esri',
+)
+FIBERGENIUS_CARTO_API_KEY = config('FIBERGENIUS_CARTO_API_KEY', default='')
+FIBERGENIUS_MAP_FALLBACK_ENABLED = config(
+    'FIBERGENIUS_MAP_FALLBACK_ENABLED', default=True, cast=bool
 )
 
 # Limites defensivos para cargas masivas. Los archivos que superen estos

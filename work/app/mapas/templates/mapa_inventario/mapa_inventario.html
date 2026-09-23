@@ -7,6 +7,7 @@
 {% block extra_css %}
 <!-- Leaflet CSS -->
 <link rel="stylesheet" href="{% static 'vendor/leaflet/leaflet-1.9.4.css' %}" crossorigin=""/>
+<link rel="stylesheet" href="{% static 'css/map-basemap.css' %}?v=20260921-streets">
 <link rel="stylesheet" href="{% static 'css/mapa.css' %}">
 <style>
     /* Contenedor principal a pantalla completa sin scroll */
@@ -559,7 +560,7 @@
         filter: brightness(0.9) contrast(1.1);
     }
 </style>
-<link rel="stylesheet" href="{% static 'css/mapa-red-v2.css' %}?v=20260805-site-occupied-1">
+<link rel="stylesheet" href="{% static 'css/mapa-red-v2.css' %}?v=20260922-gui5">
 {% endblock %}
 
 {% block content_class %}main-content--full{% endblock %}
@@ -814,5 +815,7 @@
 {% block extra_js %}
 <script src="{% static 'vendor/jquery/jquery-3.6.0.min.js' %}"></script>
 <script src="{% static 'vendor/leaflet/leaflet-1.9.4.js' %}" crossorigin=""></script>
-<script src="{% static 'js/mapa_inventario.js' %}?v=20260916-recovery"></script>
+{{ fg_map_config|json_script:"fg-map-config" }}
+<script src="{% static 'js/map-basemap.js' %}?v=20260921-streets"></script>
+<script src="{% static 'js/mapa_inventario.js' %}?v=20260922-gui5"></script>
 {% endblock %}

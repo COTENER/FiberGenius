@@ -20,58 +20,73 @@
 
     function renderContextSummary(kind, summary) {
         const target = document.getElementById('routes-context-summary');
-        if (!target) return;
+        // Ignore a response from a tab that is no longer visible.
+        if (!target || root.querySelector(`[data-resource="${kind}"]`)?.hidden) return;
+        const isRouteSummary = kind === 'troncales';
+        target.classList.toggle('network-route-totals', isRouteSummary);
+        target.closest('.network-inspector-card').classList.toggle('network-inspector-card--route-totals', isRouteSummary);
         const total = Number(summary?.total || 0);
         const percentage = (value) => total ? Math.max(0, Math.min(100, (Number(value || 0) / total) * 100)) : 0;
-        const donut = document.createElement('div');
-        donut.className = 'network-donut';
-        if (kind === 'troncales') {
-            donut.style.background = total
-                ? 'conic-gradient(#2f74ee 0 100%)'
-                : 'conic-gradient(#e8edf5 0 100%)';
+        if (isRouteSummary) {
+            const grid = document.createElement('dl');
+            grid.className = 'network-route-totals__grid';
+            [
+                ['Troncales', total],
+                ['Fibras inventariadas', summary?.fibras],
+                ['Tramos', summary?.tramos],
+                ['Reservas físicas', summary?.reservas],
+            ].forEach(([label, amount]) => {
+                const tile = document.createElement('div');
+                tile.className = 'network-route-totals__tile';
+                const term = document.createElement('dt');
+                term.textContent = label;
+                const value = document.createElement('dd');
+                value.textContent = number.format(amount || 0);
+                tile.append(term, value);
+                grid.appendChild(tile);
+            });
+            target.replaceChildren(grid);
         } else {
+            const donut = document.createElement('div');
+            donut.className = 'network-donut';
             const aerialPercent = percentage(summary?.aereos);
             const undergroundPercent = percentage(summary?.soterrados);
             donut.style.background = total
                 ? `conic-gradient(#2f74ee 0 ${aerialPercent}%, #f59e0b ${aerialPercent}% ${aerialPercent + undergroundPercent}%, #94a3b8 ${aerialPercent + undergroundPercent}% 100%)`
                 : 'conic-gradient(#e8edf5 0 100%)';
-        }
-        const value = document.createElement('span');
-        value.textContent = number.format(total);
-        const caption = document.createElement('small');
-        caption.textContent = kind === 'troncales' ? 'troncales' : 'tramos';
-        donut.append(value, caption);
-        const list = document.createElement('ul');
-        const items = kind === 'troncales'
-            ? [
-                ['is-used', 'Fibras', summary?.fibras, 'hilos'],
-                ['is-free', 'Tramos', summary?.tramos, total ? `${number.format(Number(summary?.tramos || 0) / total)} por ruta` : '0 por ruta'],
-                ['is-reserved', 'Reservas físicas', summary?.reservas, 'elementos'],
-            ]
-            : [
+            const value = document.createElement('span');
+            value.textContent = number.format(total);
+            const caption = document.createElement('small');
+            caption.textContent = 'tramos';
+            donut.append(value, caption);
+            const list = document.createElement('ul');
+            const items = [
                 ['is-used', 'Aéreos', summary?.aereos, `${number.format(percentage(summary?.aereos))}%`],
                 ['is-reserved', 'Soterrados', summary?.soterrados, `${number.format(percentage(summary?.soterrados))}%`],
                 ['is-unknown', 'Sin clasificar', Math.max(0, total - Number(summary?.aereos || 0) - Number(summary?.soterrados || 0)), `${number.format(percentage(Math.max(0, total - Number(summary?.aereos || 0) - Number(summary?.soterrados || 0))))}%`],
             ];
-        items.forEach(([className, label, amount, context]) => {
-            const item = document.createElement('li');
-            const row = document.createElement('div');
-            row.className = 'network-state-line';
-            const dot = document.createElement('i');
-            dot.className = className;
-            const text = document.createElement('span');
-            text.textContent = label;
-            const totalNode = document.createElement('b');
-            const count = document.createElement('span');
-            count.textContent = number.format(amount || 0);
-            const detail = document.createElement('small');
-            detail.textContent = context;
-            totalNode.append(count, detail);
-            row.append(dot, text, totalNode);
-            item.appendChild(row);
-            list.appendChild(item);
-        });
-        target.replaceChildren(donut, list);
+            items.forEach(([className, label, amount, context]) => {
+                const item = document.createElement('li');
+                const row = document.createElement('div');
+                row.className = 'network-state-line';
+                const dot = document.createElement('i');
+                dot.className = className;
+                const text = document.createElement('span');
+                text.textContent = label;
+                const totalNode = document.createElement('b');
+                const count = document.createElement('span');
+                count.textContent = number.format(amount || 0);
+                const detail = document.createElement('small');
+                detail.textContent = context;
+                totalNode.appendChild(count);
+                if (context) totalNode.appendChild(detail);
+                row.appendChild(dot);
+                row.append(text, totalNode);
+                item.appendChild(row);
+                list.appendChild(item);
+            });
+            target.replaceChildren(donut, list);
+        }
         const source = document.getElementById('routes-context-source');
         if (source) {
             source.replaceChildren();
@@ -79,8 +94,7 @@
             const secondary = document.createElement('span');
             if (kind === 'troncales') {
                 primary.textContent = number.format(summary?.distancia_km || 0);
-                secondary.textContent = number.format(summary?.tramos || 0);
-                source.append(primary, ' km documentados · ', secondary, ' tramos');
+                source.append(primary, ' km documentados');
             } else {
                 primary.textContent = number.format(summary?.reservas_m || 0);
                 secondary.textContent = number.format(Math.max(0, total - Number(summary?.aereos || 0) - Number(summary?.soterrados || 0)));
@@ -221,14 +235,7 @@
             return;
         }
         routeMap = L.map(target, { zoomControl: true, attributionControl: true, scrollWheelZoom: false, preferCanvas: true });
-        const dark = document.documentElement.dataset.theme === 'dark';
-        const mapConfig = document.body.dataset;
-        const tileUrl = dark ? mapConfig.mapTileDark : mapConfig.mapTileLight;
-        if (tileUrl) {
-            L.tileLayer(tileUrl, {
-                maxZoom: 19, attribution: mapConfig.mapAttribution || '',
-            }).addTo(routeMap);
-        }
+        window.FGBaseMap(routeMap, target);
         const line = L.polyline(coordinates, { color: '#7657ed', weight: 5, opacity: .96 }).addTo(routeMap);
         routeMap.fitBounds(line.getBounds(), { padding: [18, 18], maxZoom: 15 });
         setTimeout(() => routeMap?.invalidateSize(), 80);
@@ -400,7 +407,10 @@
             if (includePage) params.set('page', this.page);
             return params;
         }
-        renderSummary(summary) { this.options.summary(summary || {}); }
+        renderSummary(summary) {
+            this.lastSummary = summary || {};
+            this.options.summary(this.lastSummary);
+        }
         renderRows(rows) {
             this.body.replaceChildren();
             if (!rows.length) {
@@ -416,6 +426,7 @@
             [...pages].filter((p) => p >= 1 && p <= meta.total_pages).sort((a, b) => a - b).forEach((p) => {
                 if (last && p - last > 1) { const dots = document.createElement('span'); dots.className = 'odf-page-ellipsis'; dots.textContent = '…'; this.pagination.appendChild(dots); }
                 const button = document.createElement('button'); button.type = 'button'; button.className = 'odf-page-number'; button.textContent = p;
+                button.setAttribute('aria-label', `Ir a la página ${p}`);
                 if (p === meta.page) { button.classList.add('is-current'); button.setAttribute('aria-current', 'page'); }
                 button.addEventListener('click', () => { this.page = p; this.load(); }); this.pagination.appendChild(button); last = p;
             });
@@ -550,9 +561,12 @@
         const tab = tabs.find((item) => item.dataset.tab === name) || tabs[0];
         tabs.forEach((item) => { const active = item === tab; item.setAttribute('aria-selected', active); document.getElementById(item.getAttribute('aria-controls')).hidden = !active; });
         document.getElementById('network-inspector-title').textContent = tab.dataset.tab === 'tramos' ? 'Análisis de tramos' : 'Análisis de troncales';
-        document.getElementById('routes-context-title').textContent = tab.dataset.tab === 'tramos' ? 'Tipos de trazado' : 'Capacidad consolidada';
+        document.getElementById('routes-context-title').textContent = tab.dataset.tab === 'tramos' ? 'Tipos de trazado' : 'Resumen de troncales';
         document.getElementById('routes-ranking-title').textContent = tab.dataset.tab === 'tramos' ? 'Tramos con mayor ocupación' : 'Troncales con mayor ocupación';
-        if (!tables[tab.dataset.tab].loaded) tables[tab.dataset.tab].load(); const url = new URL(location.href); url.searchParams.set('tab', tab.dataset.tab); history.replaceState({}, '', url);
+        const table = tables[tab.dataset.tab];
+        if (!table.loaded) table.load();
+        else table.renderSummary(table.lastSummary);
+        const url = new URL(location.href); url.searchParams.set('tab', tab.dataset.tab); history.replaceState({}, '', url);
     }
     tabs.forEach((tab) => tab.addEventListener('click', () => selectTab(tab.dataset.tab)));
     const incoming = new URLSearchParams(location.search);
@@ -569,6 +583,6 @@
         }
     });
     inspectorToggle?.addEventListener('click', () => setInspectorCollapsed(!inspector.classList.contains('is-collapsed')));
-    setInspectorCollapsed(window.innerWidth <= 1180);
+    window.FGResponsive.bindInspector(inspector, setInspectorCollapsed);
     selectTab(incoming.get('tab') || 'troncales');
 })();

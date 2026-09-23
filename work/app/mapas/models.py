@@ -1818,6 +1818,125 @@ class EmpalmeFibra(models.Model):
 
 
 # =============================================================================
+# BASE DE MONITOREO FUTURO — Sin conectores, tareas ni activación automática
+# =============================================================================
+
+
+class FuenteMonitoreo(models.Model):
+    """Instancia externa; delimita los identificadores de puertos de monitoreo.
+
+    No almacena endpoints ni credenciales y no inicia conexiones. Dos servidores
+    del mismo proveedor son fuentes distintas aunque reutilicen sus IDs externos.
+    """
+
+    codigo = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    nombre = models.CharField(max_length=150)
+    proveedor = models.CharField(max_length=100, blank=True, default='')
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.nombre
+
+    def save(self, *args, **kwargs):
+        self.nombre = (self.nombre or '').strip()
+        self.proveedor = (self.proveedor or '').strip()
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    class Meta:
+        db_table = 'mon_fuentes'
+        verbose_name = 'Fuente de monitoreo'
+        verbose_name_plural = 'Fuentes de monitoreo'
+        # La siguiente versión incorporará permisos junto con su API/GUI.
+        default_permissions = ()
+        constraints = [
+            models.CheckConstraint(condition=~Q(nombre=''), name='ck_mon_fuente_nombre'),
+        ]
+
+
+class CanalMonitoreo(models.Model):
+    """Correspondencia entre un puerto de monitoreo OTU/VeEX y una fibra.
+
+    La troncal se consulta a través de fibra.ruta; no se duplica esa relación.
+    Registrar un puerto de monitoreo NO significa que el hilo se esté midiendo.
+    Para reasignarlo se retira la asociación y se crea otra;
+    así el futuro historial podrá conservar la asociación original por su ID.
+    El nombre interno CanalMonitoreo se conserva; no representa un puerto ODF.
+    """
+
+    codigo = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    fuente = models.ForeignKey(
+        FuenteMonitoreo, on_delete=models.PROTECT, related_name='canales',
+    )
+    identificador_externo = models.CharField(
+        max_length=255,
+        help_text='ID completo y único dentro de la fuente; no solo el número de puerto.',
+    )
+    fibra = models.ForeignKey(
+        InventarioFibra, on_delete=models.PROTECT, related_name='canales_monitoreo',
+    )
+    extremo_origen = models.CharField(
+        max_length=1, choices=[('A', 'Extremo A'), ('B', 'Extremo B')],
+        blank=True, default='',
+        help_text='Extremo desde el que se medirá. Vacío significa pendiente, no extremo A.',
+    )
+    creado_en = models.DateTimeField(auto_now_add=True)
+    retirado_en = models.DateTimeField(null=True, blank=True, editable=False)
+
+    @property
+    def vigente(self):
+        return self.retirado_en is None
+
+    @property
+    def ruta(self):
+        return self.fibra.ruta
+
+    def __str__(self):
+        return f'{self.fuente} / {self.identificador_externo} → {self.fibra.codigo_fibra}'
+
+    def save(self, *args, **kwargs):
+        from django.db import transaction
+
+        self.identificador_externo = (self.identificador_externo or '').strip()
+        self.extremo_origen = (self.extremo_origen or '').strip().upper()
+        with transaction.atomic(using=kwargs.get('using') or self._state.db):
+            if not self._state.adding:
+                anterior = type(self).objects.using(kwargs.get('using') or self._state.db).select_for_update().get(pk=self.pk)
+                identidad = ('codigo', 'fuente_id', 'identificador_externo', 'fibra_id', 'extremo_origen')
+                if any(getattr(self, campo) != getattr(anterior, campo) for campo in identidad):
+                    raise ValidationError(
+                        'La identidad del puerto de monitoreo no se modifica. Retire la asociación '
+                        'y registre una nueva para conservar su historial.'
+                    )
+                if anterior.retirado_en is not None and self.retirado_en != anterior.retirado_en:
+                    raise ValidationError('Una asociación retirada no se reactiva ni cambia de fecha.')
+            self.full_clean()
+            return super().save(*args, **kwargs)
+
+    class Meta:
+        db_table = 'mon_canales'
+        verbose_name = 'Puerto de monitoreo'
+        verbose_name_plural = 'Puertos de monitoreo'
+        default_permissions = ()
+        constraints = [
+            models.UniqueConstraint(
+                fields=['fuente', 'identificador_externo'],
+                condition=Q(retirado_en__isnull=True), name='uq_mon_canal_vigente',
+            ),
+            models.CheckConstraint(
+                condition=~Q(identificador_externo=''), name='ck_mon_canal_identificador',
+            ),
+            models.CheckConstraint(
+                condition=Q(extremo_origen__in=('', 'A', 'B')), name='ck_mon_canal_extremo',
+            ),
+            models.CheckConstraint(
+                condition=Q(retirado_en__isnull=True) | Q(retirado_en__gte=F('creado_en')),
+                name='ck_mon_canal_fechas',
+            ),
+        ]
+
+
+# =============================================================================
 # MODELOS UNMANAGED — Tablas SQL existentes (no gestionadas por migraciones)
 # =============================================================================
 

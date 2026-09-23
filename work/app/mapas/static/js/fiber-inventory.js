@@ -48,7 +48,7 @@
         inspectorToggle.addEventListener('click', () => {
             setInspectorCollapsed(!inspector.classList.contains('is-collapsed'));
         });
-        setInspectorCollapsed(window.innerWidth <= 1180);
+        window.FGResponsive.bindInspector(inspector, setInspectorCollapsed);
     }
 
     function switchInspectorContext(name) {
@@ -253,14 +253,7 @@
             scrollWheelZoom: false,
             preferCanvas: true,
         });
-        const dark = document.documentElement.dataset.theme === 'dark';
-        const mapConfig = document.body.dataset;
-        const tileUrl = dark ? mapConfig.mapTileDark : mapConfig.mapTileLight;
-        if (tileUrl) {
-            L.tileLayer(tileUrl, {
-                maxZoom: 19, attribution: mapConfig.mapAttribution || '',
-            }).addTo(routeMap);
-        }
+        window.FGBaseMap(routeMap, target);
         const bounds = L.latLngBounds([]);
         if (coordinates.length >= 2) {
             const line = L.polyline(coordinates, { color: '#216cf4', weight: 4, opacity: .95 }).addTo(routeMap);
@@ -459,7 +452,7 @@
         }
         pages(meta) {
             this.pagination.replaceChildren(); const values = [...new Set([1, meta.total_pages, meta.page - 1, meta.page, meta.page + 1])].filter((p) => p > 0 && p <= meta.total_pages).sort((a, b) => a - b); let previous = 0;
-            values.forEach((value) => { if (previous && value - previous > 1) { const dots = document.createElement('span'); dots.className = 'odf-page-ellipsis'; dots.textContent = '…'; this.pagination.appendChild(dots); } const button = document.createElement('button'); button.type = 'button'; button.className = 'odf-page-number'; button.textContent = value; if (value === meta.page) button.classList.add('is-current'); button.addEventListener('click', () => { this.page = value; this.load(); }); this.pagination.appendChild(button); previous = value; });
+            values.forEach((value) => { if (previous && value - previous > 1) { const dots = document.createElement('span'); dots.className = 'odf-page-ellipsis'; dots.textContent = '…'; this.pagination.appendChild(dots); } const button = document.createElement('button'); button.type = 'button'; button.className = 'odf-page-number'; button.textContent = value; button.setAttribute('aria-label', `Ir a la página ${value}`); if (value === meta.page) { button.classList.add('is-current'); button.setAttribute('aria-current', 'page'); } button.addEventListener('click', () => { this.page = value; this.load(); }); this.pagination.appendChild(button); previous = value; });
         }
         clearResults(label) {
             this.loaded = false;

@@ -24,6 +24,19 @@
 }
 .network-panel[hidden] { display: none !important; }
 .network-panel { display: grid; gap: 15px; }
+/* Grid children must shrink before the table's own scrolling takes over. */
+.odf-analysis-main { grid-template-columns: minmax(0, 1fr); }
+.odf-filter-card, .odf-table-card, .ports-filter-card, .ports-table-card {
+    min-width: 0;
+    max-width: 100%;
+}
+.odf-table td, .ports-table td {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.5;
+}
+.odf-table th, .ports-table th { white-space: normal; overflow-wrap: normal; }
+.odf-status, .port-status { white-space: nowrap; overflow-wrap: normal; }
 .network-panel .odf-kpis { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 .network-panel .odf-filters { grid-template-columns: minmax(260px, 1.6fr) repeat(3, minmax(120px, .7fr)) 90px; }
 .network-dialog textarea {
@@ -72,6 +85,7 @@
 }
 .network-inspector__header {
     min-height: 58px;
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -115,14 +129,20 @@
     transition: transform .22s ease;
 }
 .network-inspector__body {
+    flex: 1 1 auto;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
     min-height: 0;
     display: grid;
     align-content: start;
     gap: 10px;
     padding: 10px;
     overflow-y: auto;
+    overscroll-behavior-y: contain;
 }
+.network-inspector__body:focus-visible { outline: 2px solid var(--odf-blue); outline-offset: -2px; }
 .network-inspector-card {
+    min-width: 0;
     border: 1px solid var(--odf-line);
     border-radius: 11px;
     background: var(--bg-surface);
@@ -292,13 +312,67 @@
     color: var(--text-secondary);
     font-weight: 750;
 }
+/* Only the Troncales summary: these totals are not parts of a distribution.
+   Do not change the typography or charts of the other inventory panels. */
+.network-inspector-card--route-totals > header strong { font-size: 11px; }
+.network-inspector-card--route-totals > header span { font-size: 10px; }
+#routes-context-summary.network-route-totals {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 11px;
+}
+.network-route-totals__grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin: 0;
+}
+.network-route-totals__tile {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    min-width: 0;
+    min-height: 76px;
+    padding: 10px 6px;
+    border: 1px solid var(--odf-line);
+    border-radius: 8px;
+    background: var(--bg-surface-2);
+    text-align: center;
+    box-sizing: border-box;
+}
+.network-route-totals__tile dt {
+    order: 2;
+    color: var(--text-secondary);
+    font-size: 10px;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+.network-route-totals__tile dd {
+    order: 1;
+    margin: 0;
+    color: var(--odf-blue);
+    font-size: 21px;
+    font-weight: 750;
+    line-height: 1.15;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+}
+.network-inspector-card--route-totals > .network-state-source {
+    font-size: 11px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+}
 .network-ranking,
 .network-type-list {
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
     display: grid;
     padding: 6px 11px 10px;
 }
 .network-ranking__item,
 .network-type-list__item {
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
     display: grid;
     gap: 5px;
     padding: 7px 0;
@@ -843,6 +917,21 @@
         max-height: calc(100vh - var(--topbar-height) - 30px);
         align-self: start;
     }
+    :is(#fiber-workbench, #routes-workbench, #odf-workbench, #ports-workbench) > .network-inspector.is-docked {
+        position: fixed;
+        top: var(--inspector-dock-top);
+        left: var(--inspector-dock-left);
+        right: auto;
+        bottom: auto;
+        width: var(--inspector-dock-width);
+        height: calc(100vh - var(--inspector-dock-top) - 15px);
+        height: calc(100dvh - var(--inspector-dock-top) - 15px);
+        max-height: none;
+        transition: none;
+    }
+    :is(#fiber-workbench, #routes-workbench, #odf-workbench, #ports-workbench) > .network-inspector.is-docked.is-collapsed {
+        height: auto;
+    }
 }
 @media (max-width: 1700px) {
     .network-inspector {
@@ -875,4 +964,30 @@
 }
 @media (max-width: 560px) {
     .network-panel .odf-kpis { grid-template-columns: 1fr; }
+}
+
+/* Compact screens: an in-flow disclosure, never a strip over the table. */
+@media (max-width: 1180px) {
+    .network-inspector,
+    .network-inspector.is-collapsed {
+        position: relative;
+        grid-row: 2;
+        top: auto;
+        right: auto;
+        bottom: auto;
+        width: 100%;
+        min-width: 0;
+        max-height: 70vh;
+        max-height: 70dvh;
+        border-radius: 14px;
+        box-shadow: 0 3px 12px rgba(15, 23, 42, .06);
+    }
+    .network-inspector.is-collapsed .network-inspector__title { display: grid; }
+    .network-inspector.is-collapsed .network-inspector__header {
+        justify-content: space-between;
+        padding: 8px 13px 8px 15px;
+    }
+    #network-inspector-toggle { min-width: 44px; min-height: 44px; }
+    #network-inspector-toggle svg { transform: rotate(90deg); }
+    .network-inspector.is-collapsed #network-inspector-toggle svg { transform: rotate(-90deg); }
 }
